@@ -1,0 +1,19 @@
+{
+  "name": "nestjs-agentic",
+  "version": "0.1.0",
+  "description": "NestJS-native primitives for building production AI agents.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "reflect-metadata": "^0.2.0",
+    "rxjs": "^7.8.0"
+  },
+  "author": "",
+  "license": "MIT"
+}

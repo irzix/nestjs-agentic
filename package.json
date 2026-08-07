@@ -1,0 +1,14 @@
+{
+  "name": "nestjs-agentic-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NestJS-native primitives for building production AI agents.",
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ]
+}
