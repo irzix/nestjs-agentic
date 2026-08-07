@@ -16,34 +16,64 @@
 
 ---
 
+## Architecture Flow
+
+```mermaid
+flowchart TD
+    subgraph Client["Client Layer"]
+        REQ["Incoming Request (HTTP / SSE / Queue)"]
+    end
+
+    subgraph NestJS["NestJS Application"]
+        CTRL["SupportController"]
+        RUNNER["AgentRunner.run('customer-support')"]
+        AGENT["SupportAgent (AgentProvider)"]
+        TOOLS["OrderTools (@ToolSet)"]
+        POLICY["PolicyExecutor (@UsePolicies)"]
+        LOCAL_PROV["LocalToolProvider (ResolvedTool)"]
+        APPROVAL_SVC["ApprovalService"]
+    end
+
+    subgraph Governance["Governance & HITL"]
+        DECISION_ALLOW["decision: 'allow'"]
+        DECISION_DENY["decision: 'deny'"]
+        DECISION_HITL["decision: 'require_approval'"]
+        HUMAN_EP["Human Approval Endpoint (/approve/:id)"]
+    end
+
+    subgraph AI["AI Layer"]
+        ADAPTER["RuntimeAdapter (ADK / Mock / Vercel)"]
+        LLM["LLM Provider (Gemini / GPT / Claude)"]
+    end
+
+    REQ --> CTRL
+    CTRL --> RUNNER
+    RUNNER --> AGENT
+    AGENT --> TOOLS
+    TOOLS --> POLICY
+
+    POLICY -->|Allowed| DECISION_ALLOW
+    POLICY -->|Denied| DECISION_DENY
+    POLICY -->|Approval Required| DECISION_HITL
+
+    DECISION_ALLOW --> LOCAL_PROV
+    DECISION_DENY -->|Denied Result| LLM
+    DECISION_HITL -->|Generates approvalId| APPROVAL_SVC
+    APPROVAL_SVC -.->|Pending Approval| HUMAN_EP
+    HUMAN_EP -.->|Supervisor Approves| APPROVAL_SVC
+    APPROVAL_SVC -->|Executes Tool| LOCAL_PROV
+
+    LOCAL_PROV --> ADAPTER
+    ADAPTER --> LLM
+```
+
+---
+
 ## What is nestjs-agentic?
 
 Most AI frameworks force you to build a separate ecosystem or abandon your backend patterns. **nestjs-agentic** is an **AI integration layer for NestJS** that makes AI capabilities a first-class citizen in your existing codebase.
 
 It allows you to expose your existing NestJS services as **type-safe, policy-guarded tools** for LLMs using standard NestJS Dependency Injection, complete with **built-in Human-in-the-Loop (HITL)** approvals.
-
-```
-Incoming Request (HTTP / SSE / Queue)
-         │
-  SupportController
-         │
-   AgentRunner.run('customer-support')
-         │
-  SupportAgent (AgentProvider)
-         │
-  OrderTools (@ToolSet) ──▶ PolicyExecutor (@UsePolicies)
-         │                       │
-         │           ┌───────────┴───────────┐
-         │           ▼                       ▼
-         │       { decision: 'allow' }   { decision: 'require_approval' }
-         │           │                       │
-         ▼           ▼                       ▼
-   LocalToolProvider (ResolvedTool)     ApprovalService (approvalId)
-         │                                   │
-   RuntimeAdapter (ADK / Mock / Vercel)      ▼
-         │                           Human Approval Endpoint
-    LLM Provider                     (/support/approve/:id)
-```
 
 ---
 
