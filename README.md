@@ -16,64 +16,27 @@
 
 ---
 
-## Architecture Flow
-
-```mermaid
-flowchart TD
-    subgraph Client["Client Layer"]
-        REQ["Incoming Request (HTTP / SSE / Queue)"]
-    end
-
-    subgraph NestJS["NestJS Application"]
-        CTRL["SupportController"]
-        RUNNER["AgentRunner.run('customer-support')"]
-        AGENT["SupportAgent (AgentProvider)"]
-        TOOLS["OrderTools (@ToolSet)"]
-        POLICY["PolicyExecutor (@UsePolicies)"]
-        LOCAL_PROV["LocalToolProvider (ResolvedTool)"]
-        APPROVAL_SVC["ApprovalService"]
-    end
-
-    subgraph Governance["Governance & HITL"]
-        DECISION_ALLOW["decision: 'allow'"]
-        DECISION_DENY["decision: 'deny'"]
-        DECISION_HITL["decision: 'require_approval'"]
-        HUMAN_EP["Human Approval Endpoint (/approve/:id)"]
-    end
-
-    subgraph AI["AI Layer"]
-        ADAPTER["RuntimeAdapter (ADK / Mock / Vercel)"]
-        LLM["LLM Provider (Gemini / GPT / Claude)"]
-    end
-
-    REQ --> CTRL
-    CTRL --> RUNNER
-    RUNNER --> AGENT
-    AGENT --> TOOLS
-    TOOLS --> POLICY
-
-    POLICY -->|Allowed| DECISION_ALLOW
-    POLICY -->|Denied| DECISION_DENY
-    POLICY -->|Approval Required| DECISION_HITL
-
-    DECISION_ALLOW --> LOCAL_PROV
-    DECISION_DENY -->|Denied Result| LLM
-    DECISION_HITL -->|Generates approvalId| APPROVAL_SVC
-    APPROVAL_SVC -.->|Pending Approval| HUMAN_EP
-    HUMAN_EP -.->|Supervisor Approves| APPROVAL_SVC
-    APPROVAL_SVC -->|Executes Tool| LOCAL_PROV
-
-    LOCAL_PROV --> ADAPTER
-    ADAPTER --> LLM
-```
-
----
-
 ## What is nestjs-agentic?
 
 Most AI frameworks force you to build a separate ecosystem or abandon your backend patterns. **nestjs-agentic** is an **AI integration layer for NestJS** that makes AI capabilities a first-class citizen in your existing codebase.
 
 It allows you to expose your existing NestJS services as **type-safe, policy-guarded tools** for LLMs using standard NestJS Dependency Injection, complete with **built-in Human-in-the-Loop (HITL)** approvals.
+
+```
+Your NestJS Application (Services, Controllers, DB)
+         │
+    @ToolSet & @Tool Decorators
+         │
+    @UsePolicies (Security & HITL Approval)
+         │
+   LocalToolProvider (Resolved Tools with Policy Closures)
+         │
+   RuntimeAdapter (Pluggable: ADK, Vercel AI, Mock)
+         │
+    LLM Provider (Gemini / GPT / Claude)
+```
+
+> 📖 *For detailed visual sequence diagrams and flowcharts, check out the [Architecture Guide](docs/ARCHITECTURE.md).*
 
 ---
 
@@ -269,6 +232,14 @@ describe('OrderTools HITL', () => {
 - [ ] **v0.2 Adapters:** Official Vercel AI SDK & LangGraph `RuntimeAdapter` implementations
 - [ ] **v0.3 Observability:** OpenTelemetry & Langfuse `AgentObserver` implementations
 - [ ] **v1.0 Async Workflows:** Long-running Temporal & BullMQ execution primitives
+
+---
+
+## Documentation
+
+- 📐 [Architecture Guide & Diagrams](docs/ARCHITECTURE.md)
+- 📚 [API Reference](docs/API_REFERENCE.md)
+- 🤝 [Contributing Guide](CONTRIBUTING.md)
 
 ---
 
