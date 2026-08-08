@@ -230,6 +230,7 @@ describe('OrderTools HITL', () => {
 - [x] **v0.1 Testing:** Built-in `MockRuntimeAdapter`
 - [ ] **v0.2 Transports:** MCP (Model Context Protocol) `ToolProvider` support
 - [ ] **v0.2 Adapters:** Official Vercel AI SDK & LangGraph `RuntimeAdapter` implementations
+- [ ] **v0.2 Multi-Agent:** Sub-agent orchestration via `AgentConfig.subAgents` — delegate work across agents with full policy & HITL support
 - [ ] **v0.3 Observability:** OpenTelemetry & Langfuse `AgentObserver` implementations
 - [ ] **v1.0 Async Workflows:** Long-running Temporal & BullMQ execution primitives
 
