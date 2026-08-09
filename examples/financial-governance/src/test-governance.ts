@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { AgentRunner, ApprovalService, MockRuntimeAdapter, RUNTIME_ADAPTER } from 'nestjs-agentic';
-import type { ToolExecutionResult } from 'nestjs-agentic';
+import type { AgentStreamEvent, ToolExecutionResult } from 'nestjs-agentic';
 import { AppModule } from './app.module';
 
 async function runTests() {
@@ -145,6 +145,42 @@ async function runTests() {
     }
   } catch (err: any) {
     assert(false, 'Test 4: HITL Approval Lifecycle', err.message);
+  }
+
+  // TEST 5: Structured Event Streaming (runStream)
+  try {
+    mockAdapter.reset();
+    mockAdapter
+      .whenAsked('Stream transfer $500')
+      .thenCallTool('transferFunds', { fromAccount: 'ACC-1', toAccount: 'ACC-2', amount: 500 });
+
+    const streamEvents: AgentStreamEvent[] = [];
+    for await (const event of runner.runStream('banking-agent', {
+      sessionId: 's5_stream',
+      message: 'Stream transfer $500',
+      context: {
+        userId: 'usr_safe',
+        tenantId: 'acme_corp',
+        roles: ['finance_officer'],
+      },
+    })) {
+      streamEvents.push(event);
+    }
+
+    assert(
+      streamEvents.length >= 3,
+      'Test 5a: runStream() emitted structured stream events for financial transfer',
+    );
+    assert(
+      streamEvents[0].type === 'tool_start' && streamEvents[0].toolName === 'transferFunds',
+      'Test 5b: Event stream emitted "tool_start" with tool name transferFunds',
+    );
+    assert(
+      streamEvents[streamEvents.length - 1].type === 'complete',
+      'Test 5c: Event stream completed with final "complete" status event',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 5: Structured Event Streaming', err.message);
   }
 
   console.log(`\n📊 Summary: ${passed} passed, ${failed} failed.\n`);
