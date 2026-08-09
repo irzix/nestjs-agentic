@@ -7,12 +7,14 @@ import {
   SESSION_STORE,
 } from './constants';
 import { ToolDiscoveryService } from './discovery/tool-discovery.service';
-import type { AgentProvider, ToolPolicy } from './interfaces';
+import type { AgentProvider, ToolPolicy, StateStore } from './interfaces';
+import { STATE_STORE } from './interfaces/state-store.interface';
 import { LocalToolProvider } from './providers/local-tool.provider';
 import { AgentRunner, AgenticModuleOptions } from './services/agent-runner.service';
 import { ApprovalService } from './services/approval.service';
 import { InMemoryApprovalStore } from './stores/in-memory-approval.store';
 import { InMemorySessionStore } from './stores/in-memory-session.store';
+import { InMemoryStateStore } from './stores/in-memory-state.store';
 
 export interface ForFeatureOptions {
   /** Agent provider classes to register. Each must be decorated with @Agent(). */
@@ -41,14 +43,19 @@ export class AgenticModule {
   /**
    * Registers core services globally. Call once in the root AppModule.
    * Registers default in-memory stores which can be overridden per-module
-   * via { provide: APPROVAL_STORE, useClass: RedisApprovalStore }.
+   * via { provide: APPROVAL_STORE, useClass: RedisApprovalStore } or stateStore in options.
    */
   static forRoot(options: AgenticModuleOptions): DynamicModule {
+    const stateStoreProvider: Provider = options.stateStore
+      ? { provide: STATE_STORE, useValue: options.stateStore }
+      : { provide: STATE_STORE, useClass: InMemoryStateStore };
+
     return {
       module: AgenticModule,
       global: true,
       providers: [
         { provide: AGENTIC_OPTIONS, useValue: options },
+        stateStoreProvider,
         ...CORE_PROVIDERS,
       ],
       exports: [
@@ -56,6 +63,7 @@ export class AgenticModule {
         ApprovalService,
         LocalToolProvider,
         ToolDiscoveryService,
+        STATE_STORE,
         APPROVAL_STORE,
         SESSION_STORE,
       ],

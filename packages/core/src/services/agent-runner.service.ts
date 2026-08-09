@@ -12,8 +12,12 @@ import type {
   RuntimeAdapter,
 } from '../interfaces';
 
+import type { StateStore } from '../interfaces/state-store.interface';
+
 export interface AgenticModuleOptions {
   defaultModel: ModelConfig;
+  /** Custom unified StateStore (e.g. RedisStateStore, InMemoryStateStore) */
+  stateStore?: StateStore;
 }
 
 export interface RunInput {

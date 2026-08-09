@@ -1,3 +1,5 @@
+import { InMemoryStateStore, RedisStateStore } from '@nestjs-agentic/core';
+import type { GenericRedisClient } from '@nestjs-agentic/core';
 import { CompositeMemory, ScratchpadMemory, ShortTermMemory } from '../src';
 
 export async function runMemoryTests() {
@@ -71,6 +73,43 @@ export async function runMemoryTests() {
     assert(recalled.length === 2, 'Test 3a: CompositeMemory recalled items across all memory tiers');
   } catch (err: any) {
     assert(false, 'Test 3: CompositeMemory', err.message);
+  }
+
+  // TEST 4: Integration with Core StateStore (RedisStateStore)
+  try {
+    const redisStorage = new Map<string, string>();
+    const mockRedisClient: GenericRedisClient = {
+      async get(key: string): Promise<string | null> {
+        return redisStorage.get(key) ?? null;
+      },
+      async set(key: string, value: string): Promise<unknown> {
+        redisStorage.set(key, value);
+        return 'OK';
+      },
+      async del(key: string): Promise<number> {
+        redisStorage.delete(key);
+        return 1;
+      },
+      async keys(pattern: string): Promise<string[]> {
+        return Array.from(redisStorage.keys());
+      },
+    };
+
+    const redisStateStore = new RedisStateStore({ client: mockRedisClient });
+    const memory = new ShortTermMemory({ stateStore: redisStateStore });
+
+    await memory.save({
+      id: 'r_1',
+      sessionId: 'sess_core_redis',
+      type: 'short_term',
+      content: 'User prefers core unified RedisStateStore',
+    });
+
+    const recalled = await memory.recall('core', { sessionId: 'sess_core_redis' });
+    assert(recalled.length === 1, 'Test 4a: ShortTermMemory backed by core RedisStateStore saved & recalled item');
+    assert(recalled[0].content.includes('unified'), 'Test 4b: Memory content retrieved from core RedisStateStore matches');
+  } catch (err: any) {
+    assert(false, 'Test 4: Core StateStore Integration', err.message);
   }
 
   console.log(`\n  📊 Memory Test Results: ${passed} passed, ${failed} failed.\n`);
