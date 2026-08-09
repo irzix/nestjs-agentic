@@ -5,7 +5,7 @@
 <h1 align="center">@nestjs-agentic/adk</h1>
 
 <p align="center">
-  Google ADK (Agent Development Kit) & Gemini runtime adapter for <a href="https://www.npmjs.com/package/nestjs-agentic">nestjs-agentic</a>.
+  <b>Google ADK & Gemini Runtime Adapter for nestjs-agentic</b>
 </p>
 
 <p align="center">
@@ -16,6 +16,10 @@
 
 ---
 
+## Overview
+
+`@nestjs-agentic/adk` connects `nestjs-agentic` tool definitions and policy guardrails to Google's **Agent Development Kit (ADK)** and Gemini LLM models.
+
 ## Installation
 
 ```bash
@@ -24,7 +28,7 @@ npm install nestjs-agentic @nestjs-agentic/adk
 
 ## Quick Start
 
-Register `AdkRuntimeAdapter` as the `RUNTIME_ADAPTER` provider in your root NestJS application module:
+Register `AdkRuntimeAdapter` as the `RUNTIME_ADAPTER` provider in your root application module:
 
 ```typescript
 import { Module } from '@nestjs/common';
@@ -46,7 +50,7 @@ export class AppModule {}
 
 ## Environment Variables
 
-Ensure your Gemini API key is configured in your environment:
+Configure your Gemini API key in your environment:
 
 ```bash
 export GEMINI_API_KEY="your-gemini-api-key"
