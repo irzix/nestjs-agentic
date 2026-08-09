@@ -23,8 +23,8 @@
     "@langchain/langgraph": ">=0.2.0",
     "@nestjs-agentic/core": "*",
     "nestjs-agentic": "*",
-    "@nestjs/common": "^10.0.0",
-    "@nestjs/core": "^10.0.0"
+    "@nestjs/common": "^10.0.0 || ^11.0.0",
+    "@nestjs/core": "^10.0.0 || ^11.0.0"
   },
   "files": [
     "dist",

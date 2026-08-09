@@ -20,8 +20,8 @@
     "test": "tsc -p test/tsconfig.json && node dist/test/test/run-all-tests.js"
   },
   "peerDependencies": {
-    "@nestjs/common": "^10.0.0",
-    "@nestjs/core": "^10.0.0",
+    "@nestjs/common": "^10.0.0 || ^11.0.0",
+    "@nestjs/core": "^10.0.0 || ^11.0.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0"
   },

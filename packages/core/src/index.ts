@@ -6,4 +6,5 @@ export * from './providers';
 export * from './services';
 export * from './stores';
 export * from './adapters';
+export * from './policies';
 export * from './agentic.module';
