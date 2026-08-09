@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { APPROVAL_STORE, POLICY_INSTANCES } from '../constants';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
@@ -19,7 +19,7 @@ export class LocalToolProvider {
   private readonly policyMap: Map<Function, ToolPolicy>;
 
   constructor(
-    @Inject(POLICY_INSTANCES) policyInstances: ToolPolicy[],
+    @Optional() @Inject(POLICY_INSTANCES) policyInstances: ToolPolicy[],
     @Inject(APPROVAL_STORE) private readonly approvalStore: ApprovalStore,
     private readonly discovery: ToolDiscoveryService,
   ) {

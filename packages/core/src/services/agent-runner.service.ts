@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { AGENT_METADATA, AGENT_PROVIDERS, AGENTIC_OPTIONS, RUNTIME_ADAPTER } from '../constants';
 import { LocalToolProvider } from '../providers/local-tool.provider';
@@ -35,7 +35,7 @@ export class AgentRunner {
   private readonly agentMap: Map<string, AgentProvider>;
 
   constructor(
-    @Inject(AGENT_PROVIDERS) agentProviders: AgentProvider[],
+    @Optional() @Inject(AGENT_PROVIDERS) agentProviders: AgentProvider[],
     @Inject(RUNTIME_ADAPTER) private readonly runtimeAdapter: RuntimeAdapter,
     @Inject(AGENTIC_OPTIONS) private readonly options: AgenticModuleOptions,
     private readonly localToolProvider: LocalToolProvider,
