@@ -1,27 +1,10 @@
-import type { AgentResult, AgentRunInput, RuntimeAdapter } from '../interfaces';
+import type { AgentResult, AgentRunInput, AgentStreamEvent, RuntimeAdapter } from '../interfaces';
 
 interface ToolScenario {
   toolName: string;
   args: Record<string, unknown>;
 }
 
-/**
- * A test double for RuntimeAdapter that lets you define exactly which tool
- * the "agent" will call for a given message — without any LLM or network calls.
- *
- * Use this in unit tests to verify policy enforcement, HITL mechanics,
- * and tool invocation in isolation.
- *
- * @example
- * const mock = new MockRuntimeAdapter();
- * mock.whenAsked('Refund $600 for order #123')
- *     .thenCallTool('refundOrder', { orderId: '123', amount: 600 });
- *
- * const result = await runner.run('customer-support', {
- *   sessionId: 'test',
- *   message: 'Refund $600 for order #123',
- * });
- */
 export interface MockWhenAskedBuilder {
   thenCallTool(toolName: string, args?: Record<string, unknown>): MockRuntimeAdapter;
 }
@@ -29,10 +12,6 @@ export interface MockWhenAskedBuilder {
 export class MockRuntimeAdapter implements RuntimeAdapter {
   private readonly scenarios = new Map<string, ToolScenario>();
 
-  /**
-   * Defines what tool the mock agent will call when it receives the given message.
-   * Message matching is exact.
-   */
   whenAsked(message: string): MockWhenAskedBuilder {
     return {
       thenCallTool: (toolName: string, args: Record<string, unknown> = {}): MockRuntimeAdapter => {
@@ -42,7 +21,6 @@ export class MockRuntimeAdapter implements RuntimeAdapter {
     };
   }
 
-  /** Removes all registered scenarios. Useful in beforeEach hooks. */
   reset(): void {
     this.scenarios.clear();
   }
@@ -69,11 +47,47 @@ export class MockRuntimeAdapter implements RuntimeAdapter {
       };
     }
 
-    // No matching scenario — return a neutral response without calling any tool.
     return {
       sessionId: input.sessionId,
       output: `Mock response: "${input.message}"`,
       toolCalls: [],
     };
+  }
+
+  async *stream(input: AgentRunInput): AsyncIterable<AgentStreamEvent> {
+    const scenario = this.scenarios.get(input.message);
+
+    if (scenario) {
+      const tool = input.tools.find((t) => t.name === scenario.toolName);
+      if (!tool) {
+        throw new Error(
+          `MockRuntimeAdapter: tool "${scenario.toolName}" was not found in the agent's tool list.`,
+        );
+      }
+
+      yield { type: 'tool_start', toolName: scenario.toolName, args: scenario.args };
+
+      const result = await tool.execute({ args: scenario.args });
+
+      if (!result.success && result.status === 'pending_approval') {
+        yield {
+          type: 'approval_required',
+          toolName: scenario.toolName,
+          approvalId: result.approvalId,
+          reason: result.reason,
+        };
+      } else {
+        yield { type: 'tool_result', toolName: scenario.toolName, result };
+      }
+
+      const text = `Mock executed tool "${scenario.toolName}"`;
+      yield { type: 'token', text };
+      yield { type: 'complete', sessionId: input.sessionId, output: text };
+      return;
+    }
+
+    const text = `Mock response: "${input.message}"`;
+    yield { type: 'token', text };
+    yield { type: 'complete', sessionId: input.sessionId, output: text };
   }
 }

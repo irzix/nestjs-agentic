@@ -10,6 +10,7 @@ export type {
   ToolProvider,
 } from './tool.interface';
 export type { ModelConfig, AgentRunInput, AgentResult, RuntimeAdapter } from './runtime.interface';
+export type { AgentStreamEvent } from './agent-stream.interface';
 export type { AgentConfig, AgentProvider } from './agent.interface';
 export type { SessionStore } from './session.interface';
 export type { AgentObserver } from './observer.interface';

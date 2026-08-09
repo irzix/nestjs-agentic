@@ -24,9 +24,6 @@ export class LocalToolProvider {
     private readonly moduleRef: ModuleRef,
   ) {}
 
-  /**
-   * Builds an indexed map of all registered policies (by constructor reference and class name).
-   */
   private getPolicyMap(): Map<Function | string, ToolPolicy> {
     let instances = Array.isArray(this.policyInstances) ? this.policyInstances : [];
     if (instances.length === 0) {
@@ -47,9 +44,6 @@ export class LocalToolProvider {
     return map;
   }
 
-  /**
-   * Resolves a policy instance by constructor reference, class name, or direct ModuleRef DI fallback.
-   */
   private resolvePolicy(
     Constructor: PolicyConstructor,
     policyMap: Map<Function | string, ToolPolicy>,
@@ -66,13 +60,28 @@ export class LocalToolProvider {
     }
   }
 
-  /**
-   * Scans each @ToolSet instance, discovers its @Tool methods, and wraps
-   * each one in a ResolvedTool closure with policy enforcement and
-   * AgentContext pre-bound. The adapter only needs to supply tool args.
-   */
-  buildTools(toolSetInstances: object[], agentContext: AgentContext): ResolvedTool[] {
-    return toolSetInstances.flatMap((instance) => {
+  buildTools(toolSetTokensOrInstances: (object | Function)[], agentContext: AgentContext): ResolvedTool[] {
+    return toolSetTokensOrInstances.flatMap((tokenOrInstance) => {
+      let instance: object | undefined;
+      if (typeof tokenOrInstance === 'function') {
+        try {
+          instance = this.moduleRef.get(tokenOrInstance as any, { strict: false });
+        } catch {
+          instance = undefined;
+        }
+        if (!instance) {
+          try {
+            instance = new (tokenOrInstance as any)();
+          } catch {
+            instance = undefined;
+          }
+        }
+      } else {
+        instance = tokenOrInstance;
+      }
+
+      if (!instance) return [];
+
       const discovered = this.discovery.discover(instance);
       if (!discovered) return [];
 
@@ -103,7 +112,6 @@ export class LocalToolProvider {
       execute: async ({ args }: { args: Record<string, unknown> }): Promise<ToolExecutionResult> => {
         const policyMap = this.getPolicyMap();
 
-        // --- Policy evaluation (context is pre-bound, never sent to LLM) ---
         for (const Constructor of allPolicyConstructors) {
           const policy = this.resolvePolicy(Constructor, policyMap);
 
@@ -140,7 +148,6 @@ export class LocalToolProvider {
           }
         }
 
-        // --- Method invocation ---
         return this.invokeMethod(tool, args, agentContext);
       },
     };

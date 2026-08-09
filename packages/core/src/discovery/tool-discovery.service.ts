@@ -23,33 +23,25 @@ export interface DiscoveredParam {
 
 export interface DiscoveredTool {
   methodName: string;
-  /** Final name exposed to the LLM — falls back to methodName if @Tool.name is absent. */
   toolName: string;
   description: string;
   params: DiscoveredParam[];
-  /** Parameter index that receives AgentContext, or undefined if @Context is not used. */
   contextParamIndex: number | undefined;
-  /** Method-level policy constructors from @UsePolicies on the method. */
   policyConstructors: PolicyConstructor[];
-  /** The ToolSet instance that owns this method — used for invocation. */
   instance: object;
 }
 
 export interface DiscoveredToolSet {
   options: ToolSetOptions;
-  /** Class-level policy constructors from @UsePolicies on the ToolSet class. */
   classPolicyConstructors: PolicyConstructor[];
   tools: DiscoveredTool[];
 }
 
 @Injectable()
 export class ToolDiscoveryService {
-  /**
-   * Scans a @ToolSet instance and extracts structured metadata
-   * for all @Tool methods. Pure reflection — no policy execution or DI.
-   */
   discover(instance: object): DiscoveredToolSet | null {
-    const target = (instance.constructor || Object.getPrototypeOf(instance).constructor) as Function;
+    if (!instance) return null;
+    const target = (typeof instance === 'function' ? instance : instance.constructor) as Function;
     const toolSetOptions: ToolSetOptions | undefined =
       Reflect.getMetadata(TOOLSET_METADATA, target) ||
       Reflect.getMetadata(TOOLSET_METADATA, instance);
@@ -61,7 +53,9 @@ export class ToolDiscoveryService {
     const classPolicyConstructors: PolicyConstructor[] =
       Reflect.getMetadata(TOOL_POLICIES_METADATA, target) ?? [];
 
-    const prototype = Object.getPrototypeOf(instance);
+    const prototype = typeof instance === 'function' ? instance.prototype : Object.getPrototypeOf(instance);
+    if (!prototype) return null;
+
     const methodNames = Object.getOwnPropertyNames(prototype).filter(
       (key) => key !== 'constructor' && typeof (prototype as Record<string, unknown>)[key] === 'function',
     );
@@ -131,9 +125,6 @@ export class ToolDiscoveryService {
     return { options: toolSetOptions, classPolicyConstructors, tools };
   }
 
-  /**
-   * Helper utility to extract method metadata supporting prototype, function target, and descriptor targets.
-   */
   private getMethodMetadata<T>(
     key: symbol | string,
     prototype: object,

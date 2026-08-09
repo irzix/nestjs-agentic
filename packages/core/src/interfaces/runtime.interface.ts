@@ -1,3 +1,4 @@
+import type { AgentStreamEvent } from './agent-stream.interface';
 import type { ResolvedTool, ToolCallRecord } from './tool.interface';
 
 export interface ModelConfig {
@@ -25,6 +26,6 @@ export interface AgentResult {
  */
 export interface RuntimeAdapter {
   execute(input: AgentRunInput): Promise<AgentResult>;
-  /** Optional streaming support. Not required for basic or mock adapters. */
-  stream?(input: AgentRunInput): AsyncIterable<string>;
+  /** Optional structured event streaming support. */
+  stream?(input: AgentRunInput): AsyncIterable<AgentStreamEvent>;
 }

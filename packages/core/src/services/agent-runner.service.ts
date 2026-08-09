@@ -7,6 +7,7 @@ import type {
   AgentContext,
   AgentProvider,
   AgentResult,
+  AgentStreamEvent,
   ModelConfig,
   RuntimeAdapter,
 } from '../interfaces';
@@ -18,10 +19,6 @@ export interface AgenticModuleOptions {
 export interface RunInput {
   sessionId: string;
   message: string;
-  /**
-   * Security and identity data merged into the AgentContext for this run.
-   * Typically sourced from the authenticated request (e.g. req.user).
-   */
   context?: {
     userId?: string;
     tenantId?: string;
@@ -54,9 +51,10 @@ export class AgentRunner {
     const list = Array.isArray(providers) ? providers : [providers];
     for (const agent of list) {
       if (!agent) continue;
+      const target = typeof agent === 'function' ? agent : agent.constructor;
       const metadata: { name: string } =
-        Reflect.getMetadata(AGENT_METADATA, agent.constructor) ??
-        Reflect.getMetadata(AGENT_METADATA, agent);
+        Reflect.getMetadata(AGENT_METADATA, target) ??
+        (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined);
       if (metadata?.name) {
         map.set(metadata.name, agent);
       }
@@ -64,10 +62,6 @@ export class AgentRunner {
     return map;
   }
 
-  /**
-   * Resolves the named agent, builds its tools with policy closures,
-   * and delegates execution to the registered RuntimeAdapter.
-   */
   async run(agentName: string, input: RunInput): Promise<AgentResult> {
     const agentMap = this.getAgentMap();
     const agent = agentMap.get(agentName);
@@ -103,5 +97,55 @@ export class AgentRunner {
       model,
       instructions: config.instructions,
     });
+  }
+
+  async *runStream(agentName: string, input: RunInput): AsyncIterable<AgentStreamEvent> {
+    const agentMap = this.getAgentMap();
+    const agent = agentMap.get(agentName);
+
+    if (!agent) {
+      throw new Error(
+        `Agent "${agentName}" is not registered. ` +
+          `Add it to AgenticModule.forFeature({ agents: [...] }).`,
+      );
+    }
+
+    const config = agent.define();
+    const model: ModelConfig = config.model ?? this.options.defaultModel;
+
+    const agentContext: AgentContext = {
+      sessionId: input.sessionId,
+      traceId: randomUUID(),
+      security: {
+        userId: input.context?.userId,
+        tenantId: input.context?.tenantId,
+        roles: input.context?.roles,
+        permissions: input.context?.permissions,
+      },
+      data: input.context?.data,
+    };
+
+    const tools = this.localToolProvider.buildTools(config.tools, agentContext);
+
+    const adapterInput = {
+      sessionId: input.sessionId,
+      message: input.message,
+      tools,
+      model,
+      instructions: config.instructions,
+    };
+
+    if (this.runtimeAdapter.stream) {
+      yield* this.runtimeAdapter.stream(adapterInput);
+      return;
+    }
+
+    const res = await this.runtimeAdapter.execute(adapterInput);
+    for (const toolCall of res.toolCalls) {
+      yield { type: 'tool_start', toolName: toolCall.toolName, args: toolCall.args };
+      yield { type: 'tool_result', toolName: toolCall.toolName, result: toolCall.result as any };
+    }
+    yield { type: 'token', text: res.output };
+    yield { type: 'complete', sessionId: res.sessionId, output: res.output };
   }
 }

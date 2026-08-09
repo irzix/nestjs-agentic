@@ -2,6 +2,7 @@ import { runAgentRunnerTests } from './agent-runner.spec';
 import { runApprovalServiceTests } from './approval-service.spec';
 import { runLocalToolProviderTests } from './local-tool-provider.spec';
 import { runPolicyTests } from './policies.spec';
+import { runStreamingTests } from './streaming.spec';
 import { runToolDiscoveryTests } from './tool-discovery.spec';
 
 async function runAllCoreTests() {
@@ -15,9 +16,10 @@ async function runAllCoreTests() {
     await runApprovalServiceTests();
     await runAgentRunnerTests();
     await runPolicyTests();
+    await runStreamingTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 5 CORE UNIT TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 6 CORE UNIT TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: any) {
     console.error('\n❌ TEST SUITE FAILURE:', err.message);
