@@ -1,7 +1,13 @@
 import { Test } from '@nestjs/testing';
 import { AgentRunner, ApprovalService, MockRuntimeAdapter, RUNTIME_ADAPTER } from 'nestjs-agentic';
 import type { AgentStreamEvent, ToolExecutionResult } from 'nestjs-agentic';
-import { CompositeMemory, ScratchpadMemory, ShortTermMemory } from '@nestjs-agentic/memory';
+import {
+  CompositeMemory,
+  EpisodicMemory,
+  ScratchpadMemory,
+  SemanticMemory,
+  ShortTermMemory,
+} from '@nestjs-agentic/memory';
 import { AppModule } from './app.module';
 
 async function runTests() {
@@ -183,11 +189,13 @@ async function runTests() {
     assert(false, 'Test 5: Structured Event Streaming', err.message);
   }
 
-  // TEST 6: @nestjs-agentic/memory Store Integration
+  // TEST 6: Multi-tier Memory Store Integration (ShortTerm, Scratchpad, Semantic, Episodic)
   try {
     const shortTerm = new ShortTermMemory({ maxMessages: 5 });
     const scratchpad = new ScratchpadMemory();
-    const compositeMemory = new CompositeMemory([shortTerm, scratchpad]);
+    const semantic = new SemanticMemory();
+    const episodic = new EpisodicMemory();
+    const compositeMemory = new CompositeMemory([shortTerm, scratchpad, semantic, episodic]);
 
     const sessMemId = 's6_memory_session';
 
@@ -208,9 +216,25 @@ async function runTests() {
       metadata: { taskId: 'task_audit_01', priority: 'high' },
     });
 
+    // Record semantic fact
+    await compositeMemory.save({
+      id: 'sem_audit_01',
+      sessionId: sessMemId,
+      type: 'semantic',
+      content: 'Account ACC-1 audit policy belongs to Acme Corp logistics division',
+    });
+
+    // Record episodic event
+    await compositeMemory.save({
+      id: 'ep_audit_01',
+      sessionId: sessMemId,
+      type: 'episodic',
+      content: 'Agent completed audit verification for ACC-1',
+    });
+
     const recalled = await compositeMemory.recall('audit', { sessionId: sessMemId });
 
-    assert(recalled.length === 2, 'Test 6a: CompositeMemory recalled items across short-term and scratchpad tiers');
+    assert(recalled.length >= 3, 'Test 6a: CompositeMemory recalled items across multi-tier memory stores');
     assert(
       recalled.some((r) => r.type === 'short_term'),
       'Test 6b: ShortTermMemory message retrieved in recall query',
@@ -219,8 +243,16 @@ async function runTests() {
       recalled.some((r) => r.type === 'scratchpad'),
       'Test 6c: ScratchpadMemory task retrieved in recall query',
     );
+    assert(
+      recalled.some((r) => r.type === 'semantic'),
+      'Test 6d: SemanticMemory fact retrieved in recall query',
+    );
+    assert(
+      recalled.some((r) => r.type === 'episodic'),
+      'Test 6e: EpisodicMemory event retrieved in recall query',
+    );
   } catch (err: any) {
-    assert(false, 'Test 6: Cognitive Memory Store Integration', err.message);
+    assert(false, 'Test 6: Multi-tier Memory Store Integration', err.message);
   }
 
   console.log(`\n📊 Summary: ${passed} passed, ${failed} failed.\n`);

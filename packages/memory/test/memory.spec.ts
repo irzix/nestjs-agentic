@@ -1,6 +1,13 @@
 import { InMemoryStateStore, RedisStateStore } from '@nestjs-agentic/core';
 import type { GenericRedisClient } from '@nestjs-agentic/core';
-import { CompositeMemory, ScratchpadMemory, ShortTermMemory } from '../src';
+import {
+  CompositeMemory,
+  EpisodicMemory,
+  ScratchpadMemory,
+  SemanticMemory,
+  ShortTermMemory,
+  TokenBudgetSummarizer,
+} from '../src';
 
 export async function runMemoryTests() {
   console.log('🧠 Running @nestjs-agentic/memory Unit Tests...\n');
@@ -110,6 +117,63 @@ export async function runMemoryTests() {
     assert(recalled[0].content.includes('unified'), 'Test 4b: Memory content retrieved from core RedisStateStore matches');
   } catch (err: any) {
     assert(false, 'Test 4: Core StateStore Integration', err.message);
+  }
+
+  // TEST 5: SemanticMemory Basic Search
+  try {
+    const semantic = new SemanticMemory();
+    await semantic.save({
+      id: 'sem_1',
+      sessionId,
+      type: 'semantic',
+      content: 'User is allergic to peanuts and prefers dark mode UI',
+    });
+    await semantic.save({
+      id: 'sem_2',
+      sessionId,
+      type: 'semantic',
+      content: 'User account billing cycle is monthly on 1st',
+    });
+
+    const matches = await semantic.recall('allergic peanuts', { sessionId });
+    assert(matches.length === 1, 'Test 5a: SemanticMemory recalled relevant record');
+    assert(matches[0].content.includes('peanuts'), 'Test 5b: Recalled semantic record content matches query');
+  } catch (err: any) {
+    assert(false, 'Test 5: SemanticMemory', err.message);
+  }
+
+  // TEST 6: EpisodicMemory Timeline
+  try {
+    const episodic = new EpisodicMemory();
+    await episodic.save({
+      id: 'ep_1',
+      sessionId,
+      type: 'episodic',
+      content: 'Agent initialized financial transfer workflow',
+    });
+
+    const timeline = await episodic.getTimeline(sessionId);
+    assert(timeline.length === 1, 'Test 6a: EpisodicMemory recorded trajectory event');
+    assert(timeline[0].content.includes('financial transfer'), 'Test 6b: Timeline content matches');
+  } catch (err: any) {
+    assert(false, 'Test 6: EpisodicMemory', err.message);
+  }
+
+  // TEST 7: TokenBudgetSummarizer
+  try {
+    const summarizer = new TokenBudgetSummarizer({ maxTokenBudget: 20 });
+    const records = [
+      { id: '1', sessionId, type: 'short_term', content: 'Long interaction sentence line 1' },
+      { id: '2', sessionId, type: 'short_term', content: 'Long interaction sentence line 2' },
+      { id: '3', sessionId, type: 'short_term', content: 'Long interaction sentence line 3' },
+      { id: '4', sessionId, type: 'short_term', content: 'Recent question' },
+    ];
+
+    const summarized = summarizer.summarizeRecords(records);
+    assert(summarized.length < records.length, 'Test 7a: TokenBudgetSummarizer compressed records');
+    assert(summarized[0].content.includes('Summary of'), 'Test 7b: Summary record created');
+  } catch (err: any) {
+    assert(false, 'Test 7: TokenBudgetSummarizer', err.message);
   }
 
   console.log(`\n  📊 Memory Test Results: ${passed} passed, ${failed} failed.\n`);

@@ -18,3 +18,13 @@ export interface AgentMemoryStore {
   recall(query: string, options?: MemoryQueryOptions): Promise<MemoryRecord[]>;
   clear?(sessionId?: string): Promise<void>;
 }
+
+export interface SemanticMatch {
+  record: MemoryRecord;
+  score: number;
+}
+
+export interface SemanticStoreProvider {
+  save(record: MemoryRecord, embedding?: number[]): Promise<void>;
+  search(query: string, limit?: number): Promise<SemanticMatch[]>;
+}
