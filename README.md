@@ -5,52 +5,40 @@
 <h1 align="center">nestjs-agentic</h1>
 
 <p align="center">
-  AI Integration Layer for NestJS Applications — Transform existing backend services into safe, AI-native tools without breaking architecture.
+  <b>AI Integration Layer for NestJS Applications</b><br>
+  Transform existing backend services into safe, type-safe, policy-guarded AI tools without altering architecture.
 </p>
 
 <p align="center">
-  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%2B-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS Compatible" /></a>
+  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%2B-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS" /></a>
   <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/v/nestjs-agentic.svg?color=E0234E" alt="NPM Version" /></a>
   <a href="https://github.com/irzix/nestjs-agentic/actions"><img src="https://github.com/irzix/nestjs-agentic/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0%2B-blue?logo=typescript&logoColor=white" alt="TypeScript" /></a>
   <a href="https://github.com/irzix/nestjs-agentic/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/nestjs-agentic.svg?color=blue" alt="License" /></a>
-  <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/dm/nestjs-agentic.svg" alt="Downloads" /></a>
 </p>
 
 ---
 
 ## What is nestjs-agentic?
 
-Most AI frameworks force you to build a separate ecosystem or abandon your backend patterns. **nestjs-agentic** is an **AI integration layer for NestJS** that makes AI capabilities a first-class citizen in your existing codebase.
+Most AI frameworks force you to build a separate ecosystem or abandon your backend patterns. **nestjs-agentic** is an **AI integration layer for NestJS** that makes AI capabilities a first-class citizen in your existing NestJS codebase.
 
-It allows you to expose your existing NestJS services as **type-safe, policy-guarded tools** for LLMs using standard NestJS Dependency Injection, complete with **built-in Human-in-the-Loop (HITL)** approvals.
+It allows you to expose existing NestJS services as **type-safe, policy-guarded tools** for LLMs using standard NestJS Dependency Injection, complete with **built-in Human-in-the-Loop (HITL)** approvals.
 
 ```
-Your NestJS Application (Services, Controllers, DB)
-         │
-    @ToolSet & @Tool Decorators
-         │
-    @UsePolicies (Security & HITL Approval)
-         │
-   LocalToolProvider (Resolved Tools with Policy Closures)
-         │
-   RuntimeAdapter (Pluggable: ADK, Vercel AI, Mock)
-         │
-    LLM Provider (Gemini / GPT / Claude)
+Your NestJS App (Services / DB) ──► @ToolSet & @Tool ──► @UsePolicies (HITL) ──► RuntimeAdapter (ADK / LangGraph / Mock) ──► LLM
 ```
-
-> 📖 *For detailed visual sequence diagrams and flowcharts, check out the [Architecture Guide](docs/ARCHITECTURE.md).*
 
 ---
 
-## Why nestjs-agentic?
+## Features at a Glance
 
-- 🛠️ **NestJS Native:** Decorator-driven tool definitions (`@ToolSet`, `@Tool`, `@Param`) using your existing services.
-- 🛡️ **Policy Governance:** Enforce security constraints, tenant bounds, and rate limits before tool execution.
-- 🛑 **Human-in-the-Loop (HITL) Primitives:** Pause sensitive tool executions and resume them after supervisor approval via `ApprovalService`.
-- 🔒 **Context Aware:** Auto-inject `userId`, `tenantId`, and `traceId` straight into tool handlers via `@Context()`.
-- 🔌 **Adapter Agnostic:** Core knows nothing about specific LLM runtimes. Works with Google ADK, Vercel AI SDK, or custom providers.
-- 🧪 **Test First:** Ships with `MockRuntimeAdapter` for testing tools and agents without live LLM API keys.
+- 🛠️ **NestJS Native:** Decorator-driven tool definitions (`@ToolSet`, `@Tool`, `@Param`) using existing services.
+- 🛡️ **Policy Governance:** 3-state evaluation pipeline (`allow`, `deny`, `require_approval`) before tool execution.
+- 🛑 **Human-in-the-Loop (HITL):** Pause sensitive tool executions and resume after supervisor approval via `ApprovalService`.
+- 🔒 **Context Isolation:** Auto-inject `userId`, `tenantId`, and `traceId` straight into tool closures via `@Context()` — zero LLM prompt leakage.
+- 🔌 **Adapter Agnostic:** Works with Google ADK (`@nestjs-agentic/adk`), Vercel AI SDK, LangGraph, or custom runtimes.
+- 🧪 **Mock-First Testing:** Includes `MockRuntimeAdapter` for unit testing tools and policies without live LLM API calls.
 
 ---
 
@@ -60,13 +48,13 @@ Your NestJS Application (Services, Controllers, DB)
 # Core package
 npm install nestjs-agentic
 
-# Optional runtime adapters
+# Google ADK Adapter
 npm install @nestjs-agentic/adk
 ```
 
 ---
 
-## Quick Start (End-to-End Flow)
+## Quick Start (3 Steps)
 
 ### 1. Define Policy & Tools
 
@@ -74,40 +62,22 @@ npm install @nestjs-agentic/adk
 import { Injectable } from '@nestjs/common';
 import { ToolSet, Tool, Param, Context, UsePolicies, AgentContext, ToolPolicy, PolicyResult } from 'nestjs-agentic';
 
-// Policy requiring human approval for refunds over $500
 @Injectable()
 export class RefundLimitPolicy implements ToolPolicy {
   async evaluate(ctx: AgentContext, toolName: string, args: Record<string, unknown>): Promise<PolicyResult> {
-    const amount = Number(args.amount);
-    if (amount > 500) {
-      return {
-        decision: 'require_approval',
-        reason: `Refund of $${amount} exceeds auto-approval limit ($500).`,
-      };
-    }
-    return { decision: 'allow' };
+    return Number(args.amount) > 500
+      ? { decision: 'require_approval', reason: 'Refund exceeds $500 threshold.' }
+      : { decision: 'allow' };
   }
 }
 
-// ToolSet leveraging existing OrderService
-@ToolSet({ name: 'order', tags: ['order', 'sales'] })
+@ToolSet({ name: 'order' })
 export class OrderTools {
-  constructor(private orderService: OrderService) {}
+  constructor(private readonly orderService: OrderService) {}
 
-  @Tool({ description: 'Look up customer order details' })
-  async getOrder(
-    @Param('orderId', { description: 'The order ID' }) orderId: string,
-    @Context() ctx: AgentContext,
-  ) {
-    return this.orderService.findById(orderId, ctx.userId);
-  }
-
-  @Tool({ description: 'Request a refund for an order' })
+  @Tool({ description: 'Refund an order' })
   @UsePolicies(RefundLimitPolicy)
-  async refundOrder(
-    @Param('orderId') orderId: string,
-    @Param('amount') amount: number,
-  ) {
+  async refundOrder(@Param('orderId') orderId: string, @Param('amount') amount: number) {
     return this.orderService.refund(orderId, amount);
   }
 }
@@ -119,130 +89,58 @@ export class OrderTools {
 import { Agent, AgentProvider, AgentConfig, AgenticModule, RUNTIME_ADAPTER } from 'nestjs-agentic';
 import { AdkRuntimeAdapter } from '@nestjs-agentic/adk';
 
-@Agent({
-  name: 'customer-support',
-  description: 'Handles order lookup and refund inquiries',
-  model: { provider: 'google', model: 'gemini-2.0-flash' },
-})
+@Agent({ name: 'customer-support', model: { provider: 'google', model: 'gemini-2.0-flash' } })
 export class SupportAgent implements AgentProvider {
-  constructor(private orderTools: OrderTools) {}
-
+  constructor(private readonly orderTools: OrderTools) {}
   define(): AgentConfig {
-    return {
-      instructions: 'You are a helpful customer support assistant.',
-      tools: [this.orderTools],
-    };
+    return { instructions: 'Helpful support agent.', tools: [this.orderTools] };
   }
 }
 
 @Module({
   imports: [
-    AgenticModule.forRoot({
-      defaultModel: { provider: 'google', model: 'gemini-2.0-flash' },
-    }),
-    AgenticModule.forFeature({
-      agents: [SupportAgent],
-      toolSets: [OrderTools],
-    }),
+    AgenticModule.forRoot({ defaultModel: { provider: 'google', model: 'gemini-2.0-flash' } }),
+    AgenticModule.forFeature({ agents: [SupportAgent], toolSets: [OrderTools], policies: [RefundLimitPolicy] }),
   ],
-  providers: [
-    { provide: RUNTIME_ADAPTER, useClass: AdkRuntimeAdapter },
-  ],
+  providers: [{ provide: RUNTIME_ADAPTER, useClass: AdkRuntimeAdapter }],
 })
 export class SupportModule {}
 ```
 
-### 3. Controller Execution & Approval Endpoint
+### 3. Controller Execution & Approval
 
 ```typescript
 @Controller('support')
 export class SupportController {
   constructor(
-    private agentRunner: AgentRunner,
-    private approvalService: ApprovalService,
+    private readonly runner: AgentRunner,
+    private readonly approvalService: ApprovalService,
   ) {}
 
   @Post('chat')
-  async chat(@Body() body: { sessionId: string; message: string }, @Req() req) {
-    return this.agentRunner.run('customer-support', {
-      sessionId: body.sessionId,
-      message: body.message,
-      context: { userId: req.user.id },
-    });
+  async chat(@Body() body: { sessionId: string; message: string }) {
+    return this.runner.run('customer-support', { sessionId: body.sessionId, message: body.message });
   }
 
-  // Endpoint to approve pending HITL tool calls
-  @Post('approve/:approvalId')
-  async approve(@Param('approvalId') approvalId: string) {
-    return this.approvalService.approve(approvalId);
+  @Post('approve/:id')
+  async approve(@Param('id') id: string) {
+    return this.approvalService.approve(id);
   }
 }
 ```
 
 ---
 
-## Testing
+## Testing & Examples
 
-Test tool invocation and policy guards with `MockRuntimeAdapter` without live LLM calls:
-
-```typescript
-import { Test } from '@nestjs/testing';
-import { MockRuntimeAdapter, RUNTIME_ADAPTER, AgentRunner } from 'nestjs-agentic';
-
-describe('OrderTools HITL', () => {
-  let runner: AgentRunner;
-  let mockRuntime: MockRuntimeAdapter;
-
-  beforeEach(async () => {
-    const module = await Test.createTestingModule({
-      imports: [
-        AgenticModule.forRoot({ defaultModel: { provider: 'mock', model: 'test' } }),
-        AgenticModule.forFeature({ agents: [SupportAgent], toolSets: [OrderTools] }),
-      ],
-    })
-      .overrideProvider(RUNTIME_ADAPTER)
-      .useClass(MockRuntimeAdapter)
-      .compile();
-
-    runner = module.get(AgentRunner);
-    mockRuntime = module.get(RUNTIME_ADAPTER);
-  });
-
-  it('should trigger pending_approval on refund over limit', async () => {
-    mockRuntime.whenAsked('Refund $600 for order #123')
-      .thenCallTool('refundOrder', { orderId: '123', amount: 600 });
-
-    const result = await runner.run('customer-support', {
-      sessionId: 'test-session',
-      message: 'Refund $600 for order #123',
-    });
-
-    expect(result.toolCalls[0].result).toEqual(
-      expect.objectContaining({ status: 'pending_approval' }),
-    );
-  });
-});
-```
+- 🧪 **Unit Testing:** Use `MockRuntimeAdapter` to test agent flows without LLM API keys. See the [API Reference](docs/API_REFERENCE.md#mockruntimeadapter) for examples.
+- 🚀 **Full Modular Application Example:** Explore the complete customer support demo app in [examples/customer-support](examples/customer-support).
 
 ---
 
-## Roadmap
+## Documentation & Vision
 
-- [x] **v0.1 Lean Core:** NestJS Tool Decorators (`@ToolSet`, `@Tool`, `@Param`, `@Context`)
-- [x] **v0.1 Policy & HITL:** `@UsePolicies` with working 3-state `PolicyResult` and `ApprovalService`
-- [x] **v0.1 Adapters & Testing:** Built-in `MockRuntimeAdapter` and official `@nestjs-agentic/adk`
-- [ ] **v0.2 Enterprise Governance Matrix:** Tiered approval policies, multi-tenant isolation, and risk scoring
-- [ ] **v0.2 Multi-Agent & Transports:** Sub-agent delegation and MCP (Model Context Protocol) support
-- [ ] **v0.3 Observability & Audit:** Compliance audit trail (`AuditEventStore`) and OpenTelemetry / Langfuse observers
-- [ ] **v1.0 Durable Workflows:** Temporal.io and BullMQ async execution primitives
-
-👉 **[Explore the Full Product Roadmap & Governance Vision →](docs/ROADMAP.md)**
-
----
-
-## Documentation
-
-- 🗺️ [Product Roadmap & Governance Vision](docs/ROADMAP.md)
+- 🗺️ [Product Roadmap & Architectural Vision](docs/ROADMAP.md)
 - 📐 [Architecture Guide & Diagrams](docs/ARCHITECTURE.md)
 - 📚 [API Reference](docs/API_REFERENCE.md)
 - 🤝 [Contributing Guide](CONTRIBUTING.md)
@@ -251,4 +149,4 @@ describe('OrderTools HITL', () => {
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © [irzix](https://github.com/irzix)
