@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { AgentRunner, ApprovalService, MockRuntimeAdapter, RUNTIME_ADAPTER } from 'nestjs-agentic';
 import type { AgentStreamEvent, ToolExecutionResult } from 'nestjs-agentic';
+import { CompositeMemory, ScratchpadMemory, ShortTermMemory } from '@nestjs-agentic/memory';
 import { AppModule } from './app.module';
 
 async function runTests() {
@@ -68,7 +69,7 @@ async function runTests() {
       context: {
         userId: 'usr_regular',
         tenantId: 'acme_corp',
-        roles: ['regular_user'], // Missing finance_officer
+        roles: ['regular_user'],
       },
     });
 
@@ -136,7 +137,6 @@ async function runTests() {
     );
 
     if (approvalId) {
-      // Execute human approval
       const approvalResult = await approvalService.approve(approvalId);
       assert(
         approvalResult.success === true,
@@ -181,6 +181,46 @@ async function runTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 5: Structured Event Streaming', err.message);
+  }
+
+  // TEST 6: @nestjs-agentic/memory Store Integration
+  try {
+    const shortTerm = new ShortTermMemory({ maxMessages: 5 });
+    const scratchpad = new ScratchpadMemory();
+    const compositeMemory = new CompositeMemory([shortTerm, scratchpad]);
+
+    const sessMemId = 's6_memory_session';
+
+    // Record session conversation message
+    await compositeMemory.save({
+      id: 'msg_101',
+      sessionId: sessMemId,
+      type: 'short_term',
+      content: 'User requested high-value ledger transfer audit',
+    });
+
+    // Record working task in Scratchpad
+    await compositeMemory.save({
+      id: 'task_audit_01',
+      sessionId: sessMemId,
+      type: 'scratchpad',
+      content: 'Pending audit for ACC-1 transfer',
+      metadata: { taskId: 'task_audit_01', priority: 'high' },
+    });
+
+    const recalled = await compositeMemory.recall('audit', { sessionId: sessMemId });
+
+    assert(recalled.length === 2, 'Test 6a: CompositeMemory recalled items across short-term and scratchpad tiers');
+    assert(
+      recalled.some((r) => r.type === 'short_term'),
+      'Test 6b: ShortTermMemory message retrieved in recall query',
+    );
+    assert(
+      recalled.some((r) => r.type === 'scratchpad'),
+      'Test 6c: ScratchpadMemory task retrieved in recall query',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 6: Cognitive Memory Store Integration', err.message);
   }
 
   console.log(`\n📊 Summary: ${passed} passed, ${failed} failed.\n`);

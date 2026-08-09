@@ -5,6 +5,9 @@ export class ScratchpadMemory implements AgentMemoryStore {
   private readonly tasksMap = new Map<string, Map<string, MemoryRecord>>();
 
   async save(record: MemoryRecord): Promise<void> {
+    if (record.type && record.type !== 'scratchpad') {
+      return;
+    }
     const key = (record.metadata?.taskId as string) || record.id || randomUUID();
     let sessionMap = this.tasksMap.get(record.sessionId);
     if (!sessionMap) {

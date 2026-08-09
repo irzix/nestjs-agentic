@@ -14,9 +14,13 @@ export class ShortTermMemory implements AgentMemoryStore {
   }
 
   async save(record: MemoryRecord): Promise<void> {
+    if (record.type && record.type !== 'short_term') {
+      return;
+    }
     const sessionRecords = this.records.get(record.sessionId) ?? [];
     sessionRecords.push({
       ...record,
+      type: 'short_term',
       id: record.id || randomUUID(),
       timestamp: record.timestamp || new Date(),
     });
