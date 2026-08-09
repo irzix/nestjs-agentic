@@ -230,17 +230,19 @@ describe('OrderTools HITL', () => {
 
 - [x] **v0.1 Lean Core:** NestJS Tool Decorators (`@ToolSet`, `@Tool`, `@Param`, `@Context`)
 - [x] **v0.1 Policy & HITL:** `@UsePolicies` with working 3-state `PolicyResult` and `ApprovalService`
-- [x] **v0.1 Testing:** Built-in `MockRuntimeAdapter`
-- [ ] **v0.2 Transports:** MCP (Model Context Protocol) `ToolProvider` support
-- [ ] **v0.2 Adapters:** Official Vercel AI SDK & LangGraph `RuntimeAdapter` implementations
-- [ ] **v0.2 Multi-Agent:** Sub-agent orchestration via `AgentConfig.subAgents` — delegate work across agents with full policy & HITL support
-- [ ] **v0.3 Observability:** OpenTelemetry & Langfuse `AgentObserver` implementations
-- [ ] **v1.0 Async Workflows:** Long-running Temporal & BullMQ execution primitives
+- [x] **v0.1 Adapters & Testing:** Built-in `MockRuntimeAdapter` and official `@nestjs-agentic/adk`
+- [ ] **v0.2 Enterprise Governance Matrix:** Tiered approval policies, multi-tenant isolation, and risk scoring
+- [ ] **v0.2 Multi-Agent & Transports:** Sub-agent delegation and MCP (Model Context Protocol) support
+- [ ] **v0.3 Observability & Audit:** Compliance audit trail (`AuditEventStore`) and OpenTelemetry / Langfuse observers
+- [ ] **v1.0 Durable Workflows:** Temporal.io and BullMQ async execution primitives
+
+👉 **[Explore the Full Product Roadmap & Governance Vision →](docs/ROADMAP.md)**
 
 ---
 
 ## Documentation
 
+- 🗺️ [Product Roadmap & Governance Vision](docs/ROADMAP.md)
 - 📐 [Architecture Guide & Diagrams](docs/ARCHITECTURE.md)
 - 📚 [API Reference](docs/API_REFERENCE.md)
 - 🤝 [Contributing Guide](CONTRIBUTING.md)
