@@ -18,7 +18,9 @@
     "types": ["node"],
     "paths": {
       "nestjs-agentic": ["./packages/core/dist/index.d.ts"],
-      "nestjs-agentic/*": ["./packages/core/dist/*"]
+      "nestjs-agentic/*": ["./packages/core/dist/*"],
+      "@nestjs-agentic/adk": ["./packages/runtime-adk/dist/index.d.ts"],
+      "@nestjs-agentic/adk/*": ["./packages/runtime-adk/dist/*"]
     }
   }
 }
