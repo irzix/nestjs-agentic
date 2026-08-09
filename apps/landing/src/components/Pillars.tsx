@@ -4,6 +4,53 @@ import React, { useRef, useCallback } from 'react';
 import { Layers, ShieldCheck, Cpu, GitFork, ArrowUpRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+const cards = [
+  {
+    icon: Layers,
+    title: 'NestJS Primitives & DI',
+    badge: '@ToolSet & @Tool',
+    tagline: 'Zero Architecture Drift',
+    description: (
+      <>
+        Define agent tools directly on existing NestJS services. <code className="text-rose-300 font-mono">@ToolSet</code>, <code className="text-rose-300 font-mono">@Tool</code>, <code className="text-rose-300 font-mono">@Param</code>, and <code className="text-rose-300 font-mono">@Context</code> work with full Dependency Injection — no rewrites, no separate microservices.
+      </>
+    ),
+  },
+  {
+    icon: ShieldCheck,
+    title: 'Governance & HITL Safety',
+    badge: '@UsePolicies & ApprovalService',
+    tagline: 'Enterprise Guardrails',
+    description: (
+      <>
+        Every agent tool call passes through a 3-state policy engine — <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code>. Sensitive operations pause execution until a human supervisor approves via <code className="text-rose-300 font-mono">ApprovalService</code>.
+      </>
+    ),
+  },
+  {
+    icon: Cpu,
+    title: 'Pluggable Runtime Adapters',
+    badge: 'RuntimeAdapter API',
+    tagline: 'Vendor Agnostic',
+    description: (
+      <>
+        Connect to Google ADK (<code className="text-rose-300 font-mono">@nestjs-agentic/adk</code>), Vercel AI SDK, LangGraph, or any custom LLM runtime through a single adapter interface — swap without touching your tool definitions.
+      </>
+    ),
+  },
+  {
+    icon: GitFork,
+    title: 'Multi-Agent Orchestration',
+    badge: 'AgentConfig.subAgents',
+    tagline: 'Coming in v0.2',
+    description: (
+      <>
+        Build complex agentic systems by delegating sub-tasks across specialized sub-agents via <code className="text-rose-300 font-mono">subAgents</code>. Each sub-agent gets its own isolated governance context and policy pipeline.
+      </>
+    ),
+  },
+];
+
 export function Pillars() {
   const frameRef = useRef<HTMLDivElement>(null);
   const glowRef = useRef<HTMLDivElement>(null);
@@ -30,16 +77,11 @@ export function Pillars() {
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
       >
-        
-        {/* Interactive Mouse-Follow Red Glow */}
         <div ref={glowRef} className="nest-cursor-glow" style={{ opacity: 0 }}></div>
-
-        {/* Wandering Ambient Orbs */}
         <div className="nest-orb nest-orb-1"></div>
         <div className="nest-orb nest-orb-2"></div>
         <div className="nest-orb nest-orb-3"></div>
 
-        {/* Section Header */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -51,137 +93,46 @@ export function Pillars() {
             &#123; THE 4 CORE PILLARS &#125;
           </div>
           <h2 className="text-4xl sm:text-5xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-[1.15] font-sans">
-            Enterprise Agentic Infrastructure for NestJS.
+            Agentic infrastructure built<br />on NestJS, not around it.
           </h2>
         </motion.div>
 
-        {/* 2x2 Grid of Large Glass Feature Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
-          
-          {/* Card 1: NestJS Primitives & DI */}
-          <motion.div
-            initial={{ opacity: 0, y: 35 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-60px" }}
-            transition={{ duration: 0.7, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-            className="nest-glass-card p-8 sm:p-10 flex flex-col justify-between min-h-[300px] sm:min-h-[320px] relative overflow-hidden group"
-          >
-            <div>
-              <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
-                <Layers className="w-6 h-6" />
-              </div>
+          {cards.map((card, idx) => {
+            const Icon = card.icon;
+            return (
+              <motion.div
+                key={card.title}
+                initial={{ opacity: 0, y: 35 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-60px" }}
+                transition={{ duration: 0.7, delay: idx * 0.1, ease: [0.16, 1, 0.3, 1] }}
+                className="nest-glass-card p-8 sm:p-10 flex flex-col justify-between min-h-[300px] sm:min-h-[320px] relative overflow-hidden group"
+              >
+                <div>
+                  <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
+                    <Icon className="w-6 h-6" />
+                  </div>
 
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
-                  NestJS Primitives &amp; DI
-                </h3>
-                <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
-              </div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
+                      {card.title}
+                    </h3>
+                    <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
+                  </div>
 
-              <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
-                Expose existing backend services directly with <code className="text-rose-300 font-mono">@ToolSet</code>, <code className="text-rose-300 font-mono">@Tool</code>, and <code className="text-rose-300 font-mono">@Context</code> decorators. Full Dependency Injection integration.
-              </p>
-            </div>
+                  <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
+                    {card.description}
+                  </p>
+                </div>
 
-            <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
-              <span className="text-rose-400/90 font-medium">@ToolSet &amp; @Tool</span>
-              <span className="text-zinc-600">Zero Architecture Drift</span>
-            </div>
-          </motion.div>
-
-          {/* Card 2: Governance & HITL Safety */}
-          <motion.div
-            initial={{ opacity: 0, y: 35 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-60px" }}
-            transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="nest-glass-card p-8 sm:p-10 flex flex-col justify-between min-h-[300px] sm:min-h-[320px] relative overflow-hidden group"
-          >
-            <div>
-              <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
-                <ShieldCheck className="w-6 h-6" />
-              </div>
-
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
-                  Governance &amp; HITL Safety
-                </h3>
-                <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
-              </div>
-
-              <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
-                3-state policy engine (<code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, <code className="text-rose-300 font-mono">require_approval</code>). Pause sensitive execution and resume upon human supervisor approval via <code className="text-rose-300 font-mono">ApprovalService</code>.
-              </p>
-            </div>
-
-            <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
-              <span className="text-rose-400/90 font-medium">@UsePolicies &amp; HITL</span>
-              <span className="text-zinc-600">Enterprise Guardrails</span>
-            </div>
-          </motion.div>
-
-          {/* Card 3: Pluggable Ecosystem Adapters */}
-          <motion.div
-            initial={{ opacity: 0, y: 35 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-60px" }}
-            transition={{ duration: 0.7, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="nest-glass-card p-8 sm:p-10 flex flex-col justify-between min-h-[300px] sm:min-h-[320px] relative overflow-hidden group"
-          >
-            <div>
-              <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
-                <Cpu className="w-6 h-6" />
-              </div>
-
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
-                  Ecosystem Adapters
-                </h3>
-                <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
-              </div>
-
-              <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
-                Connect seamlessly to Google ADK (<code className="text-rose-300 font-mono">@nestjs-agentic/adk</code>), Vercel AI SDK, LangGraph, or custom LLM runtimes with zero framework lock-in.
-              </p>
-            </div>
-
-            <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
-              <span className="text-rose-400/90 font-medium">RuntimeAdapter API</span>
-              <span className="text-zinc-600">Vendor Agnostic</span>
-            </div>
-          </motion.div>
-
-          {/* Card 4: Multi-Agent Orchestration */}
-          <motion.div
-            initial={{ opacity: 0, y: 35 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-60px" }}
-            transition={{ duration: 0.7, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
-            className="nest-glass-card p-8 sm:p-10 flex flex-col justify-between min-h-[300px] sm:min-h-[320px] relative overflow-hidden group"
-          >
-            <div>
-              <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
-                <GitFork className="w-6 h-6" />
-              </div>
-
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
-                  Multi-Agent Orchestration
-                </h3>
-                <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
-              </div>
-
-              <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
-                Delegate sub-tasks across specialized sub-agents via <code className="text-rose-300 font-mono">subAgents</code> with isolated sub-context governance and immutable audit trails.
-              </p>
-            </div>
-
-            <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
-              <span className="text-rose-400/90 font-medium">Sub-Agent Workflows</span>
-              <span className="text-zinc-600">Complex Agent Systems</span>
-            </div>
-          </motion.div>
-
+                <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
+                  <span className="text-rose-400/90 font-medium">{card.badge}</span>
+                  <span className="text-zinc-600">{card.tagline}</span>
+                </div>
+              </motion.div>
+            );
+          })}
         </div>
 
       </div>
