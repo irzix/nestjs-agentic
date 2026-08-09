@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo-placeholder.png" alt="nestjs-agentic" width="200" />
+  <img src="docs/assets/banner.jpeg" alt="nestjs-agentic banner" width="100%" />
 </p>
 
 <h1 align="center">nestjs-agentic</h1>
