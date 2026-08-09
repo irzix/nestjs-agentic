@@ -2,6 +2,14 @@
   "name": "@nestjs-agentic/core",
   "version": "0.2.0",
   "description": "NestJS-native primitives for building production AI agents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/irzix/nestjs-agentic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/irzix/nestjs-agentic/issues"
+  },
+  "homepage": "https://github.com/irzix/nestjs-agentic#readme",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "publishConfig": {

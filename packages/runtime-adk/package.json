@@ -2,6 +2,14 @@
   "name": "@nestjs-agentic/adk",
   "version": "0.2.0",
   "description": "Google ADK runtime adapter for nestjs-agentic",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/irzix/nestjs-agentic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/irzix/nestjs-agentic/issues"
+  },
+  "homepage": "https://github.com/irzix/nestjs-agentic#readme",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

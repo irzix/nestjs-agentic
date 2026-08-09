@@ -3,6 +3,14 @@
   "version": "0.2.0",
   "private": true,
   "description": "NestJS-native primitives for building production AI agents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/irzix/nestjs-agentic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/irzix/nestjs-agentic/issues"
+  },
+  "homepage": "https://github.com/irzix/nestjs-agentic#readme",
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces"
