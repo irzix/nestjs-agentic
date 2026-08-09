@@ -5,8 +5,8 @@
 <h1 align="center">nestjs-agentic</h1>
 
 <p align="center">
-  <b>AI Integration Layer for NestJS Applications</b><br>
-  Transform existing backend services into safe, type-safe, policy-guarded AI tools without altering architecture.
+  <b>Agentic Infrastructure & Governance Layer for NestJS</b><br>
+  Build, govern, and orchestrate autonomous AI agents inside your existing NestJS services — without architecture drift.
 </p>
 
 <p align="center">
@@ -21,24 +21,24 @@
 
 ## What is nestjs-agentic?
 
-Most AI frameworks force you to build a separate ecosystem or abandon your backend patterns. **nestjs-agentic** is an **AI integration layer for NestJS** that makes AI capabilities a first-class citizen in your existing NestJS codebase.
+Most agentic frameworks force you to build outside your backend — a separate Python service, a standalone graph, a different runtime. **nestjs-agentic** is different.
 
-It allows you to expose existing NestJS services as **type-safe, policy-guarded tools** for LLMs using standard NestJS Dependency Injection, complete with **built-in Human-in-the-Loop (HITL)** approvals.
+It is the **agentic infrastructure layer for NestJS**: define agents and tools using the decorators you already know, enforce policy guardrails before every tool call, and wire your existing services into any LLM runtime — all inside the NestJS DI container.
 
 ```
-Your NestJS App (Services / DB) ──► @ToolSet & @Tool ──► @UsePolicies (HITL) ──► RuntimeAdapter (ADK / LangGraph / Mock) ──► LLM
+NestJS Services (DB / APIs) ──► @ToolSet & @Tool ──► @UsePolicies ──► [ allow / deny / HITL ] ──► RuntimeAdapter ──► LLM
 ```
 
 ---
 
-## Features at a Glance
+## The 4 Core Pillars
 
-- 🛠️ **NestJS Native:** Decorator-driven tool definitions (`@ToolSet`, `@Tool`, `@Param`) using existing services.
-- 🛡️ **Policy Governance:** 3-state evaluation pipeline (`allow`, `deny`, `require_approval`) before tool execution.
-- 🛑 **Human-in-the-Loop (HITL):** Pause sensitive tool executions and resume after supervisor approval via `ApprovalService`.
-- 🔒 **Context Isolation:** Auto-inject `userId`, `tenantId`, and `traceId` straight into tool closures via `@Context()` — zero LLM prompt leakage.
-- 🔌 **Adapter Agnostic:** Works with Google ADK (`@nestjs-agentic/adk`), Vercel AI SDK, LangGraph, or custom runtimes.
-- 🧪 **Mock-First Testing:** Includes `MockRuntimeAdapter` for unit testing tools and policies without live LLM API calls.
+| Pillar | What it gives you |
+|--------|-------------------|
+| **NestJS Primitives & DI** | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context` — full DI, no rewrites |
+| **Governance & HITL Safety** | 3-state policy engine (`allow`, `deny`, `require_approval`) on every tool call |
+| **Pluggable Runtime Adapters** | Google ADK, Vercel AI SDK, LangGraph, or custom — swap without touching tools |
+| **Multi-Agent Orchestration** | Sub-agent delegation via `AgentConfig.subAgents` *(coming in v0.2)* |
 
 ---
 
@@ -48,7 +48,7 @@ Your NestJS App (Services / DB) ──► @ToolSet & @Tool ──► @UsePolicie
 # Core package
 npm install nestjs-agentic
 
-# Google ADK Adapter
+# Google ADK Adapter (optional)
 npm install @nestjs-agentic/adk
 ```
 
@@ -60,25 +60,34 @@ npm install @nestjs-agentic/adk
 
 ```typescript
 import { Injectable } from '@nestjs/common';
-import { ToolSet, Tool, Param, Context, UsePolicies, AgentContext, ToolPolicy, PolicyResult } from 'nestjs-agentic';
+import { ToolSet, Tool, Param, Context, UsePolicies } from 'nestjs-agentic';
+import type { AgentContext, ToolPolicy, PolicyResult } from 'nestjs-agentic';
 
 @Injectable()
 export class RefundLimitPolicy implements ToolPolicy {
-  async evaluate(ctx: AgentContext, toolName: string, args: Record<string, unknown>): Promise<PolicyResult> {
+  async evaluate(
+    ctx: AgentContext,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<PolicyResult> {
     return Number(args.amount) > 500
       ? { decision: 'require_approval', reason: 'Refund exceeds $500 threshold.' }
       : { decision: 'allow' };
   }
 }
 
-@ToolSet({ name: 'order' })
+@ToolSet({ name: 'order', tags: ['order', 'sales'] })
 export class OrderTools {
   constructor(private readonly orderService: OrderService) {}
 
-  @Tool({ description: 'Refund an order' })
+  @Tool({ description: 'Refund an order by ID and amount' })
   @UsePolicies(RefundLimitPolicy)
-  async refundOrder(@Param('orderId') orderId: string, @Param('amount') amount: number) {
-    return this.orderService.refund(orderId, amount);
+  async refundOrder(
+    @Param('orderId') orderId: string,
+    @Param('amount') amount: number,
+    @Context() ctx: AgentContext,
+  ) {
+    return this.orderService.refund(orderId, amount, ctx.security.userId);
   }
 }
 ```
@@ -86,30 +95,43 @@ export class OrderTools {
 ### 2. Define Agent & Module
 
 ```typescript
-import { Agent, AgentProvider, AgentConfig, AgenticModule, RUNTIME_ADAPTER } from 'nestjs-agentic';
+import { Module } from '@nestjs/common';
+import { Agent, AgenticModule, RUNTIME_ADAPTER } from 'nestjs-agentic';
+import type { AgentProvider, AgentConfig } from 'nestjs-agentic';
 import { AdkRuntimeAdapter } from '@nestjs-agentic/adk';
 
-@Agent({ name: 'customer-support', model: { provider: 'google', model: 'gemini-2.0-flash' } })
+@Agent({ name: 'customer-support', description: 'Handles order lookups and refund inquiries' })
 export class SupportAgent implements AgentProvider {
   constructor(private readonly orderTools: OrderTools) {}
+
   define(): AgentConfig {
-    return { instructions: 'Helpful support agent.', tools: [this.orderTools] };
+    return {
+      instructions: 'You are a helpful customer support agent.',
+      tools: [this.orderTools],
+    };
   }
 }
 
 @Module({
   imports: [
     AgenticModule.forRoot({ defaultModel: { provider: 'google', model: 'gemini-2.0-flash' } }),
-    AgenticModule.forFeature({ agents: [SupportAgent], toolSets: [OrderTools], policies: [RefundLimitPolicy] }),
+    AgenticModule.forFeature({
+      agents: [SupportAgent],
+      toolSets: [OrderTools],
+      policies: [RefundLimitPolicy],
+    }),
   ],
   providers: [{ provide: RUNTIME_ADAPTER, useClass: AdkRuntimeAdapter }],
 })
 export class SupportModule {}
 ```
 
-### 3. Controller Execution & Approval
+### 3. Run Agent & Handle HITL Approvals
 
 ```typescript
+import { Controller, Post, Body, Param } from '@nestjs/common';
+import { AgentRunner, ApprovalService } from 'nestjs-agentic';
+
 @Controller('support')
 export class SupportController {
   constructor(
@@ -119,26 +141,72 @@ export class SupportController {
 
   @Post('chat')
   async chat(@Body() body: { sessionId: string; message: string }) {
-    return this.runner.run('customer-support', { sessionId: body.sessionId, message: body.message });
+    return this.runner.run('customer-support', {
+      sessionId: body.sessionId,
+      message: body.message,
+      context: { userId: 'user_123', tenantId: 'acme' },
+    });
   }
 
+  /** Called by a human supervisor to approve a pending tool call. */
   @Post('approve/:id')
   async approve(@Param('id') id: string) {
     return this.approvalService.approve(id);
+  }
+
+  /** Called to reject and discard a pending tool call. */
+  @Post('reject/:id')
+  async reject(@Param('id') id: string) {
+    return this.approvalService.reject(id);
   }
 }
 ```
 
 ---
 
-## Testing & Examples
+## Testing Without LLM API Keys
 
-- 🧪 **Unit Testing:** Use `MockRuntimeAdapter` to test agent flows without LLM API keys. See the [API Reference](docs/API_REFERENCE.md#mockruntimeadapter) for examples.
-- 🚀 **Full Modular Application Example:** Explore the complete customer support demo app in [examples/customer-support](examples/customer-support).
+Use `MockRuntimeAdapter` to unit test your agents, tools, and policies without any real LLM calls:
+
+```typescript
+import { Test } from '@nestjs/testing';
+import { AgenticModule, AgentRunner, MockRuntimeAdapter, RUNTIME_ADAPTER } from 'nestjs-agentic';
+
+describe('SupportAgent — Refund Policy', () => {
+  let runner: AgentRunner;
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      imports: [
+        AgenticModule.forRoot({ defaultModel: { provider: 'google', model: 'gemini-2.0-flash' } }),
+        AgenticModule.forFeature({
+          agents: [SupportAgent],
+          toolSets: [OrderTools],
+          policies: [RefundLimitPolicy],
+        }),
+      ],
+      providers: [{ provide: RUNTIME_ADAPTER, useClass: MockRuntimeAdapter }],
+    }).compile();
+
+    runner = module.get(AgentRunner);
+  });
+
+  it('should require approval on refund > $500', async () => {
+    const result = await runner.run('customer-support', {
+      sessionId: 'test-session',
+      message: 'Refund $600 for order #42',
+    });
+
+    expect(result.toolCalls[0].result.status).toBe('pending_approval');
+  });
+});
+```
+
+> See the complete example in [`examples/customer-support`](examples/customer-support).
 
 ---
 
-## Documentation & Vision
+## Documentation
 
 - 🗺️ [Product Roadmap & Architectural Vision](docs/ROADMAP.md)
 - 📐 [Architecture Guide & Diagrams](docs/ARCHITECTURE.md)
