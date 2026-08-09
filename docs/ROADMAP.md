@@ -66,26 +66,29 @@ The foundation. Every subsequent phase builds on these.
 
 ---
 
-### 🔥 Phase 0.2 — Enterprise Governance Matrix, Memory & Ecosystem
+### 🔥 Phase 0.2 — Enterprise Governance Matrix, Cognitive Memory & Ecosystem
 
-> **Status: Released (v0.2.4)**
+> **Status: Released (v0.2.5)**
 
 Where nestjs-agentic becomes irreplaceable for enterprise teams.
 
 #### 🛡️ Advanced Governance & Multi-Tenant Safety
 
 - [x] **NestJS 11 & NestJS 10 Support** — full peerDependency compatibility across all monorepo packages (`^10.0.0 || ^11.0.0`).
-- [x] **Unified StateStore Architecture** — core `StateStore` abstraction with built-in `InMemoryStateStore` and `RedisStateStore` registered via `AgenticModule.forRoot({ stateStore })`.
+- [x] **Unified StateStore Architecture** — core `StateStore` abstraction with built-in `InMemoryStateStore` and `RedisStateStore` registered centrally via `AgenticModule.forRoot({ stateStore })`.
 - [x] **Built-in Policy Utilities**:
   - `RateLimitPolicy` — sliding-window call frequency enforcement per tenant/user.
   - `CostLimitPolicy` — multi-threshold financial evaluation (`allow` -> `require_approval` -> `deny`).
 - [x] **Structured Event Streaming (`runStream()`)** — typed `AgentStreamEvent` union (`tool_start`, `tool_result`, `approval_required`, `token`, `complete`) for Server-Sent Events (SSE).
 
-#### 🧠 Cognitive Memory Module
+#### 🧠 Cognitive Memory Module (`@nestjs-agentic/memory`)
 
-- [x] **`@nestjs-agentic/memory`** — multi-tier cognitive memory module:
+- [x] **Multi-Tier Memory Architecture**:
   - `ShortTermMemory` — sliding-window conversation history with configurable token caps (`maxMessages`).
   - `ScratchpadMemory` — active working task set & file buffer for session execution.
+  - `SemanticMemory` — pluggable semantic store with `SemanticStoreProvider` & `BasicSemanticStore`.
+  - `EpisodicMemory` — timeline event trajectory history.
+  - `TokenBudgetSummarizer` — automatic token budget estimation and hierarchical summary generator.
   - `CompositeMemory` — unified multi-tier memory store interface.
 
 #### 🔌 Ecosystem Adapters & Transports
@@ -96,17 +99,14 @@ Where nestjs-agentic becomes irreplaceable for enterprise teams.
 
 ---
 
-### 📡 Phase 0.3 — Observability, Compliance & Trajectory Reflection
+### 📡 Phase 0.3 — Multi-Agent Orchestration, Reflection & Observability
 
 > **Status: Active Development**
 
-Make every agent action auditable and traceable.
-
-- [ ] **Immutable Audit Trail (`AuditEventStore`)** — persistent, append-only log of all policy decisions, tool executions, approvals, and rejections. Designed for EU AI Act and SOC 2 compliance requirements.
 - [ ] **`@nestjs-agentic/experience`** — Experience learning & trajectory reflection layer for agent self-improvement and memory persistence.
-- [ ] **AgentObserver Interface** — pluggable observer hooks for the full agent lifecycle:
-  - `OpenTelemetry` exporter for distributed tracing.
-  - `Langfuse` integration for LLM call analytics and evaluation.
+- [ ] **Sub-Agent Orchestration & Delegation** — parent-child memory namespacing and sub-agent task delegation.
+- [ ] **Immutable Audit Trail (`AuditEventStore`)** — persistent, append-only log of all policy decisions, tool executions, approvals, and rejections.
+- [ ] **AgentObserver Interface** — pluggable observer hooks (`OpenTelemetry`, `Langfuse`).
 
 ---
 

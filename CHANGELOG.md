@@ -5,17 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-08-10
+
+### Added
+
+- **Multi-tier Cognitive Memory Suite (`@nestjs-agentic/memory`)**:
+  - `ShortTermMemory`: Sliding-window session conversation history with configurable `maxMessages` token capping and core `StateStore` integration.
+  - `ScratchpadMemory`: Active working task set and file buffer for session execution.
+  - `SemanticMemory`: Pluggable semantic memory layer with `SemanticStoreProvider` interface and `BasicSemanticStore` implementation.
+  - `EpisodicMemory`: Agent trajectory and timeline event history store.
+  - `TokenBudgetSummarizer`: Automatic token budget estimation and hierarchical summary generator for long conversation context pruning.
+  - `CompositeMemory`: Unified multi-tier memory store combining short-term, working, semantic, and episodic stores.
+- **Integration Tests**: Added Test 6 (Multi-tier memory store integration across ShortTerm, Scratchpad, Semantic, and Episodic memory) to `example-financial-governance`.
+
+---
+
 ## [0.2.4] - 2026-08-10
 
 ### Added
 
 - **NestJS 11 & NestJS 10 PeerDependency Support**: Updated `peerDependencies` across `@nestjs-agentic/core`, `@nestjs-agentic/memory`, `@nestjs-agentic/langgraph`, `@nestjs-agentic/adk`, and `nestjs-agentic` to `"^10.0.0 || ^11.0.0"`.
 - **Unified StateStore Architecture**: Added `StateStore` interface in core with `InMemoryStateStore` and `RedisStateStore` registered centrally via `AgenticModule.forRoot({ stateStore })`.
-- **Cognitive Memory Module (`@nestjs-agentic/memory`)**:
-  - `ShortTermMemory`: Sliding-window session conversation history with configurable `maxMessages` token capping.
-  - `ScratchpadMemory`: Active working task set and file buffer for session execution.
-  - `CompositeMemory`: Unified multi-tier memory store combining short-term and working memory stores.
-  - Full compatibility with core `StateStore` (both `InMemoryStateStore` and `RedisStateStore`).
 - **LangGraph Stateful Checkpointer Persistence**: Added `BaseCheckpointSaver` state thread persistence and thread indexing (`MemorySaver`, `SqliteSaver`, `Redis`) to `@nestjs-agentic/langgraph`.
 - **Structured Event Streaming (`runStream()`)**: Added typed `AgentStreamEvent` union (`tool_start`, `tool_result`, `approval_required`, `token`, `complete`) to `AgentRunner.runStream()` for Server-Sent Events (SSE).
 - **Built-in Advanced Governance Policies**:
@@ -37,7 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@UsePolicies()` decorator for attaching business rules to tools and tool sets
 - `ToolPolicy` interface with 3-state `PolicyResult` (allow / deny / require_approval)
 - `AgentContext` with security context (`userId`, `tenantId`, `roles`), `sessionId`, `traceId`, and custom `data` bag
-- `AgentConfig.subAgents` field for future multi-agent orchestration
 - `LocalToolProvider` — scans `@ToolSet` instances, builds `ResolvedTool` closures with policy enforcement
 - `ToolDiscoveryService` — pure reflection layer over decorator metadata
 - `RuntimeAdapter` interface with `execute()` and optional `stream()`

@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/adk",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Google ADK runtime adapter for nestjs-agentic",
   "repository": {
     "type": "git",

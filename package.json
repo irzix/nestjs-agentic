@@ -1,6 +1,6 @@
 {
   "name": "nestjs-agentic-monorepo",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "NestJS-native primitives for building production AI agents.",
   "repository": {
