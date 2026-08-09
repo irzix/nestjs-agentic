@@ -1,6 +1,6 @@
 # Architecture Guide
 
-This document details the architecture of **nestjs-agentic** as an AI Integration Layer for NestJS, focusing on tool resolution, closure-based policy enforcement, and working Human-in-the-Loop (HITL) approval mechanics.
+This document details the architecture of **nestjs-agentic** as an Agentic Infrastructure & Governance Layer for NestJS, focusing on tool resolution, closure-based policy enforcement, and working Human-in-the-Loop (HITL) approval mechanics.
 
 ---
 
