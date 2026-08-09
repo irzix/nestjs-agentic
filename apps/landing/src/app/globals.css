@@ -1,0 +1,152 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 80px;
+  }
+
+  html, body {
+    @apply bg-[#000000] text-zinc-100 antialiased selection:bg-rose-600/30 selection:text-rose-200 p-0 m-0 w-full overflow-x-hidden;
+    font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+/* ──── HERO OUTER FRAME (dark bezel like nestjs.com) ──── */
+.nest-hero-frame {
+  background: #000000;
+  padding: 16px;
+}
+
+.nest-hero-inner {
+  border-radius: 28px;
+  overflow: hidden;
+  position: relative;
+  background: radial-gradient(ellipse 80% 60% at 50% 0%, #4a0d1e 0%, #1a0508 45%, #0a0204 80%, #050102 100%);
+}
+
+/* Interactive mouse-follow red glow */
+.nest-cursor-glow {
+  position: absolute;
+  width: 800px;
+  height: 800px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(224, 35, 78, 0.50) 0%, rgba(224, 35, 78, 0.15) 40%, transparent 70%);
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 1;
+  transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+}
+
+/* Wandering ambient orbs */
+.nest-orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(100px);
+}
+
+.nest-orb-1 {
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(224, 35, 78, 0.14) 0%, transparent 70%);
+  animation: orb-drift-1 18s ease-in-out infinite;
+}
+
+.nest-orb-2 {
+  width: 350px;
+  height: 350px;
+  background: radial-gradient(circle, rgba(180, 20, 60, 0.10) 0%, transparent 70%);
+  animation: orb-drift-2 22s ease-in-out infinite;
+}
+
+.nest-orb-3 {
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(224, 35, 78, 0.08) 0%, transparent 70%);
+  animation: orb-drift-3 15s ease-in-out infinite;
+}
+
+@keyframes orb-drift-1 {
+  0%   { transform: translate(10%, 20%); }
+  25%  { transform: translate(60%, 10%); }
+  50%  { transform: translate(40%, 60%); }
+  75%  { transform: translate(5%, 40%); }
+  100% { transform: translate(10%, 20%); }
+}
+
+@keyframes orb-drift-2 {
+  0%   { transform: translate(70%, 50%); }
+  33%  { transform: translate(20%, 15%); }
+  66%  { transform: translate(55%, 70%); }
+  100% { transform: translate(70%, 50%); }
+}
+
+@keyframes orb-drift-3 {
+  0%   { transform: translate(30%, 70%); }
+  50%  { transform: translate(75%, 25%); }
+  100% { transform: translate(30%, 70%); }
+}
+
+/* ──── FLOATING NAV ──── */
+.nest-nav {
+  background: rgba(12, 3, 6, 0.75);
+  border: 1px solid rgba(224, 35, 78, 0.2);
+  border-radius: 9999px;
+  backdrop-filter: blur(24px);
+}
+
+/* ──── SYNTAX & PILLARS SHOWCASE ──── */
+
+/* Glass Outer Ring Frame */
+.nest-glass-frame {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.01) 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  border-top-left-radius: 26px;
+  border-bottom-left-radius: 26px;
+  padding: 8px 0 8px 8px;
+  box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.95);
+  backdrop-filter: blur(20px);
+}
+
+/* Smooth Fade Bottom Mask */
+.nest-fade-bottom {
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 45%, rgba(0,0,0,0.6) 75%, rgba(0,0,0,0) 98%);
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 45%, rgba(0,0,0,0.6) 75%, rgba(0,0,0,0) 98%);
+}
+
+/* Glass Feature Cards with Seamless Low-Opacity Background */
+.nest-glass-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 24px;
+  backdrop-filter: blur(12px);
+  transition: border-color 0.4s ease, background 0.4s ease;
+}
+
+.nest-glass-card:hover {
+  border-color: rgba(224, 35, 78, 0.25);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #030102;
+}
+::-webkit-scrollbar-thumb {
+  background: #26060c;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3d0a14;
+}

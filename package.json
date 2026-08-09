@@ -17,7 +17,8 @@
   },
   "workspaces": [
     "packages/*",
-    "examples/*"
+    "examples/*",
+    "apps/*"
   ],
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
