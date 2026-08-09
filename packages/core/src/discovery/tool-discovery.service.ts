@@ -7,6 +7,7 @@ import {
 } from '../constants';
 import { CONTEXT_PARAM_KEY } from '../decorators/context.decorator';
 import type { ToolSetOptions } from '../decorators/tool-set.decorator';
+import type { ToolOptions } from '../decorators/tool.decorator';
 import type { ParamMetadata } from '../decorators/param.decorator';
 import type { ToolParamSchema, ToolPolicy } from '../interfaces';
 
@@ -48,35 +49,46 @@ export class ToolDiscoveryService {
    * for all @Tool methods. Pure reflection — no policy execution or DI.
    */
   discover(instance: object): DiscoveredToolSet | null {
-    const constructor = Object.getPrototypeOf(instance).constructor;
-    const toolSetOptions: ToolSetOptions | undefined = Reflect.getMetadata(
-      TOOLSET_METADATA,
-      constructor,
-    );
+    const target = (instance.constructor || Object.getPrototypeOf(instance).constructor) as Function;
+    const toolSetOptions: ToolSetOptions | undefined =
+      Reflect.getMetadata(TOOLSET_METADATA, target) ||
+      Reflect.getMetadata(TOOLSET_METADATA, instance);
 
     if (!toolSetOptions) {
       return null;
     }
 
     const classPolicyConstructors: PolicyConstructor[] =
-      Reflect.getMetadata(TOOL_POLICIES_METADATA, constructor) ?? [];
+      Reflect.getMetadata(TOOL_POLICIES_METADATA, target) ?? [];
 
     const prototype = Object.getPrototypeOf(instance);
     const methodNames = Object.getOwnPropertyNames(prototype).filter(
-      (key) => key !== 'constructor' && typeof prototype[key] === 'function',
+      (key) => key !== 'constructor' && typeof (prototype as Record<string, unknown>)[key] === 'function',
     );
 
     const tools: DiscoveredTool[] = [];
 
     for (const methodName of methodNames) {
-      const toolOptions = Reflect.getMetadata(TOOL_METADATA, prototype, methodName);
+      const toolOptions = this.getMethodMetadata<ToolOptions>(
+        TOOL_METADATA,
+        prototype,
+        instance,
+        target,
+        methodName,
+      );
 
       if (!toolOptions) {
         continue;
       }
 
-      const rawParams: ParamMetadata[] =
-        Reflect.getMetadata(TOOL_PARAMS_METADATA, prototype, methodName) ?? [];
+      const rawParams =
+        this.getMethodMetadata<ParamMetadata[]>(
+          TOOL_PARAMS_METADATA,
+          prototype,
+          instance,
+          target,
+          methodName,
+        ) ?? [];
 
       const params: DiscoveredParam[] = rawParams
         .sort((a, b) => a.index - b.index)
@@ -88,19 +100,27 @@ export class ToolDiscoveryService {
           required: p.options.required ?? true,
         }));
 
-      const contextParamIndex: number | undefined = Reflect.getMetadata(
+      const contextParamIndex = this.getMethodMetadata<number>(
         CONTEXT_PARAM_KEY,
         prototype,
+        instance,
+        target,
         methodName,
       );
 
-      const policyConstructors: PolicyConstructor[] =
-        Reflect.getMetadata(TOOL_POLICIES_METADATA, prototype, methodName) ?? [];
+      const policyConstructors =
+        this.getMethodMetadata<PolicyConstructor[]>(
+          TOOL_POLICIES_METADATA,
+          prototype,
+          instance,
+          target,
+          methodName,
+        ) ?? [];
 
       tools.push({
         methodName,
         toolName: toolOptions.name ?? methodName,
-        description: toolOptions.description,
+        description: toolOptions.description ?? '',
         params,
         contextParamIndex,
         policyConstructors,
@@ -109,5 +129,26 @@ export class ToolDiscoveryService {
     }
 
     return { options: toolSetOptions, classPolicyConstructors, tools };
+  }
+
+  /**
+   * Helper utility to extract method metadata supporting prototype, function target, and descriptor targets.
+   */
+  private getMethodMetadata<T>(
+    key: symbol | string,
+    prototype: object,
+    instance: object,
+    target: Function,
+    methodName: string,
+  ): T | undefined {
+    const fn = Reflect.get(prototype, methodName) as unknown;
+    const fnMeta = typeof fn === 'function' ? Reflect.getMetadata(key, fn) : undefined;
+
+    return (
+      Reflect.getMetadata(key, prototype, methodName) ??
+      fnMeta ??
+      Reflect.getMetadata(key, instance, methodName) ??
+      Reflect.getMetadata(key, target, methodName)
+    );
   }
 }

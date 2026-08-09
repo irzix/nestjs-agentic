@@ -1,4 +1,5 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import { AGENT_METADATA, AGENT_PROVIDERS, AGENTIC_OPTIONS, RUNTIME_ADAPTER } from '../constants';
 import { LocalToolProvider } from '../providers/local-tool.provider';
@@ -32,23 +33,35 @@ export interface RunInput {
 
 @Injectable()
 export class AgentRunner {
-  private readonly agentMap: Map<string, AgentProvider>;
-
   constructor(
-    @Optional() @Inject(AGENT_PROVIDERS) agentProviders: AgentProvider[],
+    @Optional() @Inject(AGENT_PROVIDERS) private readonly agentProviders: AgentProvider[],
     @Inject(RUNTIME_ADAPTER) private readonly runtimeAdapter: RuntimeAdapter,
     @Inject(AGENTIC_OPTIONS) private readonly options: AgenticModuleOptions,
     private readonly localToolProvider: LocalToolProvider,
-  ) {
-    this.agentMap = new Map(
-      (agentProviders ?? []).map((agent) => {
-        const metadata: { name: string } = Reflect.getMetadata(
-          AGENT_METADATA,
-          agent.constructor,
-        );
-        return [metadata.name, agent];
-      }),
-    );
+    private readonly moduleRef: ModuleRef,
+  ) {}
+
+  private getAgentMap(): Map<string, AgentProvider> {
+    let providers = Array.isArray(this.agentProviders) ? this.agentProviders : [];
+    if (providers.length === 0) {
+      try {
+        providers = this.moduleRef.get(AGENT_PROVIDERS, { strict: false, each: true });
+      } catch {
+        providers = [];
+      }
+    }
+    const map = new Map<string, AgentProvider>();
+    const list = Array.isArray(providers) ? providers : [providers];
+    for (const agent of list) {
+      if (!agent) continue;
+      const metadata: { name: string } =
+        Reflect.getMetadata(AGENT_METADATA, agent.constructor) ??
+        Reflect.getMetadata(AGENT_METADATA, agent);
+      if (metadata?.name) {
+        map.set(metadata.name, agent);
+      }
+    }
+    return map;
   }
 
   /**
@@ -56,7 +69,8 @@ export class AgentRunner {
    * and delegates execution to the registered RuntimeAdapter.
    */
   async run(agentName: string, input: RunInput): Promise<AgentResult> {
-    const agent = this.agentMap.get(agentName);
+    const agentMap = this.getAgentMap();
+    const agent = agentMap.get(agentName);
 
     if (!agent) {
       throw new Error(

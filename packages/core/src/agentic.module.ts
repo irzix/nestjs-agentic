@@ -85,14 +85,18 @@ export class AgenticModule {
 
     const allProviders = [...agentProviders, ...toolSetProviders, ...policyProviders];
 
+    const exportedTokens = [
+      ...(options.agents ?? []),
+      ...(options.toolSets ?? []),
+      ...(options.policies ?? []),
+      AGENT_PROVIDERS,
+      POLICY_INSTANCES,
+    ];
+
     return {
       module: AgenticModule,
       providers: allProviders,
-      exports: [
-        ...(options.agents ?? []),
-        ...(options.toolSets ?? []),
-        ...(options.policies ?? []),
-      ],
+      exports: exportedTokens,
     };
   }
 }

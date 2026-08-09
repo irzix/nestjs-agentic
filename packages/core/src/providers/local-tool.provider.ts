@@ -1,4 +1,5 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import { APPROVAL_STORE, POLICY_INSTANCES } from '../constants';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
@@ -16,16 +17,53 @@ type PolicyConstructor = new (...args: unknown[]) => ToolPolicy;
 
 @Injectable()
 export class LocalToolProvider {
-  private readonly policyMap: Map<Function, ToolPolicy>;
-
   constructor(
-    @Optional() @Inject(POLICY_INSTANCES) policyInstances: ToolPolicy[],
+    @Optional() @Inject(POLICY_INSTANCES) private readonly policyInstances: ToolPolicy[],
     @Inject(APPROVAL_STORE) private readonly approvalStore: ApprovalStore,
     private readonly discovery: ToolDiscoveryService,
-  ) {
-    this.policyMap = new Map(
-      (policyInstances ?? []).map((p) => [p.constructor as Function, p]),
-    );
+    private readonly moduleRef: ModuleRef,
+  ) {}
+
+  /**
+   * Builds an indexed map of all registered policies (by constructor reference and class name).
+   */
+  private getPolicyMap(): Map<Function | string, ToolPolicy> {
+    let instances = Array.isArray(this.policyInstances) ? this.policyInstances : [];
+    if (instances.length === 0) {
+      try {
+        instances = this.moduleRef.get(POLICY_INSTANCES, { strict: false, each: true });
+      } catch {
+        instances = [];
+      }
+    }
+    const list = Array.isArray(instances) ? instances : [instances];
+    const map = new Map<Function | string, ToolPolicy>();
+    for (const p of list) {
+      if (p?.constructor) {
+        map.set(p.constructor, p);
+        map.set(p.constructor.name, p);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Resolves a policy instance by constructor reference, class name, or direct ModuleRef DI fallback.
+   */
+  private resolvePolicy(
+    Constructor: PolicyConstructor,
+    policyMap: Map<Function | string, ToolPolicy>,
+  ): ToolPolicy | undefined {
+    const existing = policyMap.get(Constructor) ?? policyMap.get(Constructor.name);
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      return this.moduleRef.get(Constructor, { strict: false });
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -63,9 +101,11 @@ export class LocalToolProvider {
       description: tool.description,
       parameters,
       execute: async ({ args }: { args: Record<string, unknown> }): Promise<ToolExecutionResult> => {
+        const policyMap = this.getPolicyMap();
+
         // --- Policy evaluation (context is pre-bound, never sent to LLM) ---
         for (const Constructor of allPolicyConstructors) {
-          const policy = this.policyMap.get(Constructor);
+          const policy = this.resolvePolicy(Constructor, policyMap);
 
           if (!policy) {
             throw new Error(
