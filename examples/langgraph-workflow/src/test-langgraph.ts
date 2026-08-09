@@ -1,7 +1,8 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
-import { AgentRunner } from '@nestjs-agentic/core';
-import type { ToolExecutionResult } from '@nestjs-agentic/core';
+import { AgentRunner, RUNTIME_ADAPTER } from '@nestjs-agentic/core';
+import type { AgentStreamEvent, ToolExecutionResult } from '@nestjs-agentic/core';
+import { LangGraphRuntimeAdapter } from '@nestjs-agentic/langgraph';
 import { AppModule } from './app.module';
 
 async function runLangGraphTests() {
@@ -17,6 +18,7 @@ async function runLangGraphTests() {
   }
 
   const runner = app.get(AgentRunner);
+  const adapter = app.get(RUNTIME_ADAPTER) as LangGraphRuntimeAdapter;
 
   let passed = 0;
   let failed = 0;
@@ -87,6 +89,42 @@ async function runLangGraphTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 2: Suspended Tenant Denied Execution', err.message);
+  }
+
+  // TEST 3: Checkpointer Thread State Persistence & Streaming
+  try {
+    const checkpointer = adapter.getCheckpointer();
+    const threadTuple = await checkpointer.getTuple({
+      configurable: { thread_id: 'sess_lg_101' },
+    });
+
+    assert(
+      threadTuple !== undefined && Boolean(threadTuple.checkpoint),
+      'Test 3a: Checkpointer stored session thread state snapshot for sess_lg_101',
+    );
+
+    const streamEvents: AgentStreamEvent[] = [];
+    for await (const event of runner.runStream('inventory-agent', {
+      sessionId: 'sess_lg_103_stream',
+      message: 'Check stock for SKU-101 via stream',
+      context: {
+        userId: 'usr_warehouse_mgr',
+        tenantId: 'tenant_logistics',
+      },
+    })) {
+      streamEvents.push(event);
+    }
+
+    assert(
+      streamEvents.length >= 3,
+      'Test 3b: LangGraph runStream() emitted structured streaming events',
+    );
+    assert(
+      streamEvents[0].type === 'tool_start',
+      'Test 3c: LangGraph emitted "tool_start" stream event',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 3: Checkpointer Persistence & Streaming', err.message);
   }
 
   process.stdout.write(`\n  📊 Summary: ${passed} passed, ${failed} failed.\n\n`);
