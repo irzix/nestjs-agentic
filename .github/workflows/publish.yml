@@ -12,6 +12,9 @@ jobs:
   publish:
     name: Publish Packages
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -29,16 +32,23 @@ jobs:
       - name: Build monorepo packages
         run: npm run build
 
-      - name: Publish nestjs-agentic (Core)
+      - name: Publish @nestjs-agentic/core
         run: |
           cd packages/core
-          npm publish --access public
+          npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @nestjs-agentic/adk (ADK Adapter)
+      - name: Publish @nestjs-agentic/adk
         run: |
           cd packages/runtime-adk
-          npm publish --access public
+          npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish nestjs-agentic (Meta Package)
+        run: |
+          cd packages/meta
+          npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

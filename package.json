@@ -1,6 +1,6 @@
 {
   "name": "nestjs-agentic-monorepo",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "private": true,
   "description": "NestJS-native primitives for building production AI agents.",
   "scripts": {
@@ -12,6 +12,7 @@
     "examples/*"
   ],
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2"
   }
