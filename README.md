@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%2B-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS" /></a>
+  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%2B%20%7C%20v11%2B-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS" /></a>
   <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/v/nestjs-agentic.svg?color=E0234E" alt="NPM Version" /></a>
   <a href="https://github.com/irzix/nestjs-agentic/actions"><img src="https://github.com/irzix/nestjs-agentic/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0%2B-blue?logo=typescript&logoColor=white" alt="TypeScript" /></a>
@@ -19,13 +19,17 @@
 
 ---
 
+🐍 **Python Developer?** Check out **[`experia`](https://github.com/irzix/experia)** — the open-source experience learning layer for Python AI agents.
+
+---
+
 ## What is nestjs-agentic?
 
 Most agentic frameworks force you to build outside your backend — a separate Python service, a standalone graph, a different runtime. **nestjs-agentic** is different.
 
-It is the **agentic infrastructure layer for NestJS**: define agents and tools using the decorators you already know, enforce policy guardrails before every tool call, and wire your existing services into any LLM runtime — all inside the NestJS DI container.
+It is the **agentic infrastructure layer for NestJS**: define agents and tools using the decorators you already know, enforce policy guardrails before every tool call, stream real-time events, and wire your existing services into any LLM runtime — all inside the NestJS DI container.
 
-```
+```text
 NestJS Services (DB / APIs) ──► @ToolSet & @Tool ──► @UsePolicies ──► [ allow / deny / HITL ] ──► RuntimeAdapter ──► LLM
 ```
 
@@ -36,17 +40,20 @@ NestJS Services (DB / APIs) ──► @ToolSet & @Tool ──► @UsePolicies �
 | Pillar | What it gives you |
 |--------|-------------------|
 | **NestJS Primitives & DI** | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context` — full DI, no rewrites |
-| **Governance & HITL Safety** | 3-state policy engine (`allow`, `deny`, `require_approval`) on every tool call |
-| **Pluggable Runtime Adapters** | Google ADK, Vercel AI SDK, LangGraph, or custom — swap without touching tools |
-| **Multi-Agent Orchestration** | Sub-agent delegation via `AgentConfig.subAgents` *(coming in v0.2)* |
+| **Governance & Safety** | 3-state policy engine (`allow`, `deny`, `require_approval`), plus built-in `RateLimitPolicy` & `CostLimitPolicy` |
+| **Pluggable Runtime Adapters** | Google ADK, LangGraph (`@nestjs-agentic/langgraph`), Vercel AI SDK, or custom |
+| **Real-time Event Streaming** | Structured `runner.runStream()` emitting `tool_start`, `tool_result`, `approval_required`, and `token` |
 
 ---
 
 ## Installation
 
 ```bash
-# Core package
+# Core meta-package (NestJS 10 & 11 supported)
 npm install nestjs-agentic
+
+# LangGraph Adapter with Checkpointer & Thread Persistence
+npm install @nestjs-agentic/langgraph @langchain/langgraph @langchain/core
 
 # Google ADK Adapter (optional)
 npm install @nestjs-agentic/adk
@@ -98,7 +105,7 @@ export class OrderTools {
 import { Module } from '@nestjs/common';
 import { Agent, AgenticModule, RUNTIME_ADAPTER } from 'nestjs-agentic';
 import type { AgentProvider, AgentConfig } from 'nestjs-agentic';
-import { AdkRuntimeAdapter } from '@nestjs-agentic/adk';
+import { LangGraphRuntimeAdapter } from '@nestjs-agentic/langgraph';
 
 @Agent({ name: 'customer-support', description: 'Handles order lookups and refund inquiries' })
 export class SupportAgent implements AgentProvider {
@@ -121,16 +128,17 @@ export class SupportAgent implements AgentProvider {
       policies: [RefundLimitPolicy],
     }),
   ],
-  providers: [{ provide: RUNTIME_ADAPTER, useClass: AdkRuntimeAdapter }],
+  providers: [{ provide: RUNTIME_ADAPTER, useClass: LangGraphRuntimeAdapter }],
 })
 export class SupportModule {}
 ```
 
-### 3. Run Agent & Handle HITL Approvals
+### 3. Run Agent & Stream Events (Server-Sent Events)
 
 ```typescript
-import { Controller, Post, Body, Param } from '@nestjs/common';
+import { Controller, Post, Body, Param, Sse } from '@nestjs/common';
 import { AgentRunner, ApprovalService } from 'nestjs-agentic';
+import { map, Observable } from 'rxjs';
 
 @Controller('support')
 export class SupportController {
@@ -139,12 +147,20 @@ export class SupportController {
     private readonly approvalService: ApprovalService,
   ) {}
 
-  @Post('chat')
-  async chat(@Body() body: { sessionId: string; message: string }) {
-    return this.runner.run('customer-support', {
-      sessionId: body.sessionId,
-      message: body.message,
-      context: { userId: 'user_123', tenantId: 'acme' },
+  /** Real-time SSE event stream for frontend UI */
+  @Sse('stream')
+  streamChat(@Body() body: { sessionId: string; message: string }): Observable<MessageEvent> {
+    return new Observable((subscriber) => {
+      (async () => {
+        for await (const event of this.runner.runStream('customer-support', {
+          sessionId: body.sessionId,
+          message: body.message,
+          context: { userId: 'user_123', tenantId: 'acme' },
+        })) {
+          subscriber.next({ data: event } as MessageEvent);
+        }
+        subscriber.complete();
+      })();
     });
   }
 
@@ -153,13 +169,27 @@ export class SupportController {
   async approve(@Param('id') id: string) {
     return this.approvalService.approve(id);
   }
-
-  /** Called to reject and discard a pending tool call. */
-  @Post('reject/:id')
-  async reject(@Param('id') id: string) {
-    return this.approvalService.reject(id);
-  }
 }
+```
+
+---
+
+## Built-in Governance Policies
+
+`nestjs-agentic` comes with production-ready policies out of the box:
+
+- **`RateLimitPolicy`**: Enforces sliding-window call frequency limits per tenant or user.
+- **`CostLimitPolicy`**: Evaluates financial amounts against configurable auto-allow and approval thresholds.
+
+```typescript
+import { CostLimitPolicy, RateLimitPolicy } from 'nestjs-agentic';
+
+// Auto-allows <= $500, requires approval up to $5,000, denies above $5,000
+const costGuard = new CostLimitPolicy({
+  paramName: 'amount',
+  autoAllowLimit: 500,
+  approvalLimit: 5000,
+});
 ```
 
 ---
@@ -202,7 +232,7 @@ describe('SupportAgent — Refund Policy', () => {
 });
 ```
 
-> See the complete example in [`examples/customer-support`](examples/customer-support).
+> See complete runnable examples in [`examples/financial-governance`](examples/financial-governance) and [`examples/langgraph-workflow`](examples/langgraph-workflow).
 
 ---
 
