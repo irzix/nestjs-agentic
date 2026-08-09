@@ -24,12 +24,16 @@ export function SyntaxShowcase() {
             className="lg:col-span-4 space-y-12 text-left self-start pt-4"
           >
             <div className="font-mono text-[11px] text-zinc-500 tracking-[0.2em]">
-              &#123; SYNTAX &#125;
+              &#123; API &#125;
             </div>
 
             <h2 className="text-4xl sm:text-5xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-[1.15] font-sans">
-              Build your app with most elegant and intuitive syntax.
+              Agents, tools, and policies in pure NestJS.
             </h2>
+
+            <p className="text-sm text-zinc-500 leading-relaxed font-sans">
+              No new framework. No wrappers. Define your agents with the same decorator patterns you already know — and governance runs automatically between every tool call and every LLM.
+            </p>
 
             <div className="pt-4">
               <a
@@ -90,54 +94,84 @@ function CodeBlock({ tab }: { tab: string }) {
   const lines: Record<string, string[]> = {
     toolset: [
       `<k>import</k> { ToolSet, Tool, Param, Context, UsePolicies } <k>from</k> <s>'nestjs-agentic'</s>;`,
+      `<k>import</k> <k>type</k> { AgentContext } <k>from</k> <s>'nestjs-agentic'</s>;`,
       ``,
-      `<w>@ToolSet</w>({ name: <s>'order'</s> })`,
+      `<w>@ToolSet</w>({ name: <s>'order'</s>, tags: [<s>'order'</s>, <s>'sales'</s>] })`,
       `<k>export class</k> <w>OrderTools</w> {`,
       `  <k>constructor</k>(<k>private readonly</k> orderService: <w>OrderService</w>) {}`,
       ``,
-      `  <w>@Tool</w>({ description: <s>'Refund an order'</s> })`,
+      `  <w>@Tool</w>({ description: <s>'Refund an order by ID and amount'</s> })`,
       `  <w>@UsePolicies</w>(RefundLimitPolicy)`,
       `  <k>async</k> <f>refundOrder</f>(`,
       `    <w>@Param</w>(<s>'orderId'</s>) orderId: <t>string</t>,`,
       `    <w>@Param</w>(<s>'amount'</s>) amount: <t>number</t>,`,
       `    <w>@Context</w>() ctx: <t>AgentContext</t>,`,
-      `  ) { <k>return this</k>.orderService.refund(orderId, amount, ctx.userId); }`,
+      `  ) {`,
+      `    <k>return this</k>.orderService.refund(orderId, amount, ctx.security.userId);`,
+      `  }`,
       `}`,
     ],
     policy: [
       `<k>import</k> { Injectable } <k>from</k> <s>'@nestjs/common'</s>;`,
-      `<k>import</k> { ToolPolicy, AgentContext, PolicyResult } <k>from</k> <s>'nestjs-agentic'</s>;`,
+      `<k>import</k> <k>type</k> { ToolPolicy, AgentContext, PolicyResult } <k>from</k> <s>'nestjs-agentic'</s>;`,
       ``,
       `<w>@Injectable</w>()`,
       `<k>export class</k> <w>RefundLimitPolicy</w> <k>implements</k> ToolPolicy {`,
-      `  <k>async</k> <f>evaluate</f>(ctx: <t>AgentContext</t>, toolName: <t>string</t>, args: <t>Record&lt;string, unknown&gt;</t>): <t>Promise&lt;PolicyResult&gt;</t> {`,
+      `  <k>async</k> <f>evaluate</f>(`,
+      `    ctx: <t>AgentContext</t>,`,
+      `    toolName: <t>string</t>,`,
+      `    args: <t>Record&lt;string, unknown&gt;</t>,`,
+      `  ): <t>Promise&lt;PolicyResult&gt;</t> {`,
       `    <k>return</k> Number(args.amount) > <n>500</n>`,
-      `      ? { decision: <s>'require_approval'</s>, reason: <s>'Refund exceeds threshold.'</s> }`,
+      `      ? { decision: <s>'require_approval'</s>, reason: <s>'Refund exceeds $500 threshold.'</s> }`,
       `      : { decision: <s>'allow'</s> };`,
       `  }`,
       `}`,
     ],
     module: [
       `<k>import</k> { Module } <k>from</k> <s>'@nestjs/common'</s>;`,
-      `<k>import</k> { AgenticModule, RUNTIME_ADAPTER } <k>from</k> <s>'nestjs-agentic'</s>;`,
+      `<k>import</k> { AgenticModule, RUNTIME_ADAPTER, Agent } <k>from</k> <s>'nestjs-agentic'</s>;`,
+      `<k>import</k> <k>type</k> { AgentProvider, AgentConfig } <k>from</k> <s>'nestjs-agentic'</s>;`,
       `<k>import</k> { AdkRuntimeAdapter } <k>from</k> <s>'@nestjs-agentic/adk'</s>;`,
+      ``,
+      `<w>@Agent</w>({ name: <s>'support'</s>, description: <s>'Handles refund inquiries'</s> })`,
+      `<k>export class</k> <w>SupportAgent</w> <k>implements</k> AgentProvider {`,
+      `  <k>constructor</k>(<k>private readonly</k> orderTools: <w>OrderTools</w>) {}`,
+      `  <f>define</f>(): <t>AgentConfig</t> {`,
+      `    <k>return</k> { instructions: <s>'You are a helpful support agent.'</s>, tools: [<k>this</k>.orderTools] };`,
+      `  }`,
+      `}`,
       ``,
       `<w>@Module</w>({`,
       `  imports: [`,
       `    <w>AgenticModule</w>.forRoot({ defaultModel: { provider: <s>'google'</s>, model: <s>'gemini-2.0-flash'</s> } }),`,
-      `    <w>AgenticModule</w>.forFeature({ agents: [SupportAgent], toolSets: [OrderTools] }),`,
+      `    <w>AgenticModule</w>.forFeature({ agents: [SupportAgent], toolSets: [OrderTools], policies: [RefundLimitPolicy] }),`,
       `  ],`,
       `  providers: [{ provide: RUNTIME_ADAPTER, useClass: AdkRuntimeAdapter }],`,
       `})`,
-      `<k>export class</k> <w>AppModule</w> {}`,
+      `<k>export class</k> <w>SupportModule</w> {}`,
     ],
     test: [
-      `<k>import</k> { MockRuntimeAdapter, AgentRunner } <k>from</k> <s>'nestjs-agentic'</s>;`,
+      `<k>import</k> { Test } <k>from</k> <s>'@nestjs/testing'</s>;`,
+      `<k>import</k> { AgenticModule, AgentRunner, MockRuntimeAdapter, RUNTIME_ADAPTER } <k>from</k> <s>'nestjs-agentic'</s>;`,
       ``,
-      `describe(<s>'OrderTools Unit Test'</s>, () => {`,
-      `  it(<s>'should trigger pending_approval on refund over limit'</s>, <k>async</k> () => {`,
-      `    <k>const</k> result = <k>await</k> runner.run(<s>'customer-support'</s>, { message: <s>'Refund $600'</s> });`,
-      `    expect(result.toolCalls[0].result.status).toBe(<s>'pending_approval'</s>);`,
+      `describe(<s>'SupportAgent — Refund Policy'</s>, () => {`,
+      `  <k>let</k> runner: <t>AgentRunner</t>;`,
+      ``,
+      `  beforeEach(<k>async</k> () => {`,
+      `    <k>const</k> module = <k>await</k> Test.createTestingModule({`,
+      `      imports: [`,
+      `        AgenticModule.forRoot({ defaultModel: { provider: <s>'google'</s>, model: <s>'gemini-2.0-flash'</s> } }),`,
+      `        AgenticModule.forFeature({ agents: [SupportAgent], toolSets: [OrderTools], policies: [RefundLimitPolicy] }),`,
+      `      ],`,
+      `      providers: [{ provide: RUNTIME_ADAPTER, useClass: MockRuntimeAdapter }],`,
+      `    }).compile();`,
+      `    runner = module.get(AgentRunner);`,
+      `  });`,
+      ``,
+      `  it(<s>'should require approval on refund > $500'</s>, <k>async</k> () => {`,
+      `    <k>const</k> result = <k>await</k> runner.run(<s>'support'</s>, { sessionId: <s>'s1'</s>, message: <s>'Refund $600 order #42'</s> });`,
+      `    expect(result.toolCalls[<n>0</n>].result.status).toBe(<s>'pending_approval'</s>);`,
       `  });`,
       `});`,
     ],
