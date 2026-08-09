@@ -103,7 +103,7 @@ Make every agent action auditable and traceable.
   - `OpenTelemetry` exporter for distributed tracing.
   - `Langfuse` integration for LLM call analytics and evaluation.
   - `Arize Phoenix` integration for agent performance monitoring.
-- [ ] **`@nestjs-agentic/experia`** — Experience learning & trajectory reflection layer for agent self-improvement and memory persistence.
+- [ ] **`@nestjs-agentic/experience`** — Experience learning & trajectory reflection layer for agent self-improvement and memory persistence.
 
 ---
 
