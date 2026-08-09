@@ -1,27 +1,27 @@
-# Product Roadmap & Governance Vision
+# Product Roadmap & Architectural Vision
 
-> **Philosophy**: Most AI frameworks focus solely on orchestration. **nestjs-agentic** focuses on **Agent Governance & Safety** — ensuring LLMs operate securely within enterprise boundaries using native NestJS primitives.
+> **Philosophy**: **nestjs-agentic** is the complete **AI Integration Layer for NestJS**. It brings together native NestJS primitives, ecosystem runtime adapters, multi-agent orchestration, and enterprise governance — making AI a first-class citizen in NestJS applications.
 
 ---
 
-## 🎯 Core Value Proposition: The Agent Governance Pipeline
+## 🏛️ The 4 Core Pillars of nestjs-agentic
 
 ```
-LLM Execution Request
-         │
-    Tool Requested
-         │
-    Policy Evaluation Pipeline (Async)
-         │
- ┌───────┼───────────────┬─────────────────┐
- │       │               │                 │
-allow   deny      require_approval    tenant_violation
- │       │               │                 │
-execute reject      HITL Workflow        deny & audit
- │       │               │                 │
-└───────┴───────────────┴─────────────────┘
-                         │
-                 Audit & Telemetry Log
+                          nestjs-agentic
+                                │
+   ┌───────────────────┬────────┴──────────┬───────────────────┐
+   │                   │                   │                   │
+1. NestJS Primitives  2. Ecosystem      3. Governance &     4. Multi-Agent
+   & DI Binding          Adapters          HITL Safety        Orchestration
+   (@ToolSet, @Tool)   (ADK, LangGraph)   (Policies & HITL)   (Sub-Agent Delegations)
+```
+
+---
+
+## 🎯 The Agent Execution & Governance Pipeline
+
+```
+LLM Request ──► Tool Call ──► Policy Evaluation Pipeline ──► [ Allow / Deny / HITL Approval ] ──► Execution & Audit
 ```
 
 ---
