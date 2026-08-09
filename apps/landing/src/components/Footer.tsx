@@ -17,7 +17,8 @@ export function Footer() {
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
           className="text-3xl sm:text-4xl lg:text-[2.6rem] font-normal tracking-[-0.02em] text-white leading-[1.28] font-sans"
         >
-          No separate AI microservices. No framework lock-in. Just NestJS.
+          No agent sidecars. No framework rewrites.<br />
+          Just NestJS, with agents that know their boundaries.
         </motion.h2>
 
         {/* ONLY GitHub Link */}
