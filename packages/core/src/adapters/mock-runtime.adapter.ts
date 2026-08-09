@@ -22,6 +22,10 @@ interface ToolScenario {
  *   message: 'Refund $600 for order #123',
  * });
  */
+export interface MockWhenAskedBuilder {
+  thenCallTool(toolName: string, args?: Record<string, unknown>): MockRuntimeAdapter;
+}
+
 export class MockRuntimeAdapter implements RuntimeAdapter {
   private readonly scenarios = new Map<string, ToolScenario>();
 
@@ -29,9 +33,9 @@ export class MockRuntimeAdapter implements RuntimeAdapter {
    * Defines what tool the mock agent will call when it receives the given message.
    * Message matching is exact.
    */
-  whenAsked(message: string) {
+  whenAsked(message: string): MockWhenAskedBuilder {
     return {
-      thenCallTool: (toolName: string, args: Record<string, unknown> = {}) => {
+      thenCallTool: (toolName: string, args: Record<string, unknown> = {}): MockRuntimeAdapter => {
         this.scenarios.set(message, { toolName, args });
         return this;
       },
