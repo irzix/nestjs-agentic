@@ -1,6 +1,6 @@
 {
   "name": "nestjs-agentic",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "NestJS-native primitives for building production AI agents (Convenience meta-package re-exporting @nestjs-agentic/core).",
   "repository": {
     "type": "git",
@@ -19,7 +19,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@nestjs-agentic/core": "^0.2.3"
+    "@nestjs-agentic/core": "^0.2.4"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",

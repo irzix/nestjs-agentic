@@ -6,7 +6,7 @@
 
 ## The 4 Core Pillars
 
-```
+```text
                               nestjs-agentic
                                     │
    ┌────────────────────┬───────────┴────────────┬────────────────────┐
@@ -14,14 +14,14 @@
 1. NestJS Primitives  2. Governance &         3. Ecosystem         4. Multi-Agent
    & DI Binding          HITL Safety             Adapters             Orchestration
    @Agent, @ToolSet,     3-state policies,       ADK, LangGraph,      Sub-agents,
-   @Tool, @Context       ApprovalService         Vercel, MCP          isolated contexts
+   @Tool, @Context       ApprovalService         Memory, Vercel       isolated contexts
 ```
 
 ---
 
 ## The Agent Execution & Governance Pipeline
 
-```
+```text
 Incoming Request
       │
       ▼
@@ -66,60 +66,47 @@ The foundation. Every subsequent phase builds on these.
 
 ---
 
-### 🔥 Phase 0.2 — Enterprise Governance Matrix & Ecosystem
+### 🔥 Phase 0.2 — Enterprise Governance Matrix, Memory & Ecosystem
 
-> **Status: Active Development**
+> **Status: Released (v0.2.4)**
 
 Where nestjs-agentic becomes irreplaceable for enterprise teams.
 
 #### 🛡️ Advanced Governance & Multi-Tenant Safety
 
-- [ ] **Composite Policy Utilities** — production-ready policy building blocks:
-  - `TenantIsolationPolicy` — hard data boundary enforcement at the policy layer. No cross-tenant tool execution.
-  - `TieredApprovalPolicy` — multi-threshold auto-routing: `< $100` auto-allow → `$100–$500` owner check → `$500–$5000` finance HITL → `> $5000` deny.
-  - `RiskScorePolicy` — evaluates argument risk vectors before any tool executes.
-- [ ] **Role-Aware HITL Approvals** — bind pending approvals to organizational roles (`requiredRole: 'finance_manager'`). Approval endpoints validate actor roles before executing.
+- [x] **NestJS 11 & NestJS 10 Support** — full peerDependency compatibility across all monorepo packages (`^10.0.0 || ^11.0.0`).
+- [x] **Unified StateStore Architecture** — core `StateStore` abstraction with built-in `InMemoryStateStore` and `RedisStateStore` registered via `AgenticModule.forRoot({ stateStore })`.
+- [x] **Built-in Policy Utilities**:
+  - `RateLimitPolicy` — sliding-window call frequency enforcement per tenant/user.
+  - `CostLimitPolicy` — multi-threshold financial evaluation (`allow` -> `require_approval` -> `deny`).
+- [x] **Structured Event Streaming (`runStream()`)** — typed `AgentStreamEvent` union (`tool_start`, `tool_result`, `approval_required`, `token`, `complete`) for Server-Sent Events (SSE).
 
-#### 🤖 Multi-Agent Orchestration
+#### 🧠 Cognitive Memory Module
 
-- [ ] **Sub-Agent Delegation** — define `subAgents` in `AgentConfig`. Each sub-agent gets isolated governance context and its own policy pipeline. Parent agents can delegate and await results.
+- [x] **`@nestjs-agentic/memory`** — multi-tier cognitive memory module:
+  - `ShortTermMemory` — sliding-window conversation history with configurable token caps (`maxMessages`).
+  - `ScratchpadMemory` — active working task set & file buffer for session execution.
+  - `CompositeMemory` — unified multi-tier memory store interface.
 
 #### 🔌 Ecosystem Adapters & Transports
 
+- [x] **`@nestjs-agentic/langgraph`** — LangGraph runtime adapter with stateful `BaseCheckpointSaver` thread persistence (`MemorySaver`, `SqliteSaver`, `Redis`).
 - [ ] **`@nestjs-agentic/vercel`** — Vercel AI SDK runtime adapter with streaming support.
-- [x] **`@nestjs-agentic/langgraph`** — LangGraph runtime adapter for graph-based agent flows.
 - [ ] **MCP Transport** — Model Context Protocol `ToolProvider` for exposing tools to external MCP-compatible servers and clients.
 
 ---
 
-### 📡 Phase 0.3 — Observability, Compliance & Audit Trail
+### 📡 Phase 0.3 — Observability, Compliance & Trajectory Reflection
 
-> **Status: Upcoming**
+> **Status: Active Development**
 
 Make every agent action auditable and traceable.
 
 - [ ] **Immutable Audit Trail (`AuditEventStore`)** — persistent, append-only log of all policy decisions, tool executions, approvals, and rejections. Designed for EU AI Act and SOC 2 compliance requirements.
+- [ ] **`@nestjs-agentic/experience`** — Experience learning & trajectory reflection layer for agent self-improvement and memory persistence.
 - [ ] **AgentObserver Interface** — pluggable observer hooks for the full agent lifecycle:
   - `OpenTelemetry` exporter for distributed tracing.
   - `Langfuse` integration for LLM call analytics and evaluation.
-  - `Arize Phoenix` integration for agent performance monitoring.
-- [ ] **`@nestjs-agentic/experience`** — Experience learning & trajectory reflection layer for agent self-improvement and memory persistence.
-
----
-
-### 🏭 Phase 1.0 — Durable & Distributed Execution
-
-> **Status: Planned**
-
-Production-grade agentic systems that survive restarts, scale horizontally, and coordinate across instances.
-
-- [ ] **Durable HITL Workflows** — `Temporal.io` and `BullMQ` integrations. Human approval workflows persist across process restarts — no approvals lost on deploy.
-- [ ] **Distributed Approval & Session Stores** — built-in `RedisApprovalStore` and `RedisSessionStore` for multi-instance production deployments. Drop-in replacement via DI token override:
-
-  ```typescript
-  { provide: APPROVAL_STORE, useClass: RedisApprovalStore }
-  { provide: SESSION_STORE,  useClass: RedisSessionStore }
-  ```
 
 ---
 

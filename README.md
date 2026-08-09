@@ -121,7 +121,10 @@ export class SupportAgent implements AgentProvider {
 
 @Module({
   imports: [
-    AgenticModule.forRoot({ defaultModel: { provider: 'google', model: 'gemini-2.0-flash' } }),
+    AgenticModule.forRoot({
+      defaultModel: { provider: 'google', model: 'gemini-2.0-flash' },
+      stateStore: new RedisStateStore({ client: redisClient }), // Unified Redis state store across all packages
+    }),
     AgenticModule.forFeature({
       agents: [SupportAgent],
       toolSets: [OrderTools],
