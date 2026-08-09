@@ -1,0 +1,188 @@
+import 'reflect-metadata';
+import { ModuleRef } from '@nestjs/core';
+import {
+  ApprovalStore,
+  Context,
+  LocalToolProvider,
+  Param,
+  PolicyResult,
+  Tool,
+  ToolDiscoveryService,
+  ToolPolicy,
+  ToolSet,
+  UsePolicies,
+} from '../src';
+import type { AgentContext, ToolExecutionResult } from '../src';
+import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
+
+// Dummy Policies for Testing Governance States
+class AllowPolicy implements ToolPolicy {
+  async evaluate(): Promise<PolicyResult> {
+    return { decision: 'allow' };
+  }
+}
+
+class DenyPolicy implements ToolPolicy {
+  async evaluate(context: AgentContext): Promise<PolicyResult> {
+    return { decision: 'deny', reason: `Access denied for tenant ${context.security.tenantId}` };
+  }
+}
+
+class RequireApprovalPolicy implements ToolPolicy {
+  async evaluate(): Promise<PolicyResult> {
+    return { decision: 'require_approval', reason: 'High-risk action requires human approval' };
+  }
+}
+
+// ToolSet with Policy Variations
+@ToolSet({ name: 'governed-tools' })
+class GovernedTools {
+  @Tool({ description: 'Allowed action' })
+  @UsePolicies(AllowPolicy)
+  async safeAction(@Param('value') value: string, @Context() ctx: AgentContext) {
+    return { status: 'processed', value, user: ctx.security.userId };
+  }
+
+  @Tool({ description: 'Restricted action' })
+  @UsePolicies(DenyPolicy)
+  async restrictedAction(@Param('amount') amount: number) {
+    return { amount };
+  }
+
+  @Tool({ description: 'High risk action needing approval' })
+  @UsePolicies(RequireApprovalPolicy)
+  async highRiskAction(@Param('target') target: string) {
+    return { executed: true, target };
+  }
+}
+
+// Mock ModuleRef for Policy Resolution
+class MockModuleRef {
+  get(token: any): any {
+    if (token === AllowPolicy) return new AllowPolicy();
+    if (token === DenyPolicy) return new DenyPolicy();
+    if (token === RequireApprovalPolicy) return new RequireApprovalPolicy();
+    return undefined;
+  }
+}
+
+export async function runLocalToolProviderTests() {
+  console.log('🛡️ Running Step 2: LocalToolProvider & Governance Guard Unit Tests...\n');
+
+  const discovery = new ToolDiscoveryService();
+  const approvalStore = new InMemoryApprovalStore();
+  const moduleRef = new MockModuleRef() as unknown as ModuleRef;
+
+  const provider = new LocalToolProvider(
+    [new AllowPolicy(), new DenyPolicy(), new RequireApprovalPolicy()],
+    approvalStore,
+    discovery,
+    moduleRef,
+  );
+
+  const toolsInstance = new GovernedTools();
+  const agentContext: AgentContext = {
+    sessionId: 'test_session_123',
+    traceId: 'trace_456',
+    security: {
+      userId: 'usr_admin',
+      tenantId: 'tenant_acme',
+      roles: ['admin'],
+    },
+  };
+
+  const resolvedTools = provider.buildTools([toolsInstance], agentContext);
+  let passed = 0;
+  let failed = 0;
+
+  function assert(condition: boolean, testName: string, detail?: string) {
+    if (condition) {
+      console.log(`  ✅ PASS: ${testName}`);
+      passed++;
+    } else {
+      console.error(`  ❌ FAIL: ${testName} ${detail ? `(${detail})` : ''}`);
+      failed++;
+    }
+  }
+
+  // TEST 1: Tool Resolution Count
+  try {
+    assert(resolvedTools.length === 3, 'Test 1: Built 3 ResolvedTool closures');
+  } catch (err: any) {
+    assert(false, 'Test 1: Tool Resolution Count', err.message);
+  }
+
+  // TEST 2: Policy 'allow' & Context Parameter Injection
+  try {
+    const safeTool = resolvedTools.find((t) => t.name === 'safeAction');
+    assert(safeTool !== undefined, 'Test 2a: safeAction tool closure resolved');
+
+    const result = (await safeTool?.execute({ args: { value: 'hello' } })) as ToolExecutionResult;
+    assert(result.success === true, 'Test 2b: Policy decision "allow" returns success: true');
+    assert(
+      (result as any).data?.user === 'usr_admin',
+      'Test 2c: AgentContext pre-bound into @Context() parameter correctly',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 2: Policy allow & Context injection', err.message);
+  }
+
+  // TEST 3: Policy 'deny' Hashing & Reason
+  try {
+    const restrictedTool = resolvedTools.find((t) => t.name === 'restrictedAction');
+    const result = (await restrictedTool?.execute({ args: { amount: 500 } })) as ToolExecutionResult;
+
+    assert(result.success === false, 'Test 3a: Policy decision "deny" returns success: false');
+    assert(
+      !result.success && result.status === 'denied',
+      'Test 3b: Status is "denied"',
+    );
+    assert(
+      !result.success && result.reason.includes('tenant_acme'),
+      'Test 3c: Policy evaluation reason contains context tenantId',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 3: Policy deny & Reason', err.message);
+  }
+
+  // TEST 4: Policy 'require_approval' & Store Execution
+  try {
+    const highRiskTool = resolvedTools.find((t) => t.name === 'highRiskAction');
+    const result = (await highRiskTool?.execute({ args: { target: 'database_prod' } })) as ToolExecutionResult;
+
+    assert(result.success === false, 'Test 4a: Policy "require_approval" returns success: false');
+    assert(
+      !result.success && result.status === 'pending_approval',
+      'Test 4b: Status is "pending_approval"',
+    );
+    assert(
+      !result.success && Boolean((result as any).approvalId),
+      'Test 4c: Returns valid approvalId UUID',
+    );
+
+    if (!result.success && (result as any).approvalId) {
+      const pendingRecord = await approvalStore.get((result as any).approvalId);
+      assert(pendingRecord !== undefined, 'Test 4d: Pending tool closure saved to ApprovalStore');
+      assert(pendingRecord?.toolName === 'highRiskAction', 'Test 4e: Store record contains toolName');
+
+      // Execute stored closure
+      const executionRes = (await pendingRecord?.execute()) as ToolExecutionResult;
+      assert(
+        executionRes?.success === true && (executionRes as any).data?.target === 'database_prod',
+        'Test 4f: Saved closure executes method correctly upon human approval',
+      );
+    }
+  } catch (err: any) {
+    assert(false, 'Test 4: Policy require_approval & Store', err.message);
+  }
+
+  console.log(`\n  📊 Step 2 Results: ${passed} passed, ${failed} failed.\n`);
+  if (failed > 0) {
+    throw new Error('Step 2 Unit Tests Failed');
+  }
+}
+
+// Run directly if executed via node
+if (require.main === module) {
+  runLocalToolProviderTests().catch(() => process.exit(1));
+}

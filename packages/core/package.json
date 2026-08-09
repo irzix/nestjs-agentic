@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsc -p test/tsconfig.json && node dist/test/test/run-all-tests.js"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0",
