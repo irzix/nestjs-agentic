@@ -89,8 +89,8 @@ export class AgenticModule {
       ...(options.agents ?? []),
       ...(options.toolSets ?? []),
       ...(options.policies ?? []),
-      AGENT_PROVIDERS,
-      POLICY_INSTANCES,
+      ...((options.agents ?? []).length > 0 ? [AGENT_PROVIDERS] : []),
+      ...((options.policies ?? []).length > 0 ? [POLICY_INSTANCES] : []),
     ];
 
     return {

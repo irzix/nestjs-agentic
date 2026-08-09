@@ -87,7 +87,7 @@ Where nestjs-agentic becomes irreplaceable for enterprise teams.
 #### 🔌 Ecosystem Adapters & Transports
 
 - [ ] **`@nestjs-agentic/vercel`** — Vercel AI SDK runtime adapter with streaming support.
-- [ ] **`@nestjs-agentic/langgraph`** — LangGraph runtime adapter for graph-based agent flows.
+- [x] **`@nestjs-agentic/langgraph`** — LangGraph runtime adapter for graph-based agent flows.
 - [ ] **MCP Transport** — Model Context Protocol `ToolProvider` for exposing tools to external MCP-compatible servers and clients.
 
 ---

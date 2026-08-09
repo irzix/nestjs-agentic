@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "ts-node src/main.ts",
-    "test": "ts-node src/test-governance.ts"
+    "test": "tsc && node dist/test-governance.js"
   },
   "dependencies": {
     "nestjs-agentic": "*",
