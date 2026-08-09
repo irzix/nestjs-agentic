@@ -4,9 +4,9 @@ import { APPROVAL_STORE, POLICY_INSTANCES } from '../constants';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
 import type {
+  AgentContext,
   ApprovalStore,
   ResolvedTool,
-  ToolExecutionInput,
   ToolExecutionResult,
   ToolParamSchema,
   ToolPolicy,
@@ -29,16 +29,17 @@ export class LocalToolProvider {
   }
 
   /**
-   * Scans each @ToolSet instance, discovers its @Tool methods,
-   * and wraps each one in a ResolvedTool closure with policy enforcement baked in.
+   * Scans each @ToolSet instance, discovers its @Tool methods, and wraps
+   * each one in a ResolvedTool closure with policy enforcement and
+   * AgentContext pre-bound. The adapter only needs to supply tool args.
    */
-  buildTools(toolSetInstances: object[]): ResolvedTool[] {
+  buildTools(toolSetInstances: object[], agentContext: AgentContext): ResolvedTool[] {
     return toolSetInstances.flatMap((instance) => {
       const discovered = this.discovery.discover(instance);
       if (!discovered) return [];
 
       return discovered.tools.map((tool) =>
-        this.buildResolvedTool(tool, discovered.classPolicyConstructors),
+        this.buildResolvedTool(tool, discovered.classPolicyConstructors, agentContext),
       );
     });
   }
@@ -46,6 +47,7 @@ export class LocalToolProvider {
   private buildResolvedTool(
     tool: DiscoveredTool,
     classPolicyConstructors: PolicyConstructor[],
+    agentContext: AgentContext,
   ): ResolvedTool {
     const allPolicyConstructors = [...classPolicyConstructors, ...tool.policyConstructors];
 
@@ -60,8 +62,8 @@ export class LocalToolProvider {
       name: tool.toolName,
       description: tool.description,
       parameters,
-      execute: async (input: ToolExecutionInput): Promise<ToolExecutionResult> => {
-        // --- Policy evaluation ---
+      execute: async ({ args }: { args: Record<string, unknown> }): Promise<ToolExecutionResult> => {
+        // --- Policy evaluation (context is pre-bound, never sent to LLM) ---
         for (const Constructor of allPolicyConstructors) {
           const policy = this.policyMap.get(Constructor);
 
@@ -72,7 +74,7 @@ export class LocalToolProvider {
             );
           }
 
-          const result = await policy.evaluate(input.context, tool.toolName, input.args);
+          const result = await policy.evaluate(agentContext, tool.toolName, args);
 
           if (result.decision === 'deny') {
             return { success: false, status: 'denied', reason: result.reason };
@@ -83,11 +85,11 @@ export class LocalToolProvider {
             await this.approvalStore.save({
               id: approvalId,
               toolName: tool.toolName,
-              args: input.args,
-              context: input.context,
+              args,
+              context: agentContext,
               reason: result.reason,
               createdAt: new Date(),
-              execute: () => this.invokeMethod(tool, input),
+              execute: () => this.invokeMethod(tool, args, agentContext),
             });
             return {
               success: false,
@@ -99,23 +101,24 @@ export class LocalToolProvider {
         }
 
         // --- Method invocation ---
-        return this.invokeMethod(tool, input);
+        return this.invokeMethod(tool, args, agentContext);
       },
     };
   }
 
   private async invokeMethod(
     tool: DiscoveredTool,
-    input: ToolExecutionInput,
+    args: Record<string, unknown>,
+    agentContext: AgentContext,
   ): Promise<ToolExecutionResult> {
     const methodArgs: unknown[] = [];
 
     for (const param of tool.params) {
-      methodArgs[param.index] = input.args[param.name];
+      methodArgs[param.index] = args[param.name];
     }
 
     if (tool.contextParamIndex !== undefined) {
-      methodArgs[tool.contextParamIndex] = input.context;
+      methodArgs[tool.contextParamIndex] = agentContext;
     }
 
     const data = await (

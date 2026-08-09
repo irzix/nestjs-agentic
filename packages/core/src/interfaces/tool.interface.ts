@@ -1,4 +1,4 @@
-import type { AgentContext } from './agent-context.interface';
+
 
 /** Schema of a single tool parameter exposed to the LLM. */
 export interface ToolParamSchema {
@@ -8,9 +8,13 @@ export interface ToolParamSchema {
   required?: boolean;
 }
 
+/**
+ * Input passed by a RuntimeAdapter when invoking a tool.
+ * AgentContext is NOT included here — it is pre-bound into the closure
+ * by LocalToolProvider so it never reaches the adapter or the LLM.
+ */
 export interface ToolExecutionInput {
   args: Record<string, unknown>;
-  context: AgentContext;
 }
 
 export type ToolExecutionResult<T = unknown> =

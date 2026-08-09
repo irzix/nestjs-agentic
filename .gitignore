@@ -48,3 +48,4 @@ temp/
 
 # OS specific files
 Thumbs.db
+package-lock.json
