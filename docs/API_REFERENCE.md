@@ -107,6 +107,45 @@ Attaches one or more policies to a tool method or an entire `@ToolSet` class.
 
 ## Interfaces & Types
 
+### AgentContext
+
+Context object injected into tool handlers via `@Context()`. Never sent to the LLM.
+
+```typescript
+interface AgentSecurityContext {
+  userId?: string;
+  tenantId?: string;
+  roles?: string[];
+  permissions?: string[];
+}
+
+interface AgentContext {
+  security: AgentSecurityContext;
+  sessionId: string;
+  traceId: string;          // auto-generated UUID per run
+  data?: Record<string, unknown>;
+}
+```
+
+---
+
+### AgentProvider & AgentConfig
+
+```typescript
+interface AgentConfig {
+  instructions: string;
+  tools: object[];           // @ToolSet instances
+  subAgents?: AgentProvider[]; // @future v0.2 multi-agent
+  model?: ModelConfig;       // overrides forRoot() defaultModel
+}
+
+interface AgentProvider {
+  define(): AgentConfig;
+}
+```
+
+---
+
 ### ToolPolicy & PolicyResult
 
 3-state policy decision supporting Human-in-the-Loop (HITL) approval requirements.
@@ -126,15 +165,70 @@ type PolicyResult =
   | { decision: 'require_approval'; reason: string };
 ```
 
-### ToolExecutionResult
+### ToolExecutionInput & ToolExecutionResult
 
-3-variant result returned by tool closures.
+`ToolExecutionInput` only carries `args` — `AgentContext` is pre-bound inside the
+tool closure by `LocalToolProvider` and is never exposed to the adapter or the LLM.
 
 ```typescript
+interface ToolExecutionInput {
+  args: Record<string, unknown>;
+}
+
 type ToolExecutionResult<T = unknown> =
   | { success: true; data: T }
   | { success: false; status: 'denied'; reason: string }
   | { success: false; status: 'pending_approval'; reason: string; approvalId: string };
+```
+
+### ResolvedTool & ToolProvider
+
+```typescript
+interface ToolParamSchema {
+  name: string;
+  description?: string;
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  required?: boolean;
+}
+
+interface ResolvedTool {
+  name: string;
+  description: string;
+  parameters: ToolParamSchema[];
+  execute(input: ToolExecutionInput): Promise<ToolExecutionResult>;
+}
+
+interface ToolProvider {
+  getTools(): ResolvedTool[];
+}
+```
+
+### RuntimeAdapter & AgentResult
+
+```typescript
+interface ModelConfig {
+  provider: 'google' | 'openai' | 'anthropic' | string;
+  model: string;
+}
+
+interface AgentRunInput {
+  sessionId: string;
+  message: string;
+  tools: ResolvedTool[];
+  model: ModelConfig;
+  instructions?: string;
+}
+
+interface AgentResult {
+  sessionId: string;
+  output: string;
+  toolCalls: ToolCallRecord[];
+}
+
+interface RuntimeAdapter {
+  execute(input: AgentRunInput): Promise<AgentResult>;
+  stream?(input: AgentRunInput): AsyncIterable<string>; // optional
+}
 ```
 
 ### PendingApproval & ApprovalStore
@@ -147,12 +241,28 @@ interface PendingApproval {
   context: AgentContext;
   reason: string;
   createdAt: Date;
+  /** Tool closure invoked on approval — stored internally by LocalToolProvider. */
+  execute: () => Promise<unknown>;
 }
 
 interface ApprovalStore {
   save(approval: PendingApproval): Promise<void>;
   get(id: string): Promise<PendingApproval | null>;
   delete(id: string): Promise<void>;
+}
+```
+
+### AgentObserver
+
+All methods are optional — implement only what you need.
+
+```typescript
+interface AgentObserver {
+  onAgentStart?(agentName: string, sessionId: string): void;
+  onAgentEnd?(agentName: string, result: AgentResult): void;
+  onToolCall?(toolName: string, args: Record<string, unknown>): void;
+  onToolResult?(toolName: string, result: unknown, durationMs: number): void;
+  onError?(agentName: string, error: Error): void;
 }
 ```
 
@@ -181,11 +291,33 @@ export class ApprovalService {
 
 ---
 
+## Default Store Implementations
+
+Two in-memory stores are provided out of the box. They are used automatically
+by `AgenticModule` unless overridden with a custom provider.
+
+| Class | Token to override | Notes |
+|---|---|---|
+| `InMemoryApprovalStore` | `APPROVAL_STORE` | Not suitable for multi-instance deployments |
+| `InMemorySessionStore` | `SESSION_STORE` | Not suitable for multi-instance deployments |
+
+To plug in Redis or any other backend:
+
+```typescript
+{ provide: APPROVAL_STORE, useClass: RedisApprovalStore }
+{ provide: SESSION_STORE, useClass: RedisSessionStore }
+```
+
+---
+
 ## Tokens
 
 | Token | Description |
 |---|---|
 | `RUNTIME_ADAPTER` | Token for providing custom or built-in `RuntimeAdapter` |
-| `SESSION_STORE` | Token for providing custom `SessionStore` |
-| `APPROVAL_STORE` | Token for providing custom `ApprovalStore` (default `InMemoryApprovalStore`) |
-| `AGENT_OBSERVERS` | Token for providing observers |
+| `APPROVAL_STORE` | Token for providing custom `ApprovalStore` (default: `InMemoryApprovalStore`) |
+| `SESSION_STORE` | Token for providing custom `SessionStore` (default: `InMemorySessionStore`) |
+| `AGENT_OBSERVERS` | Multi-provider token for `AgentObserver` implementations |
+| `POLICY_INSTANCES` | Internal — populated by `forFeature({ policies: [] })` |
+| `AGENT_PROVIDERS` | Internal — populated by `forFeature({ agents: [] })` |
+| `AGENTIC_OPTIONS` | Internal — populated by `forRoot()` |
