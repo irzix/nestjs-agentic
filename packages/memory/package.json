@@ -1,0 +1,43 @@
+{
+  "name": "@nestjs-agentic/memory",
+  "version": "0.2.3",
+  "description": "Multi-tier cognitive memory module for nestjs-agentic enabling Short-Term, Scratchpad, and Composite memory stores.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/irzix/nestjs-agentic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/irzix/nestjs-agentic/issues"
+  },
+  "homepage": "https://github.com/irzix/nestjs-agentic#readme",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p test/tsconfig.json && node dist/test/test/memory.spec.js"
+  },
+  "peerDependencies": {
+    "@nestjs-agentic/core": "*",
+    "nestjs-agentic": "*",
+    "@nestjs/common": "^10.0.0 || ^11.0.0",
+    "@nestjs/core": "^10.0.0 || ^11.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "nestjs",
+    "nestjs-agentic",
+    "memory",
+    "rag",
+    "scratchpad",
+    "cognitive",
+    "ai",
+    "agent"
+  ],
+  "license": "MIT"
+}
