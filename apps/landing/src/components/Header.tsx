@@ -26,7 +26,7 @@ export function Header() {
         <div className="hidden md:flex items-center gap-8 text-[13px] font-medium text-zinc-300">
           <a href="#syntax" className="hover:text-white transition-colors">Syntax</a>
           <a href="#pillars" className="hover:text-white transition-colors">Overview</a>
-          <a href="#roadmap" className="hover:text-white transition-colors">Roadmap</a>
+          <a href="https://github.com/irzix/nestjs-agentic/blob/main/docs/ROADMAP.md" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Roadmap</a>
           <a href="https://github.com/irzix/nestjs-agentic#readme" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Docs</a>
         </div>
 
