@@ -35,6 +35,21 @@ export const AGENT_OBSERVERS = Symbol('AGENT_OBSERVERS');
 export const POLICY_INSTANCES = Symbol('POLICY_INSTANCES');
 
 /**
+ * Multi-provider token for all registered AgentProvider instances.
+ * Populated automatically by AgenticModule.forFeature() for each agent
+ * listed in the `agents` array. AgentRunner uses this to resolve agents by name.
+ * @internal
+ */
+export const AGENT_PROVIDERS = Symbol('AGENT_PROVIDERS');
+
+/**
+ * Injection token for the root module configuration object.
+ * Provided by AgenticModule.forRoot(). Contains defaultModel and global options.
+ * @internal
+ */
+export const AGENTIC_OPTIONS = Symbol('AGENTIC_OPTIONS');
+
+/**
  * Metadata key used by @ToolSet decorator.
  * @internal
  */
