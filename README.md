@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.jpeg" alt="nestjs-agentic banner" width="100%" />
+  <img src="https://raw.githubusercontent.com/irzix/nestjs-agentic/main/docs/assets/banner.jpeg" alt="nestjs-agentic banner" width="100%" />
 </p>
 
 <h1 align="center">nestjs-agentic</h1>
@@ -9,8 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/v/nestjs-agentic.svg" alt="NPM Version" /></a>
-  <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/l/nestjs-agentic.svg" alt="License" /></a>
+  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%2B-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS Compatible" /></a>
+  <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/v/nestjs-agentic.svg?color=E0234E" alt="NPM Version" /></a>
+  <a href="https://github.com/irzix/nestjs-agentic/actions"><img src="https://github.com/irzix/nestjs-agentic/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0%2B-blue?logo=typescript&logoColor=white" alt="TypeScript" /></a>
+  <a href="https://github.com/irzix/nestjs-agentic/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/nestjs-agentic.svg?color=blue" alt="License" /></a>
   <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/dm/nestjs-agentic.svg" alt="Downloads" /></a>
 </p>
 
