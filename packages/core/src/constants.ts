@@ -26,6 +26,15 @@ export const SESSION_STORE = Symbol('SESSION_STORE');
 export const AGENT_OBSERVERS = Symbol('AGENT_OBSERVERS');
 
 /**
+ * Multi-provider token for all registered ToolPolicy instances.
+ * Populated automatically by AgenticModule.forFeature() for each policy
+ * listed in the `policies` array. LocalToolProvider uses this to build
+ * its policy lookup map without needing ModuleRef.
+ * @internal
+ */
+export const POLICY_INSTANCES = Symbol('POLICY_INSTANCES');
+
+/**
  * Metadata key used by @ToolSet decorator.
  * @internal
  */
