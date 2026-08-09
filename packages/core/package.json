@@ -14,6 +14,18 @@
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0"
   },
-  "author": "",
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "nestjs",
+    "ai",
+    "agent",
+    "llm",
+    "hitl",
+    "tools",
+    "gemini",
+    "adk"
+  ],
   "license": "MIT"
 }
