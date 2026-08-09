@@ -19,5 +19,6 @@ import { BankingTools } from './banking.tools';
     }),
   ],
   controllers: [BankingController],
+  exports: [AgenticModule],
 })
 export class BankingModule {}
