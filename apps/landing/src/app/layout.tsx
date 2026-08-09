@@ -15,7 +15,7 @@ const mono = JetBrains_Mono({
   display: 'swap',
 });
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://nestjs-agentic.irzix.com';
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://agentic.alireza.work/';
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
