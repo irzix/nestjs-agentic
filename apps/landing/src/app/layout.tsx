@@ -142,6 +142,7 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
+        <meta name="google-site-verification" content="Pn9iwq4ZmlEOfWnel04fFMcPJNusg3wZM6HMW20N4MM" />
       </head>
       <body className="bg-[#000000] text-zinc-100 font-sans">{children}</body>
     </html>
