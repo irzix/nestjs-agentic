@@ -30,3 +30,6 @@ jobs:
 
       - name: Build monorepo packages
         run: npm run build
+
+      - name: Run Test Suite
+        run: npm run test

@@ -13,7 +13,7 @@
   "homepage": "https://github.com/irzix/nestjs-agentic#readme",
   "scripts": {
     "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces"
+    "test": "npm run test --workspaces --if-present"
   },
   "workspaces": [
     "packages/*",
