@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useCallback } from 'react';
-import { Layers, Cpu, ShieldCheck, Terminal, ArrowUpRight } from 'lucide-react';
+import { Layers, ShieldCheck, Cpu, GitFork, ArrowUpRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export function Pillars() {
@@ -48,17 +48,17 @@ export function Pillars() {
           className="max-w-4xl text-left mb-20 relative z-10 space-y-4"
         >
           <div className="font-mono text-[11px] text-zinc-500 tracking-[0.2em]">
-            &#123; ARCHITECTURE PILLARS &#125;
+            &#123; THE 4 CORE PILLARS &#125;
           </div>
           <h2 className="text-4xl sm:text-5xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-[1.15] font-sans">
-            Built for enterprise-grade NestJS applications.
+            Enterprise Agentic Infrastructure for NestJS.
           </h2>
         </motion.div>
 
         {/* 2x2 Grid of Large Glass Feature Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
           
-          {/* Card 1: NestJS DI Native */}
+          {/* Card 1: NestJS Primitives & DI */}
           <motion.div
             initial={{ opacity: 0, y: 35 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -73,13 +73,13 @@ export function Pillars() {
 
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
-                  NestJS DI Native
+                  NestJS Primitives &amp; DI
                 </h3>
                 <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
               </div>
 
               <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
-                Use <code className="text-rose-300 font-mono">@ToolSet</code>, <code className="text-rose-300 font-mono">@Tool</code>, <code className="text-rose-300 font-mono">@Param</code>, and <code className="text-rose-300 font-mono">@Context</code> decorators. Expose services with full NestJS Dependency Injection support.
+                Expose existing backend services directly with <code className="text-rose-300 font-mono">@ToolSet</code>, <code className="text-rose-300 font-mono">@Tool</code>, and <code className="text-rose-300 font-mono">@Context</code> decorators. Full Dependency Injection integration.
               </p>
             </div>
 
@@ -89,7 +89,7 @@ export function Pillars() {
             </div>
           </motion.div>
 
-          {/* Card 2: Pluggable Runtimes */}
+          {/* Card 2: Governance & HITL Safety */}
           <motion.div
             initial={{ opacity: 0, y: 35 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -99,28 +99,28 @@ export function Pillars() {
           >
             <div>
               <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
-                <Cpu className="w-6 h-6" />
+                <ShieldCheck className="w-6 h-6" />
               </div>
 
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
-                  Pluggable Runtimes
+                  Governance &amp; HITL Safety
                 </h3>
                 <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
               </div>
 
               <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
-                Seamlessly connects to Google ADK (<code className="text-rose-300 font-mono">@nestjs-agentic/adk</code>), Vercel AI SDK, LangGraph, or custom LLM engines.
+                3-state policy engine (<code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, <code className="text-rose-300 font-mono">require_approval</code>). Pause sensitive execution and resume upon human supervisor approval via <code className="text-rose-300 font-mono">ApprovalService</code>.
               </p>
             </div>
 
             <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
-              <span className="text-rose-400/90 font-medium">RuntimeAdapter</span>
-              <span className="text-zinc-600">Vendor Lock-In Free</span>
+              <span className="text-rose-400/90 font-medium">@UsePolicies &amp; HITL</span>
+              <span className="text-zinc-600">Enterprise Guardrails</span>
             </div>
           </motion.div>
 
-          {/* Card 3: Policy & HITL Guard */}
+          {/* Card 3: Pluggable Ecosystem Adapters */}
           <motion.div
             initial={{ opacity: 0, y: 35 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -130,28 +130,28 @@ export function Pillars() {
           >
             <div>
               <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
-                <ShieldCheck className="w-6 h-6" />
+                <Cpu className="w-6 h-6" />
               </div>
 
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
-                  Policy &amp; HITL Guard
+                  Ecosystem Adapters
                 </h3>
                 <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
               </div>
 
               <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
-                3-state policy evaluation (<code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, <code className="text-rose-300 font-mono">require_approval</code>) with human supervisor workflows.
+                Connect seamlessly to Google ADK (<code className="text-rose-300 font-mono">@nestjs-agentic/adk</code>), Vercel AI SDK, LangGraph, or custom LLM runtimes with zero framework lock-in.
               </p>
             </div>
 
             <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
-              <span className="text-rose-400/90 font-medium">@UsePolicies &amp; HITL</span>
-              <span className="text-zinc-600">Safe Execution</span>
+              <span className="text-rose-400/90 font-medium">RuntimeAdapter API</span>
+              <span className="text-zinc-600">Vendor Agnostic</span>
             </div>
           </motion.div>
 
-          {/* Card 4: Mock-First Testing */}
+          {/* Card 4: Multi-Agent Orchestration */}
           <motion.div
             initial={{ opacity: 0, y: 35 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -161,24 +161,24 @@ export function Pillars() {
           >
             <div>
               <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
-                <Terminal className="w-6 h-6" />
+                <GitFork className="w-6 h-6" />
               </div>
 
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
-                  Mock-First Testing
+                  Multi-Agent Orchestration
                 </h3>
                 <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
               </div>
 
               <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
-                Includes <code className="text-rose-300 font-mono">MockRuntimeAdapter</code>. Unit test 100% of your tools, parameters, and policies without live API keys.
+                Delegate sub-tasks across specialized sub-agents via <code className="text-rose-300 font-mono">subAgents</code> with isolated sub-context governance and immutable audit trails.
               </p>
             </div>
 
             <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
-              <span className="text-rose-400/90 font-medium">MockRuntimeAdapter</span>
-              <span className="text-zinc-600">Deterministic CI/CD</span>
+              <span className="text-rose-400/90 font-medium">Sub-Agent Workflows</span>
+              <span className="text-zinc-600">Complex Agent Systems</span>
             </div>
           </motion.div>
 

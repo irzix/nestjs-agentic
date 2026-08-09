@@ -3,26 +3,31 @@ import { NextResponse } from 'next/server';
 export async function GET() {
   const content = `# nestjs-agentic
 
-> AI Integration & Governance Layer for NestJS Applications.
-> Expose existing backend services as safe, type-safe, policy-guarded AI tools with built-in Human-in-the-Loop (HITL) approvals.
+> Agentic Integration & Governance Layer for NestJS Applications.
+> Build, govern, and orchestrate autonomous AI agents inside NestJS backend services with full Dependency Injection, 3-state policy guards, and Human-in-the-Loop (HITL) approvals.
 
 ## What is nestjs-agentic?
 
-nestjs-agentic is a NestJS-native package that brings AI tool-calling and governance to enterprise Node.js applications. It allows developers to decorate existing NestJS services with @ToolSet, @Tool, @Param, and @Context decorators, enforcing 3-state policies (allow, deny, require_approval) before any LLM executes code.
+nestjs-agentic is the enterprise Agentic infrastructure layer for NestJS. It brings together native NestJS primitives, ecosystem runtime adapters, multi-agent orchestration, and enterprise governance — making AI agents a first-class citizen in NestJS applications without architecture drift.
 
-## Key Features
+## The 4 Core Pillars
 
-- NestJS Native: Decorator-driven tool definitions with full Dependency Injection support.
-- Policy Governance: 3-state evaluation pipeline (allow, deny, require_approval).
-- Human-in-the-Loop (HITL): Pause sensitive tool executions and resume after supervisor approval via ApprovalService.
-- Context Isolation: Auto-inject userId, tenantId, and traceId straight into tool closures via @Context() — zero LLM prompt leakage.
-- Adapter Agnostic: Works with Google ADK (@nestjs-agentic/adk), Vercel AI SDK, LangGraph, or custom runtimes.
-- Mock-First Testing: Includes MockRuntimeAdapter for unit testing tools and policies without live LLM API keys.
+1. NestJS Primitives & DI Binding: Decorator-driven agent primitives (@Agent, @ToolSet, @Tool, @Param, @Context) using existing services and native NestJS Dependency Injection.
+2. Governance & HITL Safety: 3-state evaluation pipeline (allow, deny, require_approval) before any agent tool call executes. Pause sensitive actions and resume via ApprovalService.
+3. Pluggable Ecosystem Adapters: Official Google ADK runtime adapter (@nestjs-agentic/adk), Vercel AI SDK, LangGraph, or custom runtimes with zero framework lock-in.
+4. Multi-Agent Orchestration: Sub-agent delegation via AgentConfig.subAgents with isolated sub-context governance.
 
 ## Quick Installation
 
 npm install nestjs-agentic
 npm install @nestjs-agentic/adk
+
+## Product Roadmap & Release Phases
+
+- Phase 0.1 (Current Released): Core Primitives, 3-State Policies, Google ADK Adapter, MockRuntimeAdapter for unit testing.
+- Phase 0.2 (In Progress): Enterprise Governance Matrix (Composite Policies, Role-Aware HITL), Sub-Agent Delegation, Vercel AI SDK & LangGraph Adapters, MCP Transport.
+- Phase 0.3 (Upcoming): Immutable Audit Trail (AuditEventStore), OpenTelemetry, Langfuse & Arize Phoenix integrations.
+- Phase 1.0 (Planned): Durable HITL Workflows (Temporal.io & BullMQ), Distributed Redis Session & Approval Stores.
 
 ## Links & Documentation
 
@@ -30,6 +35,7 @@ npm install @nestjs-agentic/adk
 - NPM Core Package: https://www.npmjs.com/package/nestjs-agentic
 - NPM ADK Package: https://www.npmjs.com/package/@nestjs-agentic/adk
 - Architecture Guide: https://github.com/irzix/nestjs-agentic/blob/main/docs/ARCHITECTURE.md
+- Product Roadmap: https://github.com/irzix/nestjs-agentic/blob/main/docs/ROADMAP.md
 - API Reference: https://github.com/irzix/nestjs-agentic/blob/main/docs/API_REFERENCE.md
 `;
 

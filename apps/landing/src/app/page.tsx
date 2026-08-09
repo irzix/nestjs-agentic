@@ -4,6 +4,7 @@ import React from 'react';
 import { HeroSection } from '@/components/Header';
 import { SyntaxShowcase } from '@/components/SyntaxShowcase';
 import { Pillars } from '@/components/Pillars';
+import { Roadmap } from '@/components/Roadmap';
 import { Footer } from '@/components/Footer';
 
 export default function LandingPage() {
@@ -19,7 +20,10 @@ export default function LandingPage() {
       {/* SECTION 3: ARCHITECTURE PILLARS */}
       <Pillars />
 
-      {/* SECTION 4: FOOTER */}
+      {/* SECTION 4: PRODUCT ROADMAP */}
+      <Roadmap />
+
+      {/* SECTION 5: FOOTER */}
       <Footer />
 
     </div>

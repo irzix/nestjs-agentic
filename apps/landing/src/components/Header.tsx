@@ -26,6 +26,7 @@ export function Header() {
         <div className="hidden md:flex items-center gap-8 text-[13px] font-medium text-zinc-300">
           <a href="#syntax" className="hover:text-white transition-colors">Syntax</a>
           <a href="#pillars" className="hover:text-white transition-colors">Overview</a>
+          <a href="#roadmap" className="hover:text-white transition-colors">Roadmap</a>
           <a href="https://github.com/irzix/nestjs-agentic#readme" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Docs</a>
         </div>
 
@@ -103,9 +104,9 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-            className="text-[clamp(2.75rem,8vw,7.5rem)] font-semibold tracking-[-0.035em] text-white leading-[0.98] mb-6 sm:mb-8 font-sans"
+            className="text-[clamp(2.5rem,7.5vw,7rem)] font-semibold tracking-[-0.035em] text-white leading-[0.98] mb-6 sm:mb-8 font-sans"
           >
-            AI Integration Layer<br />
+            Agentic Infrastructure<br />
             for NestJS
           </motion.h1>
 
@@ -113,10 +114,10 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 25 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
-            className="font-mono text-xs sm:text-[13px] text-zinc-400 max-w-xl mx-auto leading-relaxed mb-10 sm:mb-14 px-4"
+            className="font-mono text-xs sm:text-[13px] text-zinc-400 max-w-2xl mx-auto leading-relaxed mb-10 sm:mb-14 px-4"
           >
-            Turn your existing NestJS services into AI tools with simple decorators.<br className="hidden sm:inline" />
-            Zero architecture changes, full DI, and human approval for sensitive actions.
+            Build, govern, and orchestrate autonomous AI agents inside your NestJS services.<br className="hidden sm:inline" />
+            Native DI binding, 3-state policy guards, and Human-in-the-Loop approvals without architecture drift.
           </motion.p>
 
           <motion.div
