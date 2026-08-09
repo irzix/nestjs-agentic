@@ -1,6 +1,6 @@
 {
   "name": "nestjs-agentic",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "NestJS-native primitives for building production AI agents.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,7 +15,8 @@
     "rxjs": "^7.8.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "keywords": [
     "nestjs",
