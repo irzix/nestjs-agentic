@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/langgraph",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "LangGraph runtime adapter for nestjs-agentic enabling stateful graph-based agent orchestration with NestJS governance.",
   "repository": {
     "type": "git",

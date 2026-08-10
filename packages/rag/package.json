@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/rag",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Production-grade, modular RAG engine for nestjs-agentic with advanced built-in strategies (Query Expansion, Hierarchical RAG, Late Chunking, Parent-Child Hydration, Contextual Compression, and Knowledge Graph RAG).",
   "repository": {
     "type": "git",

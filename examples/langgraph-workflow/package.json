@@ -1,6 +1,6 @@
 {
   "name": "example-langgraph-workflow",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "LangGraph Stateful Workflow example integrated with nestjs-agentic governance",
   "private": true,
   "scripts": {
