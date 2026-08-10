@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 
 export function SyntaxShowcase() {
-  const [activeTab, setActiveTab] = useState<'toolset' | 'policy' | 'module' | 'test'>('toolset');
+  const [activeTab, setActiveTab] = useState<'toolset' | 'policy' | 'rag' | 'memory' | 'module' | 'test'>('toolset');
 
   return (
     <section id="syntax" className="nest-hero-frame w-full">
@@ -28,11 +28,11 @@ export function SyntaxShowcase() {
             </div>
 
             <h2 className="text-4xl sm:text-5xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-[1.15] font-sans">
-              Agents, tools, and policies in pure NestJS.
+              Agents, tools, RAG, and memory in pure NestJS.
             </h2>
 
             <p className="text-sm text-zinc-500 leading-relaxed font-sans">
-              No new framework. No wrappers. Define your agents with the same decorator patterns you already know — and governance runs automatically between every tool call and every LLM.
+              No new framework. No wrappers. Define your agents with the decorator patterns you already know — with governance, vector store bridging, and multi-tier memory built in.
             </p>
 
             <div className="pt-4">
@@ -47,7 +47,7 @@ export function SyntaxShowcase() {
             </div>
           </motion.div>
 
-          {/* Right: Code Monitor bleeding right AND fading smoothly at the bottom */}
+          {/* Right: Code Monitor */}
           <motion.div
             initial={{ opacity: 0, scale: 0.96, x: 40 }}
             whileInView={{ opacity: 1, scale: 1, x: 0 }}
@@ -59,18 +59,18 @@ export function SyntaxShowcase() {
               <div className="bg-[#09090b] rounded-tl-[18px] rounded-bl-[18px] border-t border-l border-b border-white/5 overflow-hidden h-full flex flex-col">
 
                 {/* Tab Bar */}
-                <div className="flex items-center gap-10 px-10 py-5 border-b border-zinc-800/50 bg-[#0f0f12] text-[13px] font-sans">
-                  {(['toolset', 'policy', 'module', 'test'] as const).map((tab) => (
+                <div className="flex items-center gap-6 sm:gap-8 px-6 sm:px-10 py-5 border-b border-zinc-800/50 bg-[#0f0f12] text-[13px] font-sans overflow-x-auto">
+                  {(['toolset', 'policy', 'rag', 'memory', 'module', 'test'] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setActiveTab(tab)}
-                      className={`transition-colors ${
+                      className={`transition-colors whitespace-nowrap ${
                         activeTab === tab
                           ? 'text-white font-semibold'
                           : 'text-zinc-500 hover:text-zinc-300 font-normal'
                       }`}
                     >
-                      {tab === 'toolset' ? 'ToolSet' : tab === 'policy' ? 'Policy' : tab === 'module' ? 'Module' : 'Test'}
+                      {tab === 'toolset' ? 'ToolSet' : tab === 'policy' ? 'Policy' : tab === 'rag' ? 'RAG Engine' : tab === 'memory' ? 'Memory' : tab === 'module' ? 'Module' : 'Test'}
                     </button>
                   ))}
                 </div>
@@ -113,7 +113,7 @@ function CodeBlock({ tab }: { tab: string }) {
     ],
     policy: [
       `<k>import</k> { Injectable } <k>from</k> <s>'@nestjs/common'</s>;`,
-      `<k>import</k> <k>type</k> { ToolPolicy, AgentContext, PolicyResult } <k>from</k> <s>'nestjs-agentic'</s>;`,
+      `<k>import</k> <k>type</k> { ToolPolicy, AgentContext, PolicyResult } <k>from</k> <s>'@nestjs-agentic/core'</s>;`,
       ``,
       `<w>@Injectable</w>()`,
       `<k>export class</k> <w>RefundLimitPolicy</w> <k>implements</k> ToolPolicy {`,
@@ -127,6 +127,40 @@ function CodeBlock({ tab }: { tab: string }) {
       `      : { decision: <s>'allow'</s> };`,
       `  }`,
       `}`,
+    ],
+    rag: [
+      `<k>import</k> { KnowledgeBase, VectorStoreFactory, RAGPipeline } <k>from</k> <s>'@nestjs-agentic/rag'</s>;`,
+      `<k>import</k> { GraphRAGStrategy, RerankerStrategy } <k>from</k> <s>'@nestjs-agentic/rag'</s>;`,
+      ``,
+      `// Bridge Prisma + pgvector or any database using VectorStoreFactory`,
+      `<k>const</k> vectorStore = <w>VectorStoreFactory</w>.<f>createCustom</f>({`,
+      `  searchFn: <k>async</k> (query, limit, filter, vector) => {`,
+      `    <k>return await</k> vectorStoreService.<f>search</f>(vector, limit, filter);`,
+      `  },`,
+      `});`,
+      ``,
+      `<k>const</k> kb = <k>new</k> <w>KnowledgeBase</w>({ vectorStore });`,
+      `<k>await</k> kb.<f>ingestDocument</f>({ title: <s>'Governance Guide'</s>, rawContent: <s>'...'</s> });`,
+      ``,
+      `<k>const</k> pipeline = <k>new</k> <w>RAGPipeline</w>({`,
+      `  knowledgeBase: kb,`,
+      `  strategies: [<k>new</k> <w>GraphRAGStrategy</w>({ graphProvider }), <k>new</k> <w>RerankerStrategy</w>({ topK: <n>5</n> })],`,
+      `});`,
+    ],
+    memory: [
+      `<k>import</k> { CompositeMemory, ShortTermMemory, SemanticMemory } <k>from</k> <s>'@nestjs-agentic/memory'</s>;`,
+      `<k>import</k> { HybridVectorStore } <k>from</k> <s>'@nestjs-agentic/rag'</s>;`,
+      ``,
+      `<k>const</k> vectorStore = <k>new</k> <w>HybridVectorStore</w>();`,
+      `<k>const</k> memory = <k>new</k> <w>CompositeMemory</w>({`,
+      `  stores: [`,
+      `    <k>new</k> <w>ShortTermMemory</w>({ maxMessages: <n>20</n> }),`,
+      `    <k>new</k> <w>SemanticMemory</w>({ provider: vectorStore }),`,
+      `  ],`,
+      `});`,
+      ``,
+      `<k>await</k> memory.<f>save</f>({ sessionId: <s>'s1'</s>, type: <s>'semantic'</s>, content: <s>'User prefers dark mode'</s> });`,
+      `<k>const</k> context = <k>await</k> memory.<f>recall</f>(<s>'s1'</s>, <s>'user preferences'</s>);`,
     ],
     module: [
       `<k>import</k> { Module } <k>from</k> <s>'@nestjs/common'</s>;`,

@@ -116,8 +116,8 @@ export function HeroSection() {
             transition={{ duration: 0.8, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
             className="font-mono text-xs sm:text-[13px] text-zinc-400 max-w-2xl mx-auto leading-relaxed mb-10 sm:mb-14 px-4"
           >
-            Build, govern, and orchestrate autonomous AI agents inside your NestJS services.<br className="hidden sm:inline" />
-            Native DI binding, 3-state policy guards, and Human-in-the-Loop approvals without architecture drift.
+            Build, govern, and orchestrate production AI agents inside your NestJS services.<br className="hidden sm:inline" />
+            Native DI tools, 3-state policy guards, Multi-Tier Memory, Enterprise RAG (pgvector/Prisma), and Self-Learning.
           </motion.p>
 
           <motion.div
@@ -157,7 +157,7 @@ export function HeroSection() {
             </div>
             <div>
               <span className="mr-3 sm:mr-4">Latest release</span>
-              <span className="text-white font-semibold">v0.2.1</span>
+              <span className="text-white font-semibold">v0.4.1</span>
             </div>
           </div>
         </motion.div>

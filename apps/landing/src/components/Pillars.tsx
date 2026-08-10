@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useCallback } from 'react';
-import { Layers, ShieldCheck, Cpu, GitFork, ArrowUpRight } from 'lucide-react';
+import { Layers, ShieldCheck, Database, Brain, GitFork, BarChart3, ArrowUpRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const cards = [
@@ -12,7 +12,7 @@ const cards = [
     tagline: 'Zero Architecture Drift',
     description: (
       <>
-        Define agent tools directly on existing NestJS services. <code className="text-rose-300 font-mono">@ToolSet</code>, <code className="text-rose-300 font-mono">@Tool</code>, <code className="text-rose-300 font-mono">@Param</code>, and <code className="text-rose-300 font-mono">@Context</code> work with full Dependency Injection — no rewrites, no separate microservices.
+        Define agent tools directly on existing NestJS services. <code className="text-rose-300 font-mono">@ToolSet</code>, <code className="text-rose-300 font-mono">@Tool</code>, <code className="text-rose-300 font-mono">@Param</code>, and <code className="text-rose-300 font-mono">@Context</code> work with full Dependency Injection — no rewrites or microservice overhead.
       </>
     ),
   },
@@ -23,29 +23,51 @@ const cards = [
     tagline: 'Enterprise Guardrails',
     description: (
       <>
-        Every agent tool call passes through a 3-state policy engine — <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code>. Sensitive operations pause execution until a human supervisor approves via <code className="text-rose-300 font-mono">ApprovalService</code>.
+        Every agent tool call passes through a 3-state policy engine — <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code>. Sensitive operations pause execution until human supervisor approval.
       </>
     ),
   },
   {
-    icon: Cpu,
-    title: 'Pluggable Runtime Adapters',
-    badge: 'RuntimeAdapter API',
-    tagline: 'Vendor Agnostic',
+    icon: Database,
+    title: 'Enterprise RAG & Vector Stores',
+    badge: 'VectorStoreFactory & GraphRAG',
+    tagline: 'Available in v0.4.1',
     description: (
       <>
-        Connect to Google ADK (<code className="text-rose-300 font-mono">@nestjs-agentic/adk</code>), Vercel AI SDK, LangGraph, or any custom LLM runtime through a single adapter interface — swap without touching your tool definitions.
+        Bridge any database using <code className="text-rose-300 font-mono">VectorStoreFactory.createCustom()</code> (Prisma + pgvector, PostgreSQL) or in-memory <code className="text-rose-300 font-mono">HybridVectorStore</code>. Features GraphRAG, Reranking, and Late Chunking.
+      </>
+    ),
+  },
+  {
+    icon: Brain,
+    title: 'Multi-Tier Memory & Experience',
+    badge: 'CompositeMemory & Learner',
+    tagline: 'Self-Learning Agents',
+    description: (
+      <>
+        Combine Short-Term, Long-Term Semantic, Episodic, and Scratchpad memory via <code className="text-rose-300 font-mono">CompositeMemory</code>. Auto-extract lessons from agent errors using <code className="text-rose-300 font-mono">ExperienceLearner</code>.
       </>
     ),
   },
   {
     icon: GitFork,
     title: 'Multi-Agent Orchestration',
-    badge: 'AgentConfig.subAgents',
-    tagline: 'Coming in v0.2',
+    badge: 'Parallel & Refinement Loop',
+    tagline: 'Available in v0.4.1',
     description: (
       <>
-        Build complex agentic systems by delegating sub-tasks across specialized sub-agents via <code className="text-rose-300 font-mono">subAgents</code>. Each sub-agent gets its own isolated governance context and policy pipeline.
+        Delegate sub-tasks via <code className="text-rose-300 font-mono">SubAgentDelegator</code>, execute parallel consensus agents with <code className="text-rose-300 font-mono">ParallelSubAgentRunner</code>, and run self-correcting refinement loops.
+      </>
+    ),
+  },
+  {
+    icon: BarChart3,
+    title: 'Agent Evaluation & Benchmarking',
+    badge: 'BenchmarkRunner & LLM-Judge',
+    tagline: 'Available in v0.4.1',
+    description: (
+      <>
+        Quantify agent reliability using <code className="text-rose-300 font-mono">BenchmarkRunner</code>, trajectory inspection, and multi-metric evaluators (<code className="text-rose-300 font-mono">SafetyPolicyMetric</code>, <code className="text-rose-300 font-mono">LLMAsAJudgeMetric</code>).
       </>
     ),
   },
