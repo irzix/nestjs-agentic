@@ -11,6 +11,8 @@ import {
 import { ExperienceLearner } from '@nestjs-agentic/experience';
 import {
   ContextualCompressionStrategy,
+  GraphRAGStrategy,
+  HierarchicalRAGStrategy,
   InMemoryKnowledgeGraphProvider,
   KnowledgeBase,
   LateChunkingStrategy,
@@ -324,7 +326,7 @@ async function runTests() {
     assert(false, 'Test 7: Experience Reflexion & Learning', err.message);
   }
 
-  // TEST 8: Comprehensive @nestjs-agentic/rag Integration Suite
+  // TEST 8: Comprehensive @nestjs-agentic/rag Integration Suite (All 7 Modular Strategies)
   try {
     const mockEmbed = new MockEmbeddingProvider();
     const kb = new KnowledgeBase();
@@ -335,19 +337,37 @@ async function runTests() {
       rawContent: '# Policy Rules\nStandard transfers under $1,000 are allowed without approval. Wire transfer operations over $10,000 require manager approval.',
     });
 
+    // 8a. Knowledge Graph Provider setup & GraphRAGStrategy test
+    const graph = new InMemoryKnowledgeGraphProvider();
+    await graph.addNode({ id: 'usr_ceo', label: 'User', properties: { role: 'CEO' } });
+    await graph.addNode({ id: 'org_acme', label: 'Tenant', properties: { name: 'Acme Corp' } });
+    await graph.addNode({ id: 'pol_transfer', label: 'Policy', properties: { name: 'Transfer Limits Policy' } });
+
+    await graph.addEdge({ sourceId: 'usr_ceo', targetId: 'org_acme', relation: 'MANAGES' });
+    await graph.addEdge({ sourceId: 'org_acme', targetId: 'pol_transfer', relation: 'GOVERNED_BY' });
+
+    const graphRAG = new GraphRAGStrategy({ graphProvider: graph });
+
+    // Custom Cross-Encoder Reranker test
+    const reranker = new RerankerStrategy({
+      rerankFn: async (q, chunks) => chunks.map(() => 0.95),
+    });
+
     const pipeline = new RAGPipeline({
       knowledgeBase: kb,
-      strategies: [
-        new QueryExpansionStrategy({
-          synonymsMap: { wire: ['transfer', 'payment'] },
-        }),
+      preRetrievalStrategies: [
+        new QueryExpansionStrategy({ synonymsMap: { wire: ['transfer', 'payment'] } }),
+      ],
+      postRetrievalStrategies: [
+        graphRAG,
+        new HierarchicalRAGStrategy(),
         new ParentChildHydrationStrategy(),
-        new RerankerStrategy(),
+        reranker,
         new ContextualCompressionStrategy({ maxCharacters: 1000 }),
       ],
     });
 
-    // 8a. Happy Path Retrieval Test
+    // 8a. Happy Path Pipeline Execution Test
     const happyContext = await pipeline.executePipeline('wire transfer limits');
     assert(Boolean(happyContext.compressedContext), 'Test 8a: Happy Path RAG retrieval compiled compressed context');
     assert(
@@ -376,18 +396,16 @@ async function runTests() {
       'Test 8d: Large document processed with LateChunkingStrategy context retention',
     );
 
-    // 8d. Knowledge Graph Entity Relationship Traversal Test
-    const graph = new InMemoryKnowledgeGraphProvider();
-    await graph.addNode({ id: 'usr_ceo', label: 'User', properties: { role: 'CEO' } });
-    await graph.addNode({ id: 'org_acme', label: 'Tenant', properties: { name: 'Acme Corp' } });
-    await graph.addNode({ id: 'pol_transfer', label: 'Policy', properties: { name: 'Transfer Limits Policy' } });
-
-    await graph.addEdge({ sourceId: 'usr_ceo', targetId: 'org_acme', relation: 'MANAGES' });
-    await graph.addEdge({ sourceId: 'org_acme', targetId: 'pol_transfer', relation: 'GOVERNED_BY' });
-
+    // 8d. Knowledge Graph Sub-Graph Traversal & GraphRAG test
     const graphSubSet = await graph.querySubGraph('usr_ceo', 2);
     assert(graphSubSet.nodes.length === 3, 'Test 8e: Knowledge Graph traversed 2-hop entity relationships');
     assert(graphSubSet.edges.length === 2, 'Test 8f: Knowledge Graph returned correct relational edges');
+
+    const graphQueryResult = await graphRAG.process({ query: 'usr_ceo org_acme' });
+    assert(
+      Boolean(graphQueryResult.graphContext) && graphQueryResult.graphContext!.includes('MANAGES'),
+      'Test 8g: GraphRAGStrategy compiled relational graph facts into context',
+    );
   } catch (err: any) {
     assert(false, 'Test 8: RAG Integration Suite', err.message);
   }
