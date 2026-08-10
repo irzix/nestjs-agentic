@@ -23,7 +23,7 @@ export class RefinementLoopRunner {
   }
 
   /**
-   * Runs an iterative refinement loop with feedback evaluation until satisfaction condition is met or maxIterations is reached.
+   * Runs an iterative refinement loop with versioned sub-session memory and feedback evaluation.
    */
   async runLoop(
     parentSessionId: string,
@@ -45,7 +45,8 @@ export class RefinementLoopRunner {
         message: currentMessage,
       };
 
-      const result = await this.delegator.delegate(parentSessionId, parentSecurityContext, task);
+      // Delegate with explicit loop iteration namespacing
+      const result = await this.delegator.delegate(parentSessionId, parentSecurityContext, task, iteration);
       history.push(result);
 
       if (result.status !== 'success') {
@@ -58,7 +59,6 @@ export class RefinementLoopRunner {
       } else if (result.score !== undefined && this.options.qualityThreshold !== undefined) {
         satisfied = result.score >= this.options.qualityThreshold;
       } else {
-        // Default: first successful run satisfies loop if no custom evaluator or score is set
         satisfied = true;
       }
 

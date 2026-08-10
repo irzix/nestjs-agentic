@@ -13,7 +13,7 @@ import {
 } from '../src';
 
 export async function runOrchestrationTests() {
-  console.log('🧪 Running @nestjs-agentic/orchestration Unit Tests...\n');
+  console.log('🧪 Running @nestjs-agentic/orchestration Comprehensive Unit Tests...\n');
 
   let passed = 0;
   let failed = 0;
@@ -44,6 +44,7 @@ export async function runOrchestrationTests() {
   const agentB = createAgent('agent_b');
   const agentSlow = createAgent('agent_slow');
   const agentWriter = createAgent('writer_agent');
+  const agentFallback = createAgent('fallback_agent');
 
   const discovery = new ToolDiscoveryService();
   const store = new InMemoryApprovalStore();
@@ -79,24 +80,24 @@ export async function runOrchestrationTests() {
   };
 
   const runner = new AgentRunner(
-    [agentSubA, agentA, agentB, agentSlow, agentWriter],
+    [agentSubA, agentA, agentB, agentSlow, agentWriter, agentFallback],
     mockAdapter as any,
     { defaultModel: { provider: 'mock', model: 'mock-model' } },
     localToolProvider,
     mockModuleRef,
   );
 
-  // TEST 1: SubAgentDelegator Context Propagation
+  // TEST 1: SubAgentDelegator Context Propagation & Namespacing
   try {
     const delegator = new SubAgentDelegator(runner);
     const parentContext = { userId: 'usr_owner', tenantId: 'tenant_acme', roles: ['admin'] };
     const result = await delegator.delegate('sess_p1', parentContext, {
       agentName: 'sub_agent_a',
       message: 'Perform SubTask A',
-    });
+    }, 2);
 
-    assert(result.status === 'success', 'Test 1a: SubAgentDelegator executed sub-task', result.error);
-    assert(result.response.includes('Task A Completed'), 'Test 1b: SubAgentDelegator returned response output', result.response);
+    assert(result.status === 'success', 'Test 1a: SubAgentDelegator executed sub-task');
+    assert(result.response.includes('Task A Completed'), 'Test 1b: SubAgentDelegator returned response output');
   } catch (err: any) {
     assert(false, 'Test 1: SubAgentDelegator Context Propagation', err.message);
   }
@@ -124,7 +125,7 @@ export async function runOrchestrationTests() {
 
   // TEST 3: ParallelSubAgentRunner Timeout Resiliency
   try {
-    const parallelRunner = new ParallelSubAgentRunner(runner, { timeoutMs: 50 });
+    const parallelRunner = new ParallelSubAgentRunner(runner, { timeoutMs: 50, retriesPerSubAgent: 0 });
     const parentContext = { userId: 'usr_owner', tenantId: 'tenant_acme', roles: ['admin'] };
     const tasks = [
       { agentName: 'agent_slow', message: 'Hanging Task That Times Out' },
@@ -138,7 +139,26 @@ export async function runOrchestrationTests() {
     assert(false, 'Test 3: ParallelSubAgentRunner Timeout Resiliency', err.message);
   }
 
-  // TEST 4: RefinementLoopRunner Iterative Supervisor-Worker Loop
+  // TEST 4: ParallelSubAgentRunner Fallback Recovery
+  try {
+    const parallelRunner = new ParallelSubAgentRunner(runner, {
+      timeoutMs: 50,
+      retriesPerSubAgent: 0,
+      fallbackAgentName: 'fallback_agent',
+    });
+    const parentContext = { userId: 'usr_owner', tenantId: 'tenant_acme', roles: ['admin'] };
+    const tasks = [
+      { agentName: 'agent_slow', message: 'Hanging Task' },
+    ];
+
+    const result = await parallelRunner.runParallel('sess_p4', parentContext, tasks);
+    assert(result.successCount === 1, 'Test 4a: ParallelSubAgentRunner recovered via fallback agent');
+    assert(result.results[0].response.includes('Fallback Agent'), 'Test 4b: Result identifies fallback agent execution');
+  } catch (err: any) {
+    assert(false, 'Test 4: ParallelSubAgentRunner Fallback Recovery', err.message);
+  }
+
+  // TEST 5: RefinementLoopRunner Iterative Supervisor-Worker Loop
   try {
     const loopRunner = new RefinementLoopRunner(runner, {
       maxIterations: 3,
@@ -147,16 +167,16 @@ export async function runOrchestrationTests() {
 
     const parentContext = { userId: 'usr_owner', tenantId: 'tenant_acme', roles: ['admin'] };
     const result = await loopRunner.runLoop(
-      'sess_p4',
+      'sess_p5',
       parentContext,
       { agentName: 'writer_agent', message: 'Draft initial report' },
       (lastRes, iter) => 'Fix typos and polish language',
     );
 
-    assert(result.satisfied === true, 'Test 4a: RefinementLoopRunner satisfied loop termination condition');
-    assert(result.iterations >= 1, 'Test 4b: RefinementLoopRunner recorded loop iteration count');
+    assert(result.satisfied === true, 'Test 5a: RefinementLoopRunner satisfied loop termination condition');
+    assert(result.iterations >= 1, 'Test 5b: RefinementLoopRunner recorded loop iteration count');
   } catch (err: any) {
-    assert(false, 'Test 4: RefinementLoopRunner Iterative Loop', err.message);
+    assert(false, 'Test 5: RefinementLoopRunner Iterative Loop', err.message);
   }
 
   console.log(`\n  📊 Orchestration Test Results: ${passed} passed, ${failed} failed.\n`);

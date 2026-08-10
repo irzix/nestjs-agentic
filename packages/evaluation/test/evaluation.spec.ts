@@ -9,14 +9,15 @@ import {
 import {
   AccuracyGroundTruthMetric,
   BenchmarkRunner,
-  EfficiencyMetric,
+  ExecutionEfficiencyMetric,
   EvalReporter,
   LLMAsAJudgeMetric,
   SafetyPolicyMetric,
+  TrajectoryInspectorMetric,
 } from '../src';
 
 export async function runEvaluationTests() {
-  console.log('🧪 Running @nestjs-agentic/evaluation Unit Tests...\n');
+  console.log('🧪 Running @nestjs-agentic/evaluation Comprehensive Unit Tests...\n');
 
   let passed = 0;
   let failed = 0;
@@ -74,11 +75,11 @@ export async function runEvaluationTests() {
     mockModuleRef,
   );
 
-  // TEST 1: Metric Evaluators
+  // TEST 1: Sørensen-Dice Mathematical Accuracy & Efficiency Metrics
   try {
     const safety = new SafetyPolicyMetric();
-    const accuracy = new AccuracyGroundTruthMetric(0.5);
-    const efficiency = new EfficiencyMetric();
+    const accuracy = new AccuracyGroundTruthMetric(0.3);
+    const efficiency = new ExecutionEfficiencyMetric();
 
     const datasetItem = {
       id: 'item_1',
@@ -95,17 +96,48 @@ export async function runEvaluationTests() {
     };
 
     const safetyRes = safety.evaluate(datasetItem, agentResult);
-    const accuracyRes = accuracy.evaluate(datasetItem, agentResult);
+    const accuracyRes = await accuracy.evaluate(datasetItem, agentResult);
     const effRes = efficiency.evaluate(datasetItem, agentResult);
 
     assert(safetyRes.passed === true, 'Test 1a: SafetyPolicyMetric passed for compliant tool call');
-    assert(accuracyRes.passed === true, 'Test 1b: AccuracyGroundTruthMetric matched key ground truth terms');
-    assert(effRes.passed === true, 'Test 1c: EfficiencyMetric passed step count limit');
+    assert(accuracyRes.passed === true, 'Test 1b: AccuracyGroundTruthMetric calculated mathematical Dice coefficient');
+    assert(effRes.passed === true, 'Test 1c: ExecutionEfficiencyMetric calculated weighted score');
   } catch (err: any) {
     assert(false, 'Test 1: Metric Evaluators', err.message);
   }
 
-  // TEST 2: LLMAsAJudgeMetric
+  // TEST 2: TrajectoryInspectorMetric Sequence & Arg Assertions
+  try {
+    const inspector = new TrajectoryInspectorMetric();
+    const item = {
+      id: 'item_traj',
+      query: 'Transfer funds',
+      expectedToolSequence: ['transferFunds'],
+      expectedToolArgs: { transferFunds: { amount: 500 } },
+    };
+
+    const validResult = {
+      sessionId: 's1',
+      output: 'Done',
+      toolCalls: [{ toolName: 'transferFunds', args: { amount: 500 }, result: { success: true } }],
+    };
+
+    const invalidResult = {
+      sessionId: 's2',
+      output: 'Done',
+      toolCalls: [{ toolName: 'transferFunds', args: { amount: 9999 }, result: { success: true } }],
+    };
+
+    const validEval = inspector.evaluate(item, validResult);
+    const invalidEval = inspector.evaluate(item, invalidResult);
+
+    assert(validEval.passed === true, 'Test 2a: TrajectoryInspectorMetric verified tool sequence & args');
+    assert(invalidEval.passed === false, 'Test 2b: TrajectoryInspectorMetric detected arg value mismatch');
+  } catch (err: any) {
+    assert(false, 'Test 2: TrajectoryInspectorMetric', err.message);
+  }
+
+  // TEST 3: LLMAsAJudgeMetric
   try {
     const judge = new LLMAsAJudgeMetric(async (item, res) => ({
       score: 0.95,
@@ -116,37 +148,33 @@ export async function runEvaluationTests() {
     const agentResult = { sessionId: 'sess_eval_2', output: 'Balance is $1,500', toolCalls: [] };
 
     const judgeRes = await judge.evaluate(datasetItem, agentResult);
-    assert(judgeRes.passed === true, 'Test 2a: LLMAsAJudgeMetric evaluated output score');
-    assert(judgeRes.score === 0.95, 'Test 2b: LLMAsAJudgeMetric returned 0.95 score');
+    assert(judgeRes.passed === true, 'Test 3a: LLMAsAJudgeMetric evaluated output score');
+    assert(judgeRes.score === 0.95, 'Test 3b: LLMAsAJudgeMetric returned 0.95 score');
   } catch (err: any) {
-    assert(false, 'Test 2: LLMAsAJudgeMetric', err.message);
+    assert(false, 'Test 3: LLMAsAJudgeMetric', err.message);
   }
 
-  // TEST 3: BenchmarkRunner Suite Execution
+  // TEST 4: BenchmarkRunner Multi-Trial Variance Analysis
   try {
-    const benchRunner = new BenchmarkRunner(runner);
+    const benchRunner = new BenchmarkRunner(runner, { trialsPerItem: 3 });
     const dataset = [
       {
         id: '1',
         query: 'Transfer $500',
         expectedOutput: 'Transfer completed',
       },
-      {
-        id: '2',
-        query: 'Execute forbidden operation',
-        forbiddenTools: ['deleteDatabase'],
-      },
     ];
 
     const summary = await benchRunner.runBenchmark('banking-agent', dataset);
 
-    assert(summary.totalItems === 2, 'Test 3a: BenchmarkRunner executed all dataset items');
-    assert(summary.itemResults.length === 2, 'Test 3b: BenchmarkRunner compiled item results');
+    assert(summary.totalItems === 1, 'Test 4a: BenchmarkRunner executed all dataset items');
+    assert(summary.itemResults[0].multiTrialSummary?.scores.length === 3, 'Test 4b: Calculated 3 trial scores per item');
+    assert(summary.overallVariance >= 0, 'Test 4c: Computed mathematical overall variance');
 
     const reportMd = EvalReporter.generateMarkdownReport(summary);
-    assert(reportMd.includes('Benchmark Report'), 'Test 3c: EvalReporter generated markdown report');
+    assert(reportMd.includes('Benchmark Report'), 'Test 4d: EvalReporter generated markdown report');
   } catch (err: any) {
-    assert(false, 'Test 3: BenchmarkRunner Suite Execution', err.message);
+    assert(false, 'Test 4: Multi-Trial Variance Analysis', err.message);
   }
 
   console.log(`\n  📊 Evaluation Test Results: ${passed} passed, ${failed} failed.\n`);

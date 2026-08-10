@@ -13,14 +13,16 @@ export class SubAgentDelegator {
   constructor(private readonly runner: AgentRunner) {}
 
   /**
-   * Delegates a single task to a designated sub-agent, preserving parent tenant isolation and context.
+   * Delegates a single task to a designated sub-agent, preserving parent tenant isolation and namespacing session memory per iteration loop.
    */
   async delegate(
     parentSessionId: string,
     parentSecurityContext: ParentSecurityContext,
     task: SubAgentTask,
+    iteration?: number,
   ): Promise<SubAgentResult> {
-    const subSessionId = `${parentSessionId}:${task.agentName}`;
+    const iterSuffix = iteration !== undefined ? `:iter_${iteration}` : '';
+    const subSessionId = `${parentSessionId}:${task.agentName}${iterSuffix}`;
 
     try {
       const runResult = await this.runner.run(task.agentName, {

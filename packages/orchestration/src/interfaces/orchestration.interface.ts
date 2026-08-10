@@ -31,6 +31,10 @@ export interface ParallelRunnerOptions {
   aggregationStrategy?: AggregationStrategy;
   /** Timeout per sub-agent in milliseconds. Default: 30000 */
   timeoutMs?: number;
+  /** Number of retries per sub-agent upon timeout or failure. Default: 1 */
+  retriesPerSubAgent?: number;
+  /** Name of fallback sub-agent to invoke if primary sub-agent fails all retries. */
+  fallbackAgentName?: string;
   /** Custom result merger function. */
   customMergerFn?: (results: SubAgentResult[]) => Promise<string> | string;
 }
