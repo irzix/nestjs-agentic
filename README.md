@@ -19,10 +19,6 @@
 
 ---
 
-🐍 **Python Developer?** Check out **[`experia`](https://github.com/irzix/experia)** — the open-source experience learning layer for Python AI agents.
-
----
-
 ## What is nestjs-agentic?
 
 Most agentic frameworks force you to build outside your backend — a separate Python service, a standalone graph, a different runtime. **nestjs-agentic** is different.
