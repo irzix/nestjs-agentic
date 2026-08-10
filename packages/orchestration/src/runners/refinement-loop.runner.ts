@@ -2,17 +2,35 @@ import type { AgentRunner } from '@nestjs-agentic/core';
 import type { RefinementLoopOptions, SubAgentResult, SubAgentTask } from '../interfaces/orchestration.interface';
 import { ParentSecurityContext, SubAgentDelegator } from '../delegator/sub-agent.delegator';
 
+/**
+ * Result payload returned from an iterative refinement loop run.
+ */
 export interface RefinementLoopResult {
+  /** Final text response output generated upon loop termination. */
   finalResponse: string;
+
+  /** Total number of refinement iterations executed. */
   iterations: number;
+
+  /** Whether the loop satisfied the termination condition before maxIterations was reached. */
   satisfied: boolean;
+
+  /** Chronological history of sub-agent results for each loop iteration. */
   history: SubAgentResult[];
 }
 
+/**
+ * Runner service for executing supervisor-worker iterative refinement loops with feedback evaluation and versioned session memory.
+ */
 export class RefinementLoopRunner {
   private readonly delegator: SubAgentDelegator;
   private readonly options: RefinementLoopOptions;
 
+  /**
+   * Creates a new instance of RefinementLoopRunner.
+   * @param runner Core AgentRunner instance.
+   * @param options Configuration options for refinement loop execution.
+   */
   constructor(runner: AgentRunner, options?: RefinementLoopOptions) {
     this.delegator = new SubAgentDelegator(runner);
     this.options = {
@@ -23,7 +41,13 @@ export class RefinementLoopRunner {
   }
 
   /**
-   * Runs an iterative refinement loop with versioned sub-session memory and feedback evaluation.
+   * Runs an iterative refinement loop with feedback evaluation until satisfaction condition is met or maxIterations is reached.
+   *
+   * @param parentSessionId Parent session identifier.
+   * @param parentSecurityContext Inherited parent security context.
+   * @param initialTask Initial sub-agent task payload.
+   * @param feedbackProviderFn Optional function providing feedback instructions for subsequent iterations.
+   * @returns Promise resolving to the final refinement loop result.
    */
   async runLoop(
     parentSessionId: string,
@@ -45,7 +69,6 @@ export class RefinementLoopRunner {
         message: currentMessage,
       };
 
-      // Delegate with explicit loop iteration namespacing
       const result = await this.delegator.delegate(parentSessionId, parentSecurityContext, task, iteration);
       history.push(result);
 
@@ -53,7 +76,6 @@ export class RefinementLoopRunner {
         break;
       }
 
-      // Check satisfaction condition
       if (this.options.satisfactionFn) {
         satisfied = await this.options.satisfactionFn!(result, iteration);
       } else if (result.score !== undefined && this.options.qualityThreshold !== undefined) {
@@ -66,7 +88,6 @@ export class RefinementLoopRunner {
         break;
       }
 
-      // Generate refinement feedback for next iteration loop
       if (feedbackProviderFn) {
         const feedback = await feedbackProviderFn(result, iteration);
         currentMessage = `${initialTask.message}\n\n[Previous Attempt #${iteration} Output]:\n${result.response}\n\n[Refinement Feedback]:\n${feedback}`;

@@ -1,8 +1,14 @@
 import type { BenchmarkSummary } from '../interfaces/evaluation.interface';
 
+/**
+ * Service for generating benchmark reports in formatted GitHub-Flavored Markdown.
+ */
 export class EvalReporter {
   /**
-   * Formats a benchmark summary into a GitHub-Flavored Markdown report with visual status indicators.
+   * Formats a benchmark summary object into a formatted GitHub-Flavored Markdown report string.
+   *
+   * @param summary BenchmarkSummary object returned by BenchmarkRunner.
+   * @returns Markdown report string.
    */
   static generateMarkdownReport(summary: BenchmarkSummary): string {
     const lines: string[] = [];
@@ -14,6 +20,7 @@ export class EvalReporter {
     lines.push(`- **Failed**: ${summary.failedItems} ❌`);
     lines.push(`- **Pass Rate**: ${(summary.passRate * 100).toFixed(1)}%`);
     lines.push(`- **Average Score**: ${(summary.averageScore * 100).toFixed(1)}%`);
+    lines.push(`- **Statistical Overall Variance**: ${summary.overallVariance.toFixed(4)}`);
     lines.push('');
     lines.push('---');
     lines.push('');
@@ -24,6 +31,9 @@ export class EvalReporter {
       const statusIcon = res.overallPassed ? '✅ PASS' : '❌ FAIL';
       lines.push(`#### [${statusIcon}] Item ${res.item.id}: "${res.item.query}"`);
       lines.push(`- **Overall Score**: ${(res.score * 100).toFixed(1)}%`);
+      if (res.multiTrialSummary) {
+        lines.push(`- **Multi-Trial StdDev ($\sigma$)**: ${res.multiTrialSummary.standardDeviation.toFixed(4)}`);
+      }
       lines.push(`- **Agent Output**: ${res.agentResult.output || '*(No output)*'}`);
       lines.push('- **Metric Evaluations**:');
 

@@ -1,13 +1,26 @@
 import type { AgentResult } from '@nestjs-agentic/core';
 import type { EvalDatasetItem, EvalMetric, MetricResult } from '../interfaces/evaluation.interface';
 
+/**
+ * Configuration options for ExecutionEfficiencyMetric.
+ */
 export interface EfficiencyMetricOptions {
+  /** Relative weight given to tool step count ratio (0.0 to 1.0). Default: `0.5` */
   stepWeight?: number;
+
+  /** Relative weight given to execution latency ratio (0.0 to 1.0). Default: `0.3` */
   latencyWeight?: number;
+
+  /** Relative weight given to token consumption ratio (0.0 to 1.0). Default: `0.2` */
   tokenWeight?: number;
+
+  /** Minimum composite score threshold required to pass. Default: `0.6` */
   minScoreThreshold?: number;
 }
 
+/**
+ * Metric evaluator calculating weighted multi-variable execution efficiency (steps, latency, token consumption).
+ */
 export class ExecutionEfficiencyMetric implements EvalMetric {
   readonly name = 'ExecutionEfficiency';
   private readonly stepWeight: number;
@@ -15,6 +28,10 @@ export class ExecutionEfficiencyMetric implements EvalMetric {
   private readonly tokenWeight: number;
   private readonly minScoreThreshold: number;
 
+  /**
+   * Creates a new instance of ExecutionEfficiencyMetric.
+   * @param options Configuration options.
+   */
   constructor(options?: EfficiencyMetricOptions) {
     this.stepWeight = options?.stepWeight ?? 0.5;
     this.latencyWeight = options?.latencyWeight ?? 0.3;
@@ -22,22 +39,22 @@ export class ExecutionEfficiencyMetric implements EvalMetric {
     this.minScoreThreshold = options?.minScoreThreshold ?? 0.6;
   }
 
+  /**
+   * Evaluates the execution efficiency ratio across steps, latency, and tokens.
+   */
   evaluate(item: EvalDatasetItem, result: AgentResult): MetricResult {
     const maxSteps = item.maxAllowedSteps ?? 5;
     const maxLatencyMs = item.maxAllowedLatencyMs ?? 10000;
     const maxTokens = item.maxAllowedTokens ?? 4000;
 
     const actualSteps = result.toolCalls?.length || 0;
-    // Estimate tokens if not present in metadata
     const actualTokens = (result as any).tokensUsed || (result.output.length / 4 + actualSteps * 50);
     const actualLatencyMs = (result as any).durationMs || 100;
 
-    // Mathematical Efficiency Ratios (0.0 to 1.0)
     const stepRatio = Math.min(1.0, maxSteps / Math.max(actualSteps, 1));
     const latencyRatio = Math.min(1.0, maxLatencyMs / Math.max(actualLatencyMs, 1));
     const tokenRatio = Math.min(1.0, maxTokens / Math.max(actualTokens, 1));
 
-    // Weighted Overall Score
     const compositeScore =
       this.stepWeight * stepRatio + this.latencyWeight * latencyRatio + this.tokenWeight * tokenRatio;
 
@@ -62,5 +79,5 @@ export class ExecutionEfficiencyMetric implements EvalMetric {
   }
 }
 
-// Export backward compatible alias
+/** Export backward-compatible alias */
 export const EfficiencyMetric = ExecutionEfficiencyMetric;

@@ -1,20 +1,37 @@
 import type { AgentResult } from '@nestjs-agentic/core';
 import type { EvalDatasetItem, EvalMetric, MetricResult } from '../interfaces/evaluation.interface';
 
+/**
+ * Interface defining a generic embedding provider for vector cosine similarity evaluation.
+ */
 export interface EmbeddingProviderLike {
+  /** Generates embedding vectors for an array of input text strings. */
   embedChunks(texts: string[]): Promise<number[][]>;
 }
 
+/**
+ * Configuration options for AccuracyGroundTruthMetric.
+ */
 export interface AccuracyMetricOptions {
+  /** Minimum pass score threshold (0.0 to 1.0). Default: `0.65` */
   minScoreThreshold?: number;
+
+  /** Optional embedding provider for vector cosine similarity mathematical evaluation. */
   embeddingProvider?: EmbeddingProviderLike;
 }
 
+/**
+ * Metric evaluator calculating mathematical accuracy using Vector Cosine Similarity or Sørensen-Dice Token Similarity.
+ */
 export class AccuracyGroundTruthMetric implements EvalMetric {
   readonly name = 'AccuracyGroundTruth';
   private readonly minScoreThreshold: number;
   private readonly embeddingProvider?: EmbeddingProviderLike;
 
+  /**
+   * Creates a new instance of AccuracyGroundTruthMetric.
+   * @param options Metric options or minimum score threshold number.
+   */
   constructor(options?: AccuracyMetricOptions | number) {
     if (typeof options === 'number') {
       this.minScoreThreshold = options;
@@ -24,6 +41,9 @@ export class AccuracyGroundTruthMetric implements EvalMetric {
     }
   }
 
+  /**
+   * Evaluates the output accuracy of the agent response against the expected ground truth.
+   */
   async evaluate(item: EvalDatasetItem, result: AgentResult): Promise<MetricResult> {
     if (!item.expectedOutput) {
       return {
@@ -46,7 +66,6 @@ export class AccuracyGroundTruthMetric implements EvalMetric {
       };
     }
 
-    // 1. Vector Cosine Similarity if EmbeddingProvider is available
     if (this.embeddingProvider) {
       try {
         const [vecActual, vecExpected] = await this.embeddingProvider.embedChunks([actual, expected]);
@@ -63,12 +82,10 @@ export class AccuracyGroundTruthMetric implements EvalMetric {
           details: { cosineSimilarity: cosineSim, method: 'vector_cosine' },
         };
       } catch {
-        // Fallback to token similarity if vector embedding fails
+        // Fallback to Dice coefficient if vector embedding fails
       }
     }
 
-    // 2. Mathematical Token Dice Coefficient Similarity (Sørensen–Dice Coefficient)
-    // Formula: 2 * |A ∩ B| / (|A| + |B|)
     const actualTokens = actual.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
     const expectedTokens = expected.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
 
@@ -82,7 +99,7 @@ export class AccuracyGroundTruthMetric implements EvalMetric {
     for (const t of actualTokens) {
       if (setExpected.has(t)) {
         intersection++;
-        setExpected.delete(t); // count unique token matches
+        setExpected.delete(t);
       }
     }
 

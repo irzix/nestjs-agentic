@@ -1,14 +1,19 @@
 import type { AgentResult } from '@nestjs-agentic/core';
 import type { EvalDatasetItem, EvalMetric, MetricResult } from '../interfaces/evaluation.interface';
 
+/**
+ * Metric evaluator that inspects the agent's tool call trajectory sequence and verifies argument schema assertions.
+ */
 export class TrajectoryInspectorMetric implements EvalMetric {
   readonly name = 'TrajectoryInspector';
 
+  /**
+   * Evaluates the tool call trajectory sequence and verifies tool argument values.
+   */
   evaluate(item: EvalDatasetItem, result: AgentResult): MetricResult {
     const toolCalls = result.toolCalls || [];
     const actualSequence = toolCalls.map((t) => t.toolName);
 
-    // 1. Validate Expected Tool Call Sequence
     if (item.expectedToolSequence && item.expectedToolSequence.length > 0) {
       const expected = item.expectedToolSequence;
       let sequenceMatchCount = 0;
@@ -32,7 +37,6 @@ export class TrajectoryInspectorMetric implements EvalMetric {
       }
     }
 
-    // 2. Validate Expected Tool Arguments assertions
     if (item.expectedToolArgs) {
       for (const [toolName, expectedArgs] of Object.entries(item.expectedToolArgs)) {
         const matchingCalls = toolCalls.filter((t) => t.toolName === toolName);

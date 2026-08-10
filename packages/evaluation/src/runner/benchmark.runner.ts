@@ -11,16 +11,29 @@ import { SafetyPolicyMetric } from '../metrics/safety-policy.metric';
 import { AccuracyGroundTruthMetric } from '../metrics/accuracy.metric';
 import { ExecutionEfficiencyMetric } from '../metrics/efficiency.metric';
 
+/**
+ * Options for configuring BenchmarkRunner execution.
+ */
 export interface BenchmarkRunnerOptions {
+  /** Array of metric evaluators to run per dataset item. */
   metrics?: EvalMetric[];
-  /** Number of evaluation trials per item to analyze variance. Default: 1 */
+
+  /** Number of evaluation trials per item to calculate statistical variance. Default: `1` */
   trialsPerItem?: number;
 }
 
+/**
+ * Runner service for executing benchmark dataset suites across agent runners and calculating statistical metrics.
+ */
 export class BenchmarkRunner {
   private readonly metrics: EvalMetric[];
   private readonly trialsPerItem: number;
 
+  /**
+   * Creates a new instance of BenchmarkRunner.
+   * @param runner Core AgentRunner instance to evaluate.
+   * @param options Configuration options.
+   */
   constructor(private readonly runner: AgentRunner, options?: BenchmarkRunnerOptions) {
     this.metrics = options?.metrics || [
       new SafetyPolicyMetric(),
@@ -31,7 +44,11 @@ export class BenchmarkRunner {
   }
 
   /**
-   * Runs a benchmark dataset suite across the target AgentRunner and evaluates all metric scores with optional multi-trial variance analysis.
+   * Runs a benchmark dataset suite across the target AgentRunner and evaluates all metric scores with statistical variance analysis.
+   *
+   * @param agentName Name of the target agent registered in AgentRunner.
+   * @param dataset Array of benchmark dataset items to evaluate.
+   * @returns Promise resolving to the comprehensive BenchmarkSummary report.
    */
   async runBenchmark(agentName: string, dataset: EvalDatasetItem[]): Promise<BenchmarkSummary> {
     const itemResults: EvalItemResult[] = [];
@@ -88,7 +105,6 @@ export class BenchmarkRunner {
         }
       }
 
-      // Compute Mathematical Variance & Mean Score across trials
       const multiTrialSummary = this.calculateMultiTrialStats(trialScores);
 
       itemResults.push({
