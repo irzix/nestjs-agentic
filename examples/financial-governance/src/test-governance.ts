@@ -9,6 +9,18 @@ import {
   ShortTermMemory,
 } from '@nestjs-agentic/memory';
 import { ExperienceLearner } from '@nestjs-agentic/experience';
+import {
+  ContextualCompressionStrategy,
+  InMemoryKnowledgeGraphProvider,
+  KnowledgeBase,
+  LateChunkingStrategy,
+  MockEmbeddingProvider,
+  ParentChildHydrationStrategy,
+  ParentChildSplitter,
+  QueryExpansionStrategy,
+  RAGPipeline,
+  RerankerStrategy,
+} from '@nestjs-agentic/rag';
 import { AppModule } from './app.module';
 
 async function runTests() {
@@ -310,6 +322,74 @@ async function runTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 7: Experience Reflexion & Learning', err.message);
+  }
+
+  // TEST 8: Comprehensive @nestjs-agentic/rag Integration Suite
+  try {
+    const mockEmbed = new MockEmbeddingProvider();
+    const kb = new KnowledgeBase();
+
+    // Ingest small policy document
+    await kb.ingestDocument({
+      title: 'Transfer Limits Policy',
+      rawContent: '# Policy Rules\nStandard transfers under $1,000 are allowed without approval. Wire transfer operations over $10,000 require manager approval.',
+    });
+
+    const pipeline = new RAGPipeline({
+      knowledgeBase: kb,
+      strategies: [
+        new QueryExpansionStrategy({
+          synonymsMap: { wire: ['transfer', 'payment'] },
+        }),
+        new ParentChildHydrationStrategy(),
+        new RerankerStrategy(),
+        new ContextualCompressionStrategy({ maxCharacters: 1000 }),
+      ],
+    });
+
+    // 8a. Happy Path Retrieval Test
+    const happyContext = await pipeline.executePipeline('wire transfer limits');
+    assert(Boolean(happyContext.compressedContext), 'Test 8a: Happy Path RAG retrieval compiled compressed context');
+    assert(
+      happyContext.compressedContext!.includes('manager approval'),
+      'Test 8b: Happy Path context retrieved correct policy content',
+    );
+
+    // 8b. Failure Path Out-of-Scope Test
+    const failureContext = await pipeline.executePipeline('quantum computing physics mechanics');
+    assert(
+      !failureContext.compressedContext || failureContext.chunks?.length === 0,
+      'Test 8c: Failure Path returned empty or zero chunks for out-of-scope query',
+    );
+
+    // 8c. Large Enterprise Document & Late Chunking Test
+    const largePolicyText = Array(30).fill('Enterprise banking governance section details for account auditing compliance. ').join('\n');
+    const largeDoc = await kb.ingestDocument({
+      title: 'Large Enterprise Audit Manual',
+      rawContent: largePolicyText,
+    });
+
+    const lateChunking = new LateChunkingStrategy({ embeddingProvider: mockEmbed });
+    const lateResult = await lateChunking.process({ query: 'account auditing', chunks: largeDoc.chunks });
+    assert(
+      Boolean(lateResult.chunks?.[0]?.metadata?.lateChunkingApplied),
+      'Test 8d: Large document processed with LateChunkingStrategy context retention',
+    );
+
+    // 8d. Knowledge Graph Entity Relationship Traversal Test
+    const graph = new InMemoryKnowledgeGraphProvider();
+    await graph.addNode({ id: 'usr_ceo', label: 'User', properties: { role: 'CEO' } });
+    await graph.addNode({ id: 'org_acme', label: 'Tenant', properties: { name: 'Acme Corp' } });
+    await graph.addNode({ id: 'pol_transfer', label: 'Policy', properties: { name: 'Transfer Limits Policy' } });
+
+    await graph.addEdge({ sourceId: 'usr_ceo', targetId: 'org_acme', relation: 'MANAGES' });
+    await graph.addEdge({ sourceId: 'org_acme', targetId: 'pol_transfer', relation: 'GOVERNED_BY' });
+
+    const graphSubSet = await graph.querySubGraph('usr_ceo', 2);
+    assert(graphSubSet.nodes.length === 3, 'Test 8e: Knowledge Graph traversed 2-hop entity relationships');
+    assert(graphSubSet.edges.length === 2, 'Test 8f: Knowledge Graph returned correct relational edges');
+  } catch (err: any) {
+    assert(false, 'Test 8: RAG Integration Suite', err.message);
   }
 
   console.log(`\n📊 Summary: ${passed} passed, ${failed} failed.\n`);
