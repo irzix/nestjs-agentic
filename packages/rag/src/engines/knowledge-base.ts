@@ -23,16 +23,20 @@ export class KnowledgeBase {
   private readonly splitter: DocumentSplitter;
   private readonly vectorStore: VectorStoreAdapter;
 
+  /**
+   * Creates a new instance of KnowledgeBase.
+   * @param options Configuration options specifying document splitter and vector store adapter.
+   */
   constructor(options?: KnowledgeBaseOptions) {
     this.splitter = options?.splitter ?? new SemanticDocumentSplitter();
     this.vectorStore = options?.vectorStore ?? new HybridVectorStore();
   }
 
   /**
-   * Ingests a raw domain document, splits it into chunks, and indexes it into the vector store.
+   * Ingests a raw domain document, splits it into chunks using the configured splitter, and indexes it into the vector store.
    *
-   * @param document Raw document input containing title and content.
-   * @returns Ingested Document with generated chunks.
+   * @param document Raw document input containing title, rawContent, optional ID, and metadata.
+   * @returns Promise resolving to the ingested Document with generated chunks.
    */
   async ingestDocument(document: Partial<Document> & { title: string; rawContent: string }): Promise<Document> {
     const docId = document.id || randomUUID();
@@ -57,21 +61,31 @@ export class KnowledgeBase {
   }
 
   /**
-   * Retrieves an ingested Document by its unique ID.
+   * Retrieves an ingested Document by its unique identifier.
+   *
+   * @param documentId Unique document identifier.
+   * @returns Ingested Document object or undefined if not found.
    */
   getDocument(documentId: string): Document | undefined {
     return this.documents.get(documentId);
   }
 
   /**
-   * Performs hybrid vector search across ingested documents in the KnowledgeBase.
+   * Performs vector similarity search across ingested documents in the KnowledgeBase.
+   *
+   * @param query Search query prompt string.
+   * @param limit Maximum number of matching chunks to return. Default: `5`
+   * @param filter Key-value filter metadata object for multi-tenant isolation or tags.
+   * @returns Promise resolving to an array of matching DocumentChunk objects.
    */
   async queryChunks(query: string, limit = 5, filter?: Record<string, unknown>): Promise<DocumentChunk[]> {
     return this.vectorStore.searchChunks(query, limit, filter);
   }
 
   /**
-   * Gets the underlying VectorStoreAdapter for memory integration.
+   * Gets the underlying VectorStoreAdapter instance for direct memory or vector operations.
+   *
+   * @returns Pluggable VectorStoreAdapter instance.
    */
   getVectorStore(): VectorStoreAdapter {
     return this.vectorStore;

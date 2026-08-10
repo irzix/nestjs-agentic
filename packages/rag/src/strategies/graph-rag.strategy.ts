@@ -2,30 +2,43 @@ import type { DocumentChunk } from '../interfaces/document.interface';
 import type { KnowledgeGraphNode, KnowledgeGraphProvider } from '../interfaces/graph.interface';
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 
+/** Type alias for a custom entity extractor function (e.g. NER model, LLM entity extraction). */
 export type EntityExtractorFn = (query: string) => Promise<string[]> | string[];
 
+/**
+ * Options for configuring GraphRAGStrategy.
+ */
 export interface GraphRAGStrategyOptions {
   /** Knowledge Graph Provider implementation (e.g. InMemoryKnowledgeGraphProvider or Neo4j connector). */
   graphProvider: KnowledgeGraphProvider;
-  /** Sub-graph traversal depth (number of relation hops). Default: 2 */
+
+  /** Sub-graph traversal depth in number of relation hops. Default: `2` */
   maxDepth?: number;
-  /** Score boost multiplier for candidate chunks that mention matched graph entities. Default: 1.25 */
+
+  /** Score boost multiplier for candidate chunks that mention matched graph entities. Default: `1.25` */
   chunkScoreBoost?: number;
-  /** Optional custom entity extractor function. */
+
+  /** Optional custom entity extractor function replacing the default token-based lookup. */
   extractEntitiesFn?: EntityExtractorFn;
 }
 
 /**
- * Graph RAG Strategy: Traverses Knowledge Graph entity relationships, boosts chunks containing
- * graph entities, and injects structured relational context into the RAG execution pipeline.
+ * Post-retrieval RAG Strategy that traverses Knowledge Graph entity relationships,
+ * boosts chunks containing graph entities, and injects structured relational context
+ * into the RAG execution pipeline.
  */
 export class GraphRAGStrategy implements RAGStrategy {
   readonly name = 'GraphRAG';
+  readonly phase = 'post-retrieval' as const;
   private readonly graphProvider: KnowledgeGraphProvider;
   private readonly maxDepth: number;
   private readonly chunkScoreBoost: number;
   private readonly extractEntitiesFn?: EntityExtractorFn;
 
+  /**
+   * Creates a new instance of GraphRAGStrategy.
+   * @param options Configuration for graph provider, traversal depth, score boost, and entity extractor.
+   */
   constructor(options: GraphRAGStrategyOptions) {
     this.graphProvider = options.graphProvider;
     this.maxDepth = options.maxDepth ?? 2;
@@ -33,6 +46,13 @@ export class GraphRAGStrategy implements RAGStrategy {
     this.extractEntitiesFn = options.extractEntitiesFn;
   }
 
+  /**
+   * Traverses the Knowledge Graph for entities mentioned in the query, boosts matching chunk scores,
+   * and injects structured relational facts into `graphContext` and `hydratedParentContext`.
+   *
+   * @param context RAGContext payload containing retrieved chunks and the original query.
+   * @returns Promise resolving to updated RAGContext with `graphContext`, updated `scores`, and `hydratedParentContext`.
+   */
   async process(context: RAGContext): Promise<RAGContext> {
     if (!context.query) {
       return context;
@@ -53,7 +73,6 @@ export class GraphRAGStrategy implements RAGStrategy {
         .filter((t) => t.length > 2);
 
       for (const token of tokens) {
-        // Use searchNodes if implemented by provider
         if (this.graphProvider.searchNodes) {
           const found = await this.graphProvider.searchNodes(token);
           for (const node of found) {
@@ -72,7 +91,7 @@ export class GraphRAGStrategy implements RAGStrategy {
     const graphFactLines = new Set<string>();
     const entityKeywords = new Set<string>();
 
-    // 2. Traverses sub-graphs for identified entity nodes
+    // 2. Traverse sub-graphs for identified entity nodes
     for (const rootNode of matchedNodesMap.values()) {
       entityKeywords.add(rootNode.id.toLowerCase());
       entityKeywords.add(rootNode.label.toLowerCase());

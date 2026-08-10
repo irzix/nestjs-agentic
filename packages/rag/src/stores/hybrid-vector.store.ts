@@ -3,17 +3,24 @@ import type { DocumentChunk } from '../interfaces/document.interface';
 import type { EmbeddingProvider } from '../interfaces/embedding.interface';
 import type { VectorStoreAdapter } from '../interfaces/vector-store.interface';
 
+/**
+ * Options for configuring HybridVectorStore.
+ */
 export interface HybridVectorStoreOptions {
+  /** Optional embedding provider for generating vector representations of text. */
   embeddingProvider?: EmbeddingProvider;
-  /** Weight assigned to dense vector similarity vs sparse BM25 keyword match (0.0 to 1.0). Default: 0.5 */
+
+  /** Weight assigned to dense vector similarity vs sparse BM25 keyword match (0.0 to 1.0). Default: `0.5` */
   vectorWeight?: number;
+
   /** Optional custom stop-words set to filter out during BM25 keyword matching. */
   stopWords?: Set<string> | string[];
 }
 
 /**
  * Hybrid Vector Store combining dense vector similarity search with sparse BM25 term matching.
- * Implements both VectorStoreAdapter and @nestjs-agentic/memory SemanticStoreProvider interfaces.
+ * Features parallel batch ingestion, upsert semantics, Min-Max score normalization,
+ * metadata filtering, and direct @nestjs-agentic/memory integration.
  */
 export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdapter {
   readonly name = 'HybridVectorStore';
@@ -22,6 +29,10 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
   private readonly vectorWeight: number;
   private readonly stopWordsSet?: Set<string>;
 
+  /**
+   * Creates a new instance of HybridVectorStore.
+   * @param options Configuration options for vector weighting, stop words, and embedding provider.
+   */
   constructor(options?: HybridVectorStoreOptions) {
     this.embeddingProvider = options?.embeddingProvider;
     this.vectorWeight = options?.vectorWeight ?? 0.5;
@@ -33,15 +44,16 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
 
   /**
    * Ingests or updates document chunks with parallel batch embedding generation.
+   *
+   * @param chunks Array of DocumentChunk objects to ingest.
+   * @returns Promise resolving when ingestion and embedding generation is complete.
    */
   async addChunks(chunks: DocumentChunk[]): Promise<void> {
     if (!chunks || chunks.length === 0) return;
 
-    // Filter chunks needing embeddings
     const chunksNeedingEmbed = chunks.filter((c) => !c.embedding);
 
     if (chunksNeedingEmbed.length > 0 && this.embeddingProvider) {
-      // Parallel batch embedding generation
       const embeddings = await Promise.all(
         chunksNeedingEmbed.map((c) => this.embeddingProvider!.embedQuery(c.content)),
       );
@@ -51,21 +63,23 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
       }
     }
 
-    // Upsert chunks into Map to avoid memory leaks and duplicates
     for (const chunk of chunks) {
       this.chunksMap.set(chunk.id, chunk);
     }
   }
 
   /**
-   * Deletes a chunk by its unique ID.
+   * Deletes a chunk from the store by its unique identifier.
+   *
+   * @param chunkId Unique chunk identifier.
+   * @returns Boolean indicating whether the chunk was found and removed.
    */
   deleteChunk(chunkId: string): boolean {
     return this.chunksMap.delete(chunkId);
   }
 
   /**
-   * Clears all stored chunks.
+   * Clears all stored document chunks from memory.
    */
   clear(): void {
     this.chunksMap.clear();
@@ -74,6 +88,11 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
   /**
    * Performs hybrid vector search combining BM25 keyword matching and dense cosine similarity,
    * with Min-Max score normalization and metadata filtering.
+   *
+   * @param query Search query string.
+   * @param limit Maximum number of matching chunks to return. Default: `5`
+   * @param filter Key-value metadata object for filtering chunks (e.g. multi-tenant isolation).
+   * @returns Promise resolving to an array of ranked DocumentChunk objects.
    */
   async searchHybrid(
     query: string,
@@ -94,7 +113,6 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
 
     let chunksToSearch = Array.from(this.chunksMap.values());
 
-    // 1. Apply metadata filtering if provided (Multi-tenant isolation)
     if (filter) {
       chunksToSearch = chunksToSearch.filter((chunk) => {
         for (const [key, value] of Object.entries(filter)) {
@@ -106,7 +124,6 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
 
     if (chunksToSearch.length === 0) return [];
 
-    // 2. Compute raw BM25 and Vector similarity scores
     const rawScores = chunksToSearch.map((chunk) => {
       const tokens = chunk.content.toLowerCase().split(/\s+/);
       let matchCount = 0;
@@ -132,7 +149,6 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
       return { chunk, bm25Score, vectorScore };
     });
 
-    // 3. Min-Max Normalization to balance BM25 and Vector score distributions
     const maxBm = Math.max(...rawScores.map((s) => s.bm25Score), 0.0001);
     const maxVec = Math.max(...rawScores.map((s) => s.vectorScore), 0.0001);
 
@@ -152,6 +168,11 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
 
   /**
    * Alias method fulfilling the VectorStoreAdapter interface.
+   *
+   * @param query Search query string.
+   * @param limit Maximum number of matching chunks to return. Default: `5`
+   * @param filter Key-value metadata object for filtering chunks.
+   * @returns Promise resolving to matching DocumentChunk objects.
    */
   async searchChunks(
     query: string,
@@ -161,8 +182,12 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     return await this.searchHybrid(query, limit, filter);
   }
 
-  // --- SemanticStoreProvider Implementation for @nestjs-agentic/memory ---
-
+  /**
+   * Saves a memory record into the vector store for semantic memory integration.
+   *
+   * @param record MemoryRecord to persist.
+   * @param embedding Optional vector embedding array.
+   */
   async save(record: MemoryRecord, embedding?: number[]): Promise<void> {
     await this.addChunks([
       {
@@ -179,6 +204,14 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     ]);
   }
 
+  /**
+   * Searches the store and converts results into SemanticMatch objects for @nestjs-agentic/memory.
+   *
+   * @param query Search query string.
+   * @param limit Maximum number of matches to return. Default: `5`
+   * @param filter Key-value metadata filter object.
+   * @returns Promise resolving to array of SemanticMatch items.
+   */
   async search(query: string, limit = 5, filter?: Record<string, unknown>): Promise<SemanticMatch[]> {
     const chunks = await this.searchHybrid(query, limit, filter);
     return chunks.map((c) => ({

@@ -2,85 +2,95 @@ import type { DocumentChunk } from '../interfaces/document.interface';
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 import type { KnowledgeBase } from './knowledge-base';
 
+/**
+ * Options for configuring RAGPipeline.
+ */
 export interface RAGPipelineOptions {
+  /** Target KnowledgeBase engine instance used to retrieve document chunks. */
   knowledgeBase: KnowledgeBase;
-  /** Strategies to execute before retrieval (e.g. QueryExpansionStrategy). */
-  preRetrievalStrategies?: RAGStrategy[];
-  /** Strategies to execute after retrieval (e.g. GraphRAG, Hierarchical, Hydration, Reranker, Compression). */
-  postRetrievalStrategies?: RAGStrategy[];
-  /** Single list of strategies automatically partitioned into pre/post retrieval stages. */
+
+  /** Ordered array of RAG strategies to execute in the pipeline. */
   strategies?: RAGStrategy[];
 }
 
 /**
- * Advanced RAG Execution Pipeline orchestrating Query Expansion, Hybrid Retrieval,
- * Graph RAG, Hierarchical Tree Rollup, Hydration, Re-ranking, and Contextual Compression.
+ * RAGPipeline engine orchestrating chained execution of pre-retrieval and post-retrieval RAG strategies.
  */
 export class RAGPipeline {
   private readonly knowledgeBase: KnowledgeBase;
   private readonly preRetrievalStrategies: RAGStrategy[] = [];
   private readonly postRetrievalStrategies: RAGStrategy[] = [];
 
+  /**
+   * Creates a new instance of RAGPipeline.
+   * @param options Configuration options containing target KnowledgeBase and strategy array.
+   */
   constructor(options: RAGPipelineOptions) {
     this.knowledgeBase = options.knowledgeBase;
 
-    if (options.preRetrievalStrategies) {
-      this.preRetrievalStrategies.push(...options.preRetrievalStrategies);
-    }
-    if (options.postRetrievalStrategies) {
-      this.postRetrievalStrategies.push(...options.postRetrievalStrategies);
-    }
-
-    // Auto-partition strategies if single array provided
     if (options.strategies) {
-      for (const s of options.strategies) {
-        if (s.name === 'QueryExpansion') {
-          this.preRetrievalStrategies.push(s);
-        } else {
-          this.postRetrievalStrategies.push(s);
-        }
+      for (const strat of options.strategies) {
+        this.addStrategy(strat);
       }
     }
   }
 
   /**
-   * Executes the full RAG pipeline for an input user query with multi-tenant filtering.
+   * Registers a new RAGStrategy into the appropriate pipeline stage (pre-retrieval vs post-retrieval).
    *
-   * @param query Raw input user or agent query string.
-   * @param limit Maximum candidate chunks to retrieve initially.
-   * @param filter Optional metadata filter bag (e.g. { tenantId: 'acme_corp' }).
-   * @returns Final processed RAGContext ready for prompt insertion.
+   * @param strategy The RAGStrategy instance to register.
+   */
+  addStrategy(strategy: RAGStrategy): void {
+    if (strategy.phase === 'pre-retrieval') {
+      this.preRetrievalStrategies.push(strategy);
+    } else {
+      this.postRetrievalStrategies.push(strategy);
+    }
+  }
+
+  /**
+   * Executes the full RAG pipeline across pre-retrieval expansion, knowledge base retrieval, and post-retrieval compression/reranking.
+   *
+   * @param initialQuery Raw search query string.
+   * @param topK Maximum number of chunks to retrieve per query variation. Default: `5`
+   * @param filter Key-value filter metadata object for multi-tenant isolation.
+   * @returns Promise resolving to the final mutated RAGContext payload.
    */
   async executePipeline(
-    query: string,
-    limit = 5,
+    initialQuery: string,
+    topK = 5,
     filter?: Record<string, unknown>,
   ): Promise<RAGContext> {
-    let context: RAGContext = { query, metadata: filter };
+    let ctx: RAGContext = {
+      query: initialQuery,
+      chunks: [],
+      filter,
+    };
 
-    // Stage 1: Pre-Retrieval Strategies (e.g. Query Expansion)
-    for (const strategy of this.preRetrievalStrategies) {
-      context = await strategy.process(context);
+    // Stage 1: Pre-retrieval strategies (Query Expansion, Synonyms, Sub-queries)
+    for (const strat of this.preRetrievalStrategies) {
+      ctx = await strat.process(ctx);
     }
 
-    // Stage 2: Candidate Chunk Retrieval across query & expanded variations
-    const queriesToSearch = context.expandedQueries?.length ? context.expandedQueries : [context.query];
-    const retrievedChunkMap = new Map<string, DocumentChunk>();
+    // Stage 2: Document Chunk Retrieval across original query and expanded sub-queries
+    const queryList = [ctx.query, ...(ctx.expandedQueries || [])];
+    const retrievedChunksMap = new Map<string, DocumentChunk>();
 
-    for (const q of queriesToSearch) {
-      const chunks = await this.knowledgeBase.queryChunks(q, limit, filter);
+    for (const q of queryList) {
+      if (!q.trim()) continue;
+      const chunks = await this.knowledgeBase.queryChunks(q, topK, ctx.filter);
       for (const c of chunks) {
-        retrievedChunkMap.set(c.id, c);
+        retrievedChunksMap.set(c.id, c);
       }
     }
 
-    context.chunks = Array.from(retrievedChunkMap.values());
+    ctx.chunks = Array.from(retrievedChunksMap.values());
 
-    // Stage 3: Post-Retrieval Strategies (e.g. Graph, Hierarchical, Hydration, Reranker, Compression)
-    for (const strategy of this.postRetrievalStrategies) {
-      context = await strategy.process(context);
+    // Stage 3: Post-retrieval strategies (Reranking, Hydration, Contextual Compression, Graph Facts)
+    for (const strat of this.postRetrievalStrategies) {
+      ctx = await strat.process(ctx);
     }
 
-    return context;
+    return ctx;
   }
 }

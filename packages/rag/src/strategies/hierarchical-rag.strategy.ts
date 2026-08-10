@@ -1,36 +1,59 @@
 import type { DocumentChunk } from '../interfaces/document.interface';
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 
+/**
+ * Hierarchical tree node representing a document section in the RAG structured output.
+ */
 export interface HierarchicalNode {
+  /** Unique node identifier. */
   id: string;
+  /** Section title label. */
   title: string;
+  /** Heading depth level (1 = top-level section, 2 = child chunk). */
   level: number;
+  /** Optional section text content. */
   content?: string;
+  /** Child nodes representing individual document chunks under this section. */
   children: HierarchicalNode[];
   [key: string]: unknown;
 }
 
+/**
+ * Options for configuring HierarchicalRAGStrategy.
+ */
 export interface HierarchicalRAGStrategyOptions {
-  /** Group retrieved chunks under their parent document/section header. Default: true */
+  /** Group retrieved chunks under their parent document/section header. Default: `true` */
   groupByHeader?: boolean;
-  /** Merge sibling chunks belonging to the same section into a single unified section text. Default: true */
+
+  /** Merge sibling chunks belonging to the same section into a single unified section text. Default: `true` */
   rollupSiblings?: boolean;
 }
 
 /**
- * Hierarchical RAG Strategy: Organizes, groups, and rolls up retrieved chunks into a structured hierarchical tree
- * (Document -> Section -> Paragraph) for structural LLM reasoning.
+ * Post-retrieval RAG Strategy that organizes, groups, and rolls up retrieved chunks
+ * into a structured hierarchical tree (Document → Section → Paragraph) for structured LLM reasoning.
  */
 export class HierarchicalRAGStrategy implements RAGStrategy {
   readonly name = 'HierarchicalRAG';
+  readonly phase = 'post-retrieval' as const;
   private readonly groupByHeader: boolean;
   private readonly rollupSiblings: boolean;
 
+  /**
+   * Creates a new instance of HierarchicalRAGStrategy.
+   * @param options Configuration for header grouping and sibling rollup behavior.
+   */
   constructor(options?: HierarchicalRAGStrategyOptions) {
     this.groupByHeader = options?.groupByHeader ?? true;
     this.rollupSiblings = options?.rollupSiblings ?? true;
   }
 
+  /**
+   * Groups retrieved chunks by section header and optionally merges siblings into unified context blocks.
+   *
+   * @param context RAGContext payload containing retrieved chunks with section metadata.
+   * @returns Promise resolving to updated RAGContext with `chunks` restructured and `hierarchicalTree` populated.
+   */
   async process(context: RAGContext): Promise<RAGContext> {
     if (!context.chunks || context.chunks.length === 0) {
       return context;

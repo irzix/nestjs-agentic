@@ -1,14 +1,22 @@
 import { randomUUID } from 'crypto';
 import type { Document, DocumentChunk, DocumentSplitter } from '../interfaces/document.interface';
 
+/**
+ * Options for configuring SemanticDocumentSplitter.
+ */
 export interface SemanticDocumentSplitterOptions {
+  /** Maximum character length per section chunk before splitting further. Default: `500` */
   maxChunkSize?: number;
+
+  /** Minimum character length for a section chunk. Default: `50` */
   minChunkSize?: number;
+
+  /** Character overlap between consecutive sub-chunks. Default: `50` */
   chunkOverlap?: number;
 }
 
 /**
- * Splits domain documents based on semantic section headers, paragraphs, and sentence boundaries
+ * Splits domain documents based on semantic section headers (#, ##), paragraphs, and sentence boundaries
  * while extracting section headers into metadata and preserving chunk overlap.
  */
 export class SemanticDocumentSplitter implements DocumentSplitter {
@@ -16,12 +24,22 @@ export class SemanticDocumentSplitter implements DocumentSplitter {
   private readonly minChunkSize: number;
   private readonly chunkOverlap: number;
 
+  /**
+   * Creates a new instance of SemanticDocumentSplitter.
+   * @param options Configuration options for max chunk size, min chunk size, and chunk overlap.
+   */
   constructor(options?: SemanticDocumentSplitterOptions) {
     this.maxChunkSize = options?.maxChunkSize ?? 500;
     this.minChunkSize = options?.minChunkSize ?? 50;
     this.chunkOverlap = options?.chunkOverlap ?? 50;
   }
 
+  /**
+   * Splits a Document into semantic section chunks based on Markdown headers and paragraph boundaries.
+   *
+   * @param document The target Document object to split.
+   * @returns Promise resolving to an array of generated DocumentChunk objects.
+   */
   async splitDocument(document: Document): Promise<DocumentChunk[]> {
     const raw = document.rawContent || '';
     if (!raw.trim()) {
@@ -36,7 +54,6 @@ export class SemanticDocumentSplitter implements DocumentSplitter {
       const section = rawSections[i].trim();
       if (!section) continue;
 
-      // Extract markdown header if present (# Section Header)
       const headerMatch = section.match(/^#{1,6}\s+(.+)$/m);
       if (headerMatch) {
         currentSectionTitle = headerMatch[1].trim();
@@ -55,7 +72,6 @@ export class SemanticDocumentSplitter implements DocumentSplitter {
           },
         });
       } else {
-        // Sub-split large section into sentences/paragraphs
         const sentences = section.split(/(?<=[.!?\n])\s+/);
         let currentChunk = '';
 
@@ -73,7 +89,6 @@ export class SemanticDocumentSplitter implements DocumentSplitter {
               },
             });
 
-            // Carry over overlap text
             const overlapStart = Math.max(0, currentChunk.length - this.chunkOverlap);
             currentChunk = currentChunk.slice(overlapStart) + ' ' + sentence;
           } else {

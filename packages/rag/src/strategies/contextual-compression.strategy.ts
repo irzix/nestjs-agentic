@@ -1,32 +1,49 @@
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 
+/** Type alias for a custom context compressor function (e.g. LLM extractive summarizer). */
 export type ContextCompressorFn = (query: string, rawText: string) => Promise<string> | string;
 
+/**
+ * Options for configuring ContextualCompressionStrategy.
+ */
 export interface ContextualCompressionStrategyOptions {
-  /** Maximum allowable characters for compressed context. Default: 2000 */
+  /** Maximum allowable characters for the compressed context output. Default: `2000` */
   maxCharacters?: number;
-  /** Filter out sentences that have no term overlap with the query. Default: true */
+
+  /** Filter out sentences that have no term overlap with the query tokens. Default: `true` */
   filterIrrelevantSentences?: boolean;
+
   /** Custom compression function (e.g. LLM sentence extractor or token compressor). */
   compressFn?: ContextCompressorFn;
 }
 
 /**
- * Contextual Compression Strategy: Zero-latency extractive sentence pruning, information density boost,
- * and smart sentence-boundary truncation.
+ * Post-retrieval RAG Strategy providing zero-latency extractive sentence pruning,
+ * information density boosting, and smart sentence-boundary truncation.
  */
 export class ContextualCompressionStrategy implements RAGStrategy {
   readonly name = 'ContextualCompression';
+  readonly phase = 'post-retrieval' as const;
   private readonly maxCharacters: number;
   private readonly filterIrrelevantSentences: boolean;
   private readonly compressFn?: ContextCompressorFn;
 
+  /**
+   * Creates a new instance of ContextualCompressionStrategy.
+   * @param options Configuration for character limits, sentence filtering, and optional compressor function.
+   */
   constructor(options?: ContextualCompressionStrategyOptions) {
     this.maxCharacters = options?.maxCharacters ?? 2000;
     this.filterIrrelevantSentences = options?.filterIrrelevantSentences ?? true;
     this.compressFn = options?.compressFn;
   }
 
+  /**
+   * Compresses the retrieved context by extracting relevant sentences and applying smart truncation.
+   *
+   * @param context RAGContext payload containing retrieved chunks and the original query.
+   * @returns Promise resolving to updated RAGContext with `compressedContext` field populated.
+   */
   async process(context: RAGContext): Promise<RAGContext> {
     const rawContext =
       context.hydratedParentContext ||

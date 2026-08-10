@@ -1,29 +1,41 @@
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 
+/** Type alias for a custom query expansion function. */
 export type QueryExpanderFunction = (query: string) => Promise<string[]> | string[];
 
+/**
+ * Options for configuring QueryExpansionStrategy.
+ */
 export interface QueryExpansionStrategyOptions {
   /** Optional dictionary mapping query terms to domain-specific synonyms. */
   synonymsMap?: Record<string, string[]>;
+
   /** Optional custom query expansion function (e.g. LLM-based query generator or thesaurus service). */
   expandQueryFn?: QueryExpanderFunction;
-  /** Optional LLM provider function for automated query expansion. */
+
+  /** Optional LLM provider function for automated semantic sub-query generation. */
   llmProvider?: (prompt: string) => Promise<string>;
-  /** Flag to enable or disable LLM-driven query expansion. Default: false */
+
+  /** Flag to enable or disable LLM-driven query expansion. Default: `false` */
   useLLM?: boolean;
 }
 
 /**
- * RAG Strategy that expands raw input queries into multiple semantic sub-queries using dictionaries,
- * custom functions, or LLM-driven query expansion.
+ * RAG pre-retrieval Strategy that expands raw input queries into multiple semantic sub-queries
+ * using dictionaries, custom functions, or LLM-driven query expansion.
  */
 export class QueryExpansionStrategy implements RAGStrategy {
   readonly name = 'QueryExpansion';
+  readonly phase = 'pre-retrieval' as const;
   private readonly synonymsMap = new Map<string, string[]>();
   private readonly expandQueryFn?: QueryExpanderFunction;
   private readonly llmProvider?: (prompt: string) => Promise<string>;
   private readonly useLLM: boolean;
 
+  /**
+   * Creates a new instance of QueryExpansionStrategy.
+   * @param options Configuration for synonyms map, custom expander, and optional LLM provider.
+   */
   constructor(options?: QueryExpansionStrategyOptions) {
     this.expandQueryFn = options?.expandQueryFn;
     this.llmProvider = options?.llmProvider;
@@ -36,6 +48,12 @@ export class QueryExpansionStrategy implements RAGStrategy {
     }
   }
 
+  /**
+   * Expands the query in the RAGContext into multiple semantic sub-queries via LLM, custom function, or synonym dictionary.
+   *
+   * @param context RAGContext payload containing the raw query string.
+   * @returns Promise resolving to updated RAGContext with `expandedQueries` populated.
+   */
   async process(context: RAGContext): Promise<RAGContext> {
     const rawQuery = context.query || '';
     const expanded = new Set<string>();

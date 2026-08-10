@@ -45,6 +45,9 @@ export interface RAGStrategy {
   /** Unique name of the RAG strategy. */
   name: string;
 
+  /** Optional pipeline phase indicator ('pre-retrieval' | 'post-retrieval'). */
+  phase?: 'pre-retrieval' | 'post-retrieval';
+
   /**
    * Processes the strategy logic to mutate or enhance the RAGContext payload.
    * @param context RAG evaluation context object.

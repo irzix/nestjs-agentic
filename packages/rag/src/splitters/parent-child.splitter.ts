@@ -1,113 +1,118 @@
 import { randomUUID } from 'crypto';
 import type { Document, DocumentChunk, DocumentSplitter } from '../interfaces/document.interface';
 
+/**
+ * Options for configuring ParentChildSplitter.
+ */
 export interface ParentChildSplitterOptions {
+  /** Character length of parent document chunks. Default: `1000` */
   parentChunkSize?: number;
-  parentChunkOverlap?: number;
+
+  /** Character length of child document chunks. Default: `200` */
   childChunkSize?: number;
-  childChunkOverlap?: number;
-  /** Whether to embed full parent text into child chunk metadata. Default: true */
-  includeParentTextInMetadata?: boolean;
+
+  /** Character overlap between consecutive child chunks. Default: `50` */
+  childOverlap?: number;
 }
 
+/**
+ * Result payload containing generated parent and child document chunks.
+ */
 export interface ParentChildSplitResult {
+  /** Array of parent DocumentChunk objects. */
   parentChunks: DocumentChunk[];
+
+  /** Array of child DocumentChunk objects containing parent ID references. */
   childChunks: DocumentChunk[];
 }
 
 /**
- * Creates small child chunks (high-precision vector search) linked directly to larger parent chunks (high-context LLM retrieval)
- * with word-boundary preservation and sliding window chunk overlap.
+ * Splitter that generates large parent chunks alongside smaller overlapping child chunks for precise retrieval.
  */
 export class ParentChildSplitter implements DocumentSplitter {
   private readonly parentChunkSize: number;
-  private readonly parentChunkOverlap: number;
   private readonly childChunkSize: number;
-  private readonly childChunkOverlap: number;
-  private readonly includeParentTextInMetadata: boolean;
+  private readonly childOverlap: number;
 
+  /**
+   * Creates a new instance of ParentChildSplitter.
+   * @param options Configuration options for parent size, child size, and overlap.
+   */
   constructor(options?: ParentChildSplitterOptions) {
     this.parentChunkSize = options?.parentChunkSize ?? 1000;
-    this.parentChunkOverlap = options?.parentChunkOverlap ?? 100;
     this.childChunkSize = options?.childChunkSize ?? 200;
-    this.childChunkOverlap = options?.childChunkOverlap ?? 20;
-    this.includeParentTextInMetadata = options?.includeParentTextInMetadata ?? true;
-  }
-
-  async splitDocument(document: Document): Promise<DocumentChunk[]> {
-    const { childChunks } = await this.splitParentChild(document);
-    return childChunks;
+    this.childOverlap = options?.childOverlap ?? 50;
   }
 
   /**
-   * Adjusts slice boundary to nearest whitespace to avoid severing words in half.
+   * Splits a Document into child DocumentChunks referencing parent chunk IDs.
+   *
+   * @param document The target Document object to split.
+   * @returns Promise resolving to child DocumentChunk objects.
    */
-  private adjustSliceBoundary(text: string, start: number, end: number): string {
-    const rawSlice = text.slice(start, end);
-    if (end >= text.length) return rawSlice.trim();
-
-    const lastSpace = rawSlice.lastIndexOf(' ');
-    if (lastSpace > rawSlice.length * 0.5) {
-      return rawSlice.slice(0, lastSpace).trim();
-    }
-    return rawSlice.trim();
+  async splitDocument(document: Document): Promise<DocumentChunk[]> {
+    const result = await this.splitParentChild(document);
+    return result.childChunks;
   }
 
+  /**
+   * Performs full parent-child splitting returning both parent and child chunk arrays.
+   *
+   * @param document Target Document object.
+   * @returns Promise resolving to ParentChildSplitResult.
+   */
   async splitParentChild(document: Document): Promise<ParentChildSplitResult> {
     const raw = document.rawContent || '';
+    if (!raw.trim()) {
+      return { parentChunks: [], childChunks: [] };
+    }
+
     const parentChunks: DocumentChunk[] = [];
     const childChunks: DocumentChunk[] = [];
 
-    let pos = 0;
+    // Step 1: Slice parent chunks
+    let parentStart = 0;
     let parentIndex = 0;
-    const parentStep = Math.max(this.parentChunkSize - this.parentChunkOverlap, 1);
+    while (parentStart < raw.length) {
+      const parentEnd = Math.min(parentStart + this.parentChunkSize, raw.length);
+      const parentContent = raw.slice(parentStart, parentEnd).trim();
+      const parentId = `${document.id}_parent_${parentIndex}`;
 
-    while (pos < raw.length) {
-      const parentText = this.adjustSliceBoundary(raw, pos, pos + this.parentChunkSize);
-      if (!parentText) break;
-
-      const parentId = `${document.id}_parent_${parentIndex}_${randomUUID().slice(0, 8)}`;
       const parentChunk: DocumentChunk = {
         id: parentId,
         parentId: document.id,
-        content: parentText,
-        metadata: {
-          ...document.metadata,
-          isParent: true,
-          parentIndex,
-          documentTitle: document.title,
-        },
+        content: parentContent,
+        metadata: { ...document.metadata, isParent: true, parentIndex },
       };
       parentChunks.push(parentChunk);
 
-      let childPos = 0;
+      // Step 2: Slice child chunks within this parent chunk
+      let childStart = 0;
       let childIndex = 0;
-      const childStep = Math.max(this.childChunkSize - this.childChunkOverlap, 1);
+      const step = Math.max(1, this.childChunkSize - this.childOverlap);
 
-      while (childPos < parentText.length) {
-        const childText = this.adjustSliceBoundary(parentText, childPos, childPos + this.childChunkSize);
-        if (!childText) break;
+      while (childStart < parentContent.length) {
+        const childEnd = Math.min(childStart + this.childChunkSize, parentContent.length);
+        const childContent = parentContent.slice(childStart, childEnd).trim();
 
-        childChunks.push({
-          id: `${parentId}_child_${childIndex}_${randomUUID().slice(0, 8)}`,
-          parentId,
-          content: childText,
-          metadata: {
-            ...document.metadata,
-            isParent: false,
-            childIndex,
-            documentTitle: document.title,
-            ...(this.includeParentTextInMetadata ? { parentText } : {}),
-          },
-        });
+        if (childContent.length > 0) {
+          childChunks.push({
+            id: `${parentId}_child_${childIndex}`,
+            parentId: parentId,
+            content: childContent,
+            metadata: {
+              ...document.metadata,
+              isChild: true,
+              parentText: parentContent,
+            },
+          });
+        }
 
-        if (childPos + this.childChunkSize >= parentText.length) break;
-        childPos += childStep;
+        childStart += step;
         childIndex++;
       }
 
-      if (pos + this.parentChunkSize >= raw.length) break;
-      pos += parentStep;
+      parentStart += this.parentChunkSize;
       parentIndex++;
     }
 

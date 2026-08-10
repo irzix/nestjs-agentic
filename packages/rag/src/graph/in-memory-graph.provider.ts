@@ -6,19 +6,36 @@ import type {
 
 /**
  * Built-in In-Memory Knowledge Graph Provider for tracking entity relationships in RAG workflows.
+ * Supports BFS-based sub-graph traversal, keyword node search, and relationship edge management.
  */
 export class InMemoryKnowledgeGraphProvider implements KnowledgeGraphProvider {
   private readonly nodes = new Map<string, KnowledgeGraphNode>();
   private readonly edges: KnowledgeGraphEdge[] = [];
 
+  /**
+   * Adds or updates a knowledge graph node by its unique ID.
+   *
+   * @param node The KnowledgeGraphNode object to add or update.
+   */
   async addNode(node: KnowledgeGraphNode): Promise<void> {
     this.nodes.set(node.id, node);
   }
 
+  /**
+   * Adds a directed relationship edge between two knowledge graph nodes.
+   *
+   * @param edge The KnowledgeGraphEdge object defining source, target, and relation type.
+   */
   async addEdge(edge: KnowledgeGraphEdge): Promise<void> {
     this.edges.push(edge);
   }
 
+  /**
+   * Searches graph nodes by keyword matching against node ID, label, and properties.
+   *
+   * @param keyword Search keyword string.
+   * @returns Promise resolving to an array of matching KnowledgeGraphNode objects.
+   */
   async searchNodes(keyword: string): Promise<KnowledgeGraphNode[]> {
     if (!keyword.trim()) return [];
     const lower = keyword.toLowerCase();
@@ -41,6 +58,14 @@ export class InMemoryKnowledgeGraphProvider implements KnowledgeGraphProvider {
     return matches;
   }
 
+  /**
+   * Traverses the knowledge graph using BFS from a root entity node up to the specified depth,
+   * returning all reachable nodes and their connecting edges.
+   *
+   * @param entityId Root entity node identifier to start traversal from.
+   * @param depth Maximum traversal depth in relation hops. Default: `2`
+   * @returns Promise resolving to an object containing matched `nodes` and `edges` arrays.
+   */
   async querySubGraph(
     entityId: string,
     depth = 2,
