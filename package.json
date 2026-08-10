@@ -16,7 +16,12 @@
     "test": "npm run test --workspaces --if-present"
   },
   "workspaces": [
-    "packages/*",
+    "packages/core",
+    "packages/memory",
+    "packages/experience",
+    "packages/runtime-adk",
+    "packages/runtime-langgraph",
+    "packages/meta",
     "examples/*",
     "apps/*"
   ],

@@ -4,8 +4,8 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "paths": {
-      "@nestjs-agentic/memory": ["../memory/dist/index.d.ts"],
-      "@nestjs-agentic/core": ["../core/dist/index.d.ts"]
+      "@nestjs-agentic/memory": ["../memory/dist/index.d.ts", "../memory/src/index.ts"],
+      "@nestjs-agentic/core": ["../core/dist/index.d.ts", "../core/src/index.ts"]
     }
   },
   "include": ["src/**/*"],
