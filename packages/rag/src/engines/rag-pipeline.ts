@@ -77,7 +77,7 @@ export class RAGPipeline {
     const retrievedChunksMap = new Map<string, DocumentChunk>();
 
     for (const q of queryList) {
-      if (!q.trim()) continue;
+      if (!q || typeof q !== 'string' || !q.trim()) continue;
       const chunks = await this.knowledgeBase.queryChunks(q, topK, ctx.filter);
       for (const c of chunks) {
         retrievedChunksMap.set(c.id, c);

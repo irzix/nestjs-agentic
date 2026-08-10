@@ -64,9 +64,11 @@ export class QueryExpansionStrategy implements RAGStrategy {
       try {
         const prompt = `Generate 3 semantically equivalent search queries for: "${rawQuery}". Output only comma-separated queries without numbering.`;
         const llmResponse = await this.llmProvider(prompt);
-        const generatedQueries = llmResponse.split(',').map((q) => q.trim());
-        for (const gq of generatedQueries) {
-          if (gq) expanded.add(gq);
+        if (llmResponse && typeof llmResponse === 'string') {
+          const generatedQueries = llmResponse.split(',').map((q) => (q ? q.trim() : '')).filter(Boolean);
+          for (const gq of generatedQueries) {
+            if (gq) expanded.add(gq);
+          }
         }
       } catch {
         // Fallback gracefully if LLM provider call fails
@@ -76,8 +78,10 @@ export class QueryExpansionStrategy implements RAGStrategy {
     // 2. Custom expansion function if provided
     if (this.expandQueryFn) {
       const customExpanded = await this.expandQueryFn(rawQuery);
-      for (const q of customExpanded) {
-        if (q.trim()) expanded.add(q.trim());
+      if (Array.isArray(customExpanded)) {
+        for (const q of customExpanded) {
+          if (q && typeof q === 'string' && q.trim()) expanded.add(q.trim());
+        }
       }
     }
 
