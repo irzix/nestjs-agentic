@@ -6,6 +6,9 @@ node_modules/
 **/dist/
 **/build/
 *.tsbuildinfo
+**/src/**/*.js
+**/src/**/*.js.map
+**/src/**/*.d.ts
 
 # Logs
 logs

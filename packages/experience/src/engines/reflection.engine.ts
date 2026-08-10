@@ -6,9 +6,14 @@ export class ReflectionEngine {
    * critiques failures (Reflexion pattern), and extracts actionable lessons learned.
    */
   async critiqueTrajectory(trajectory: AgentTrajectory): Promise<ReflectionResult> {
-    const failedSteps = trajectory.steps.filter(
-      (s) => Boolean(s.error) || (s.result && typeof s.result === 'object' && (s.result as any).success === false),
-    );
+    const failedSteps = trajectory.steps.filter((s) => {
+      if (Boolean(s.error)) return true;
+      if (s.result && typeof s.result === 'object') {
+        const res = s.result as Record<string, unknown>;
+        return res.success === false;
+      }
+      return false;
+    });
 
     if (failedSteps.length === 0 && trajectory.success) {
       return {
@@ -23,10 +28,15 @@ export class ReflectionEngine {
 
     for (const failedStep of failedSteps) {
       const toolName = failedStep.toolName ?? 'unknown_tool';
+      const resObj =
+        failedStep.result && typeof failedStep.result === 'object'
+          ? (failedStep.result as Record<string, unknown>)
+          : undefined;
+
       const errDetail =
         failedStep.error ??
-        (failedStep.result as any)?.reason ??
-        (failedStep.result as any)?.message ??
+        (typeof resObj?.reason === 'string' ? resObj.reason : undefined) ??
+        (typeof resObj?.message === 'string' ? resObj.message : undefined) ??
         JSON.stringify(failedStep.result);
 
       const critiqueStr = `Tool "${toolName}" failed on step ${failedStep.stepIndex}: ${errDetail}`;

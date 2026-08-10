@@ -277,8 +277,8 @@ async function runTests() {
     const learner = new ExperienceLearner({ memoryStore: memory });
 
     // Step 1: Agent trajectory failed due to role policy denial
-    const failedToolResult = runResult.toolCalls[0]?.result as any;
-    const errReason = failedToolResult?.reason ?? 'Role failure: finance_officer required';
+    const failedToolResult = runResult.toolCalls[0]?.result as Record<string, unknown> | undefined;
+    const errReason = (typeof failedToolResult?.reason === 'string' ? failedToolResult.reason : undefined) ?? 'Role failure: finance_officer required';
 
     // Step 2: Experience Learner critiques trajectory & records learned lesson
     const reflection = await learner.critiqueTrajectory({

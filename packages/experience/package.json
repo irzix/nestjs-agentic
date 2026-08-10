@@ -16,6 +16,9 @@
     "build": "tsc",
     "test": "tsc -p test/tsconfig.json && node dist/test/test/experience.spec.js"
   },
+  "dependencies": {
+    "@nestjs-agentic/memory": "*"
+  },
   "peerDependencies": {
     "@nestjs-agentic/core": "*",
     "@nestjs-agentic/memory": "*",

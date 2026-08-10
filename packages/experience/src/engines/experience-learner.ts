@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { AgentMemoryStore } from '@nestjs-agentic/memory';
+import type { AgentMemoryStore, MemoryRecord } from '@nestjs-agentic/memory';
 import type { ExperienceEngine, ExperienceRecord, AgentTrajectory, ReflectionResult } from '../interfaces/experience.interface';
 import { ReflectionEngine } from './reflection.engine';
 
@@ -83,7 +83,7 @@ export class ExperienceLearner implements ExperienceEngine {
       const recalled = await this.memoryStore.recall(trigger, {
         sessionId: tenantId ?? 'global_experience',
       });
-      const memoryRecords: ExperienceRecord[] = recalled.map((r) => ({
+      const memoryRecords: ExperienceRecord[] = recalled.map((r: MemoryRecord) => ({
         id: r.id,
         tenantId: r.sessionId,
         agentName: (r.metadata?.agentName as string) ?? 'unknown',
