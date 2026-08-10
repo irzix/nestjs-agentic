@@ -181,6 +181,58 @@ export async function runRAGTests() {
     assert(false, 'Test 7: Memory Integration', err.message);
   }
 
+  // TEST 8: Edge Cases & Error Resiliency Suite
+  try {
+    const mockEmbed = new MockEmbeddingProvider();
+    const store = new HybridVectorStore({ embeddingProvider: mockEmbed });
+    const kb = new KnowledgeBase({ vectorStore: store });
+
+    // 8a. Empty / Whitespace Query Handling
+    const emptyPipeline = new RAGPipeline({ knowledgeBase: kb });
+    const emptyResult = await emptyPipeline.executePipeline('   ');
+    assert(emptyResult.chunks?.length === 0, 'Test 8a: Empty whitespace query returns zero chunks gracefully');
+
+    // 8b. Reranker Strategy Error Fallback Handling
+    const faultyReranker = new RerankerStrategy({
+      rerankFn: async () => {
+        throw new Error('Cross-Encoder API Service Unavailable');
+      },
+    });
+    const chunkObj = { id: 'c1', parentId: 'p1', content: 'Audit policy content details', metadata: {} };
+    const rerankFallbackResult = await faultyReranker.process({ query: 'Audit policy', chunks: [chunkObj] });
+    assert(
+      rerankFallbackResult.chunks?.length === 1,
+      'Test 8b: Faulty Reranker strategy gracefully falls back to default scoring on API error',
+    );
+
+    // 8c. Non-existent Graph Entity Query Handling
+    const graph = new InMemoryKnowledgeGraphProvider();
+    const graphStrategy = new GraphRAGStrategy({ graphProvider: graph });
+    const unknownEntityResult = await graphStrategy.process({ query: 'non_existent_node_999' });
+    assert(
+      !unknownEntityResult.graphContext,
+      'Test 8c: Querying non-existent graph entity node returns clean context without throwing',
+    );
+
+    // 8d. Multi-Entity Traversal in Single Query
+    await graph.addNode({ id: 'usr_cto', label: 'User', properties: {} });
+    await graph.addNode({ id: 'pol_sec', label: 'Policy', properties: {} });
+    await graph.addNode({ id: 'usr_cfo', label: 'User', properties: {} });
+    await graph.addNode({ id: 'pol_fin', label: 'Policy', properties: {} });
+    await graph.addEdge({ sourceId: 'usr_cto', targetId: 'pol_sec', relation: 'OWNS' });
+    await graph.addEdge({ sourceId: 'usr_cfo', targetId: 'pol_fin', relation: 'MANAGES' });
+
+    const multiEntityResult = await graphStrategy.process({ query: 'usr_cto usr_cfo' });
+    assert(
+      Boolean(multiEntityResult.graphContext) &&
+        multiEntityResult.graphContext!.includes('OWNS') &&
+        multiEntityResult.graphContext!.includes('MANAGES'),
+      'Test 8d: GraphRAGStrategy traverses multiple graph entities simultaneously in a single query',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 8: Edge Cases & Error Resiliency', err.message);
+  }
+
   console.log(`\n  📊 RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');
