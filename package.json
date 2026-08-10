@@ -20,6 +20,8 @@
     "packages/memory",
     "packages/experience",
     "packages/rag",
+    "packages/orchestration",
+    "packages/evaluation",
     "packages/runtime-adk",
     "packages/runtime-langgraph",
     "packages/meta",

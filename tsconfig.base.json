@@ -27,6 +27,10 @@
       "@nestjs-agentic/experience/*": ["./packages/experience/dist/*"],
       "@nestjs-agentic/rag": ["./packages/rag/dist/index.d.ts"],
       "@nestjs-agentic/rag/*": ["./packages/rag/dist/*"],
+      "@nestjs-agentic/orchestration": ["./packages/orchestration/dist/index.d.ts"],
+      "@nestjs-agentic/orchestration/*": ["./packages/orchestration/dist/*"],
+      "@nestjs-agentic/evaluation": ["./packages/evaluation/dist/index.d.ts"],
+      "@nestjs-agentic/evaluation/*": ["./packages/evaluation/dist/*"],
       "nestjs-agentic": ["./packages/core/dist/index.d.ts"],
       "nestjs-agentic/*": ["./packages/core/dist/*"]
     }
