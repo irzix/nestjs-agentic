@@ -27,9 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **RAG Engines**:
     - `KnowledgeBase`: Document ingestion, indexing, and filtered chunk querying.
     - `RAGPipeline`: Partitioned pre-retrieval & post-retrieval strategy execution.
+- **Experience Learning & Trajectory Reflection (`@nestjs-agentic/experience`)**:
+  - `ExperienceLearner`: Trajectory critique and lesson extraction engine for self-correcting prompt guidance.
+  - `ReflectionEngine`: Automated evaluation of failed execution paths and policy violation feedback loops.
+  - `ExperienceStore`: Persistent storage and retrieval of learned rules and historical trajectory lessons integrated with `@nestjs-agentic/memory`.
 - **Comprehensive Unit & Integration Test Suites**:
   - Added 22 unit tests in `@nestjs-agentic/rag`.
-  - Added Test 8 with explicit behavioral assertions for all 7 RAG strategies in `example-financial-governance`.
+  - Added Test 7 (Experience Reflexion & Learning) and Test 8 (all 7 RAG strategies) in `example-financial-governance`.
 
 ---
 

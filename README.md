@@ -52,6 +52,15 @@ NestJS Services (DB / APIs) ──► @ToolSet & @Tool ──► @UsePolicies �
 # Core meta-package (NestJS 10 & 11 supported)
 npm install nestjs-agentic
 
+# Production-Grade Modular RAG Engine
+npm install @nestjs-agentic/rag
+
+# Multi-Tier Cognitive Memory Store
+npm install @nestjs-agentic/memory
+
+# Experience Learning & Trajectory Reflection
+npm install @nestjs-agentic/experience
+
 # LangGraph Adapter with Checkpointer & Thread Persistence
 npm install @nestjs-agentic/langgraph @langchain/langgraph @langchain/core
 
