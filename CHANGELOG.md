@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-10
+
+### Added
+
+- **Multi-Agent Orchestration Package (`@nestjs-agentic/orchestration`)**:
+  - `SubAgentDelegator`: Context propagation and security isolation for sub-agent delegation.
+  - `ParallelSubAgentRunner`: Concurrent `Promise.all` fan-out runner with timeout protection, retries, fallback sub-agent recovery, and score-weighted consensus.
+  - `RefinementLoopRunner`: Iterative supervisor-worker feedback loops with versioned sub-session memory (`parentSessionId:agentName:iter_N`) and satisfaction criteria.
+- **Automated Agent Evaluation Package (`@nestjs-agentic/evaluation`)**:
+  - `AccuracyGroundTruthMetric`: Mathematical accuracy scoring via Vector Cosine Similarity and Sørensen-Dice Token Similarity.
+  - `ExecutionEfficiencyMetric`: Weighted multi-variable ratios (step count ratio, latency ratio, token consumption ratio).
+  - `SafetyPolicyMetric`: Security policy adherence and forbidden tool call detection.
+  - `TrajectoryInspectorMetric`: Verification of tool call sequences and argument schema assertions.
+  - `LLMAsAJudgeMetric`: LLM judge evaluation.
+  - `BenchmarkRunner`: Dataset suite benchmark runner with Multi-Trial Variance Analysis ($\mu$ mean score and $\sigma$ standard deviation).
+  - `EvalReporter`: GitHub-Flavored Markdown benchmark report generator.
+- **Monorepo-Wide TSDoc Audit**: Added comprehensive `/** ... */` TSDoc comments across all exported classes, interfaces, decorators, and policies in core, memory, experience, rag, orchestration, and evaluation packages.
+- **CI/CD Pipeline**: Added `@nestjs-agentic/orchestration` and `@nestjs-agentic/evaluation` NPM publish steps in `.github/workflows/publish.yml`.
+
 ## [0.3.0] - 2026-08-10
 
 ### Added

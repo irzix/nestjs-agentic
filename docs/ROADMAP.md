@@ -117,11 +117,30 @@ Where nestjs-agentic becomes irreplaceable for enterprise teams.
 
 ---
 
-### 📡 Phase 0.4 — Sub-Agent Orchestration, Observability & Transports
+### ✅ Phase 0.4 — Multi-Agent Orchestration & Mathematical Evaluation Framework
+
+> **Status: Released (v0.4.0)**
+
+- [x] **`@nestjs-agentic/orchestration` Package**:
+  - `SubAgentDelegator` — Sub-agent context propagation and tenant security isolation.
+  - `ParallelSubAgentRunner` — Concurrent `Promise.all` fan-out runner with timeout protection, retries, fallback sub-agent recovery, and score-weighted consensus.
+  - `RefinementLoopRunner` — Iterative supervisor-worker feedback loops with versioned sub-session memory (`parentSessionId:agentName:iter_N`) and satisfaction criteria.
+- [x] **`@nestjs-agentic/evaluation` Package**:
+  - `AccuracyGroundTruthMetric` — Mathematical accuracy scoring via Vector Cosine Similarity and Sørensen-Dice Token Similarity.
+  - `ExecutionEfficiencyMetric` — Weighted multi-variable ratios (step count ratio, latency ratio, token consumption ratio).
+  - `SafetyPolicyMetric` — Security policy adherence and forbidden tool call detection.
+  - `TrajectoryInspectorMetric` — Verification of tool call sequences and argument schema assertions.
+  - `LLMAsAJudgeMetric` — LLM judge evaluation.
+  - `BenchmarkRunner` — Dataset suite benchmark runner with Multi-Trial Variance Analysis ($\mu$ mean score and $\sigma$ standard deviation).
+  - `EvalReporter` — GitHub-Flavored Markdown benchmark report generator.
+- [x] **Monorepo-Wide TSDoc Audit** — Comprehensive `/** ... */` TSDoc comments across core, memory, experience, rag, orchestration, and evaluation packages.
+
+---
+
+### 📡 Phase 0.5 — Observability, Immutable Audit & Transports
 
 > **Status: Active Development**
 
-- [ ] **Sub-Agent Orchestration & Delegation** — parent-child memory namespacing and sub-agent task delegation.
 - [ ] **Immutable Audit Trail (`AuditEventStore`)** — persistent, append-only log of all policy decisions, tool executions, approvals, and rejections.
 - [ ] **AgentObserver Interface** — pluggable observer hooks (`OpenTelemetry`, `Langfuse`).
 - [ ] **`@nestjs-agentic/vercel`** — Vercel AI SDK runtime adapter with streaming support.
