@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/experience",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "description": "Experience learning, trajectory reflection, and self-correction engine for nestjs-agentic.",
   "repository": {
     "type": "git",

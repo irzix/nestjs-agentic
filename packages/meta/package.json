@@ -1,6 +1,6 @@
 {
   "name": "nestjs-agentic",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "description": "NestJS-native framework for building enterprise-grade, governance-backed AI agents.",
   "repository": {
     "type": "git",
