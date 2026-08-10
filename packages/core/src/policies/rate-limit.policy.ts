@@ -1,20 +1,36 @@
 import type { AgentContext, PolicyResult, ToolPolicy } from '../interfaces';
 
+/**
+ * Options for configuring sliding-window rate limit policy.
+ */
 export interface RateLimitOptions {
+  /** Maximum allowed tool executions per sliding-window minute. Default: `10` */
   maxCallsPerMinute?: number;
 }
 
 /**
- * Built-in policy enforcing tool call rate limits per tenant/user.
+ * Built-in sliding-window rate limit policy enforcing call frequency bounds per tenant, user, and tool.
+ *
+ * @example
+ * ```typescript
+ * @UsePolicies(new RateLimitPolicy({ maxCallsPerMinute: 5 }))
+ * ```
  */
 export class RateLimitPolicy implements ToolPolicy {
   private static readonly history = new Map<string, number[]>();
   private readonly maxCalls: number;
 
+  /**
+   * Creates a new instance of RateLimitPolicy.
+   * @param options Configuration options.
+   */
   constructor(options?: RateLimitOptions) {
     this.maxCalls = options?.maxCallsPerMinute ?? 10;
   }
 
+  /**
+   * Evaluates the rate limit state for the given context and tool name.
+   */
   async evaluate(
     ctx: AgentContext,
     toolName: string,

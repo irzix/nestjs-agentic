@@ -348,7 +348,7 @@ async function runTests() {
     const chunks = await kb.queryChunks('manager approval', 1);
     const hierarchyCtx = await hierarchical.process({ query: 'test', chunks });
     assert(
-      Boolean(hierarchyCtx.hierarchicalTree && hierarchyCtx.hierarchicalTree.length > 0),
+      Boolean(hierarchyCtx.hierarchicalTree && (hierarchyCtx.hierarchicalTree as any[]).length > 0),
       'Test 8b: HierarchicalRAGStrategy generated node tree from markdown headers',
     );
 

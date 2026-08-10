@@ -2,17 +2,18 @@ import { SetMetadata } from '@nestjs/common';
 import { TOOL_POLICIES_METADATA } from '../constants';
 import type { ToolPolicy } from '../interfaces';
 
-type PolicyConstructor = new (...args: unknown[]) => ToolPolicy;
+export type PolicyInput = (new (...args: unknown[]) => ToolPolicy) | ToolPolicy;
 
 /**
- * Attaches one or more policies to a @Tool method or an entire @ToolSet class.
+ * Attaches one or more governance policies to a `@Tool` method or an entire `@ToolSet` class.
  * Policies are evaluated in order before the tool handler is invoked.
- * Can be stacked with multiple @UsePolicies calls or by passing multiple policies.
  *
  * @example
- * @Tool({ description: 'Request a refund' })
- * @UsePolicies(RefundLimitPolicy, TenantBoundaryPolicy)
- * async refundOrder(@Param('orderId') orderId: string) {}
+ * ```typescript
+ * @Tool({ description: 'Request a financial transfer' })
+ * @UsePolicies(new CostLimitPolicy({ autoAllowLimit: 500 }), TenantBoundaryPolicy)
+ * async transferFunds(@Param('amount') amount: number) {}
+ * ```
  */
-export const UsePolicies = (...policies: PolicyConstructor[]): MethodDecorator & ClassDecorator =>
+export const UsePolicies = (...policies: PolicyInput[]): MethodDecorator & ClassDecorator =>
   SetMetadata(TOOL_POLICIES_METADATA, policies);
