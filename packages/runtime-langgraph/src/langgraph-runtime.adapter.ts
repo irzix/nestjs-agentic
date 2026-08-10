@@ -145,9 +145,13 @@ export class LangGraphRuntimeAdapter implements RuntimeAdapter {
       result: ToolExecutionResult;
     }> = [];
 
+    let counter = 0;
     for (const resolvedTool of input.tools) {
-      const mockArgs: Record<string, unknown> = { key: 'stream_val' };
-      yield { type: 'tool_start', toolName: resolvedTool.name, args: mockArgs };
+      counter++;
+      const callId = `call_${Date.now()}_${counter}`;
+      const mockArgs: Record<string, unknown> = { query: input.message };
+
+      yield { type: 'tool_start', toolName: resolvedTool.name, args: mockArgs, id: callId } as any;
 
       const result = await resolvedTool.execute({ args: mockArgs });
 
@@ -157,16 +161,15 @@ export class LangGraphRuntimeAdapter implements RuntimeAdapter {
           toolName: resolvedTool.name,
           approvalId: result.approvalId,
           reason: result.reason,
-        };
+          id: callId,
+        } as any;
       } else {
-        yield { type: 'tool_result', toolName: resolvedTool.name, result };
+        yield { type: 'tool_result', toolName: resolvedTool.name, result, id: callId } as any;
       }
 
       executedToolCalls.push({ toolName: resolvedTool.name, args: mockArgs, result });
     }
 
-    const outputText = `LangGraph streamed ${executedToolCalls.length} governance tools.`;
-    yield { type: 'token', text: outputText };
-    yield { type: 'complete', sessionId: input.sessionId, output: outputText };
+    yield { type: 'complete', sessionId: input.sessionId, output: '' };
   }
 }
