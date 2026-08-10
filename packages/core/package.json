@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/core",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "NestJS-native primitives for building production AI agents.",
   "repository": {
     "type": "git",
