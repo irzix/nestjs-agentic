@@ -1,6 +1,7 @@
 import type { MemoryRecord, SemanticMatch, SemanticStoreProvider } from '@nestjs-agentic/memory';
 import type { DocumentChunk } from '../interfaces/document.interface';
 import type { EmbeddingProvider } from '../interfaces/embedding.interface';
+import type { VectorStoreAdapter } from '../interfaces/vector-store.interface';
 
 export interface HybridVectorStoreOptions {
   embeddingProvider?: EmbeddingProvider;
@@ -12,10 +13,10 @@ export interface HybridVectorStoreOptions {
 
 /**
  * Hybrid Vector Store combining dense vector similarity search with sparse BM25 term matching.
- * Features parallel batch ingestion, upsert semantics, Min-Max score normalization,
- * metadata filtering, and direct @nestjs-agentic/memory integration.
+ * Implements both VectorStoreAdapter and @nestjs-agentic/memory SemanticStoreProvider interfaces.
  */
-export class HybridVectorStore implements SemanticStoreProvider {
+export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdapter {
+  readonly name = 'HybridVectorStore';
   private readonly chunksMap = new Map<string, DocumentChunk>();
   private readonly embeddingProvider?: EmbeddingProvider;
   private readonly vectorWeight: number;
@@ -147,6 +148,17 @@ export class HybridVectorStore implements SemanticStoreProvider {
       .filter((s) => s.combinedScore > 0)
       .slice(0, limit)
       .map((s) => s.chunk);
+  }
+
+  /**
+   * Alias method fulfilling the VectorStoreAdapter interface.
+   */
+  async searchChunks(
+    query: string,
+    limit = 5,
+    filter?: Record<string, unknown>,
+  ): Promise<DocumentChunk[]> {
+    return await this.searchHybrid(query, limit, filter);
   }
 
   // --- SemanticStoreProvider Implementation for @nestjs-agentic/memory ---

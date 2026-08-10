@@ -12,6 +12,7 @@ import {
   RAGPipeline,
   RerankerStrategy,
   SemanticDocumentSplitter,
+  VectorStoreFactory,
 } from '../src';
 
 export async function runRAGTests() {
@@ -222,6 +223,14 @@ export async function runRAGTests() {
     await graph.addEdge({ sourceId: 'usr_cto', targetId: 'pol_sec', relation: 'OWNS' });
     await graph.addEdge({ sourceId: 'usr_cfo', targetId: 'pol_fin', relation: 'MANAGES' });
 
+    // 8d. Multi-Entity Traversal in Single Query
+    await graph.addNode({ id: 'usr_cto', label: 'User', properties: {} });
+    await graph.addNode({ id: 'pol_sec', label: 'Policy', properties: {} });
+    await graph.addNode({ id: 'usr_cfo', label: 'User', properties: {} });
+    await graph.addNode({ id: 'pol_fin', label: 'Policy', properties: {} });
+    await graph.addEdge({ sourceId: 'usr_cto', targetId: 'pol_sec', relation: 'OWNS' });
+    await graph.addEdge({ sourceId: 'usr_cfo', targetId: 'pol_fin', relation: 'MANAGES' });
+
     const multiEntityResult = await graphStrategy.process({ query: 'usr_cto usr_cfo' });
     assert(
       Boolean(multiEntityResult.graphContext) &&
@@ -231,6 +240,34 @@ export async function runRAGTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 8: Edge Cases & Error Resiliency', err.message);
+  }
+
+  // TEST 9: VectorStoreFactory Custom & PgVector Adapter Integration
+  try {
+    const customStore = VectorStoreFactory.createCustom({
+      searchFn: async (query, limit) => [
+        { id: 'c_custom', parentId: 'p1', content: `Custom result for ${query}`, metadata: {} },
+      ],
+    });
+
+    const customKb = new KnowledgeBase({ vectorStore: customStore });
+    const customChunks = await customKb.queryChunks('search Codor DB', 1);
+
+    assert(customChunks.length === 1, 'Test 9a: VectorStoreFactory.createCustom integrated with KnowledgeBase');
+    assert(customChunks[0].content.includes('Codor DB'), 'Test 9b: Custom vector store closure returned results');
+
+    const pgStore = VectorStoreFactory.createPgVector({
+      embeddingProvider: new MockEmbeddingProvider(),
+      queryFn: async (vector, limit) => [
+        { id: 'c_pg', parentId: 'p1', content: 'PgVector Distance Search Result', metadata: {} },
+      ],
+    });
+
+    const pgChunks = await pgStore.searchChunks('sql query', 1);
+    assert(pgChunks.length === 1, 'Test 9c: VectorStoreFactory.createPgVector executed vector search query');
+    assert(pgChunks[0].content.includes('PgVector'), 'Test 9d: PgVector adapter query result returned');
+  } catch (err: any) {
+    assert(false, 'Test 9: VectorStoreFactory Integration', err.message);
   }
 
   console.log(`\n  📊 RAG Test Results: ${passed} passed, ${failed} failed.\n`);

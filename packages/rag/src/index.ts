@@ -2,6 +2,8 @@ export * from './interfaces/document.interface';
 export * from './interfaces/embedding.interface';
 export * from './interfaces/strategy.interface';
 export * from './interfaces/graph.interface';
+export * from './interfaces/vector-store.interface';
+export * from './factories/vector-store.factory';
 export * from './providers/mock-embedding.provider';
 export * from './providers/openai-embedding.adapter';
 export * from './providers/custom-embedding.adapter';

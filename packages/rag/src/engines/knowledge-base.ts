@@ -1,11 +1,18 @@
 import { randomUUID } from 'crypto';
 import type { Document, DocumentChunk, DocumentSplitter } from '../interfaces/document.interface';
+import type { VectorStoreAdapter } from '../interfaces/vector-store.interface';
 import { SemanticDocumentSplitter } from '../splitters/semantic-document.splitter';
 import { HybridVectorStore } from '../stores/hybrid-vector.store';
 
+/**
+ * Options for configuring KnowledgeBase engine.
+ */
 export interface KnowledgeBaseOptions {
+  /** Document splitter implementation. Default: `SemanticDocumentSplitter` */
   splitter?: DocumentSplitter;
-  vectorStore?: HybridVectorStore;
+
+  /** Pluggable vector store adapter (HybridVectorStore or custom database adapter via VectorStoreFactory). */
+  vectorStore?: VectorStoreAdapter;
 }
 
 /**
@@ -14,7 +21,7 @@ export interface KnowledgeBaseOptions {
 export class KnowledgeBase {
   private readonly documents = new Map<string, Document>();
   private readonly splitter: DocumentSplitter;
-  private readonly vectorStore: HybridVectorStore;
+  private readonly vectorStore: VectorStoreAdapter;
 
   constructor(options?: KnowledgeBaseOptions) {
     this.splitter = options?.splitter ?? new SemanticDocumentSplitter();
@@ -42,7 +49,9 @@ export class KnowledgeBase {
     fullDoc.chunks = chunks;
 
     this.documents.set(docId, fullDoc);
-    await this.vectorStore.addChunks(chunks);
+    if (this.vectorStore.addChunks) {
+      await this.vectorStore.addChunks(chunks);
+    }
 
     return fullDoc;
   }
@@ -58,13 +67,13 @@ export class KnowledgeBase {
    * Performs hybrid vector search across ingested documents in the KnowledgeBase.
    */
   async queryChunks(query: string, limit = 5, filter?: Record<string, unknown>): Promise<DocumentChunk[]> {
-    return this.vectorStore.searchHybrid(query, limit, filter);
+    return this.vectorStore.searchChunks(query, limit, filter);
   }
 
   /**
-   * Gets the underlying HybridVectorStore for memory integration.
+   * Gets the underlying VectorStoreAdapter for memory integration.
    */
-  getVectorStore(): HybridVectorStore {
+  getVectorStore(): VectorStoreAdapter {
     return this.vectorStore;
   }
 }
