@@ -104,7 +104,7 @@ export class AgenticModule {
     return {
       module: AgenticModule,
       providers: allProviders,
-      exports: exportedTokens,
+      exports: [...exportedTokens, AgenticModule],
     };
   }
 }
