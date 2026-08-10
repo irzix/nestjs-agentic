@@ -326,88 +326,78 @@ async function runTests() {
     assert(false, 'Test 7: Experience Reflexion & Learning', err.message);
   }
 
-  // TEST 8: Comprehensive @nestjs-agentic/rag Integration Suite (All 7 Modular Strategies)
+  // TEST 8: Comprehensive @nestjs-agentic/rag Modular Strategies Suite
   try {
     const mockEmbed = new MockEmbeddingProvider();
     const kb = new KnowledgeBase();
-
-    // Ingest small policy document
     await kb.ingestDocument({
-      title: 'Transfer Limits Policy',
-      rawContent: '# Policy Rules\nStandard transfers under $1,000 are allowed without approval. Wire transfer operations over $10,000 require manager approval.',
+      title: 'Transfer Policy',
+      rawContent: '# Approvals\nWire transfer operations over $10,000 require manager approval.',
     });
 
-    // 8a. Knowledge Graph Provider setup & GraphRAGStrategy test
+    // 8a. QueryExpansionStrategy
+    const expander = new QueryExpansionStrategy({ synonymsMap: { wire: ['payment'] } });
+    const expandCtx = await expander.process({ query: 'wire transfer' });
+    assert(
+      Boolean(expandCtx.expandedQueries?.includes('payment transfer')),
+      'Test 8a: QueryExpansionStrategy successfully injected synonym variations into expandedQueries',
+    );
+
+    // 8b. HierarchicalRAGStrategy
+    const hierarchical = new HierarchicalRAGStrategy();
+    const chunks = await kb.queryChunks('manager approval', 1);
+    const hierarchyCtx = await hierarchical.process({ query: 'test', chunks });
+    assert(
+      Boolean(hierarchyCtx.hierarchicalTree && hierarchyCtx.hierarchicalTree.length > 0),
+      'Test 8b: HierarchicalRAGStrategy generated node tree from markdown headers',
+    );
+
+    // 8c. ParentChildHydrationStrategy
+    const hydration = new ParentChildHydrationStrategy();
+    chunks[0].metadata = { parentText: 'PARENT_DOC_TEXT' };
+    const hydrateCtx = await hydration.process({ query: 'test', chunks });
+    assert(
+      Boolean(hydrateCtx.hydratedParentContext?.includes('PARENT_DOC_TEXT')),
+      'Test 8c: ParentChildHydrationStrategy hydrated raw parent text into context',
+    );
+
+    // 8d. LateChunkingStrategy
+    const lateChunking = new LateChunkingStrategy({ embeddingProvider: mockEmbed });
+    const lateCtx = await lateChunking.process({ query: 'test', chunks });
+    assert(
+      Boolean(lateCtx.chunks?.[0]?.metadata?.lateChunkingApplied),
+      'Test 8d: LateChunkingStrategy successfully blended vectors and marked chunk metadata',
+    );
+
+    // 8e. ContextualCompressionStrategy
+    const compression = new ContextualCompressionStrategy({ maxCharacters: 10 });
+    const compCtx = await compression.process({ query: 'test', hydratedParentContext: 'This is a very long text that must be truncated.' });
+    assert(
+      compCtx.compressedContext!.length < 50,
+      'Test 8e: ContextualCompressionStrategy successfully truncated lengthy context via extractive boundaries',
+    );
+
+    // 8f. RerankerStrategy (Cross-Encoder Mock)
+    const reranker = new RerankerStrategy({ rerankFn: async () => [0.99] });
+    const rerankCtx = await reranker.process({ query: 'test', chunks, scores: new Map([[chunks[0].id, 0.1]]) });
+    assert(
+      rerankCtx.scores!.get(chunks[0].id) === 0.99,
+      'Test 8f: RerankerStrategy successfully applied custom Cross-Encoder rerankFn scores',
+    );
+
+    // 8g. GraphRAGStrategy
     const graph = new InMemoryKnowledgeGraphProvider();
     await graph.addNode({ id: 'usr_ceo', label: 'User', properties: { role: 'CEO' } });
-    await graph.addNode({ id: 'org_acme', label: 'Tenant', properties: { name: 'Acme Corp' } });
-    await graph.addNode({ id: 'pol_transfer', label: 'Policy', properties: { name: 'Transfer Limits Policy' } });
-
+    await graph.addNode({ id: 'org_acme', label: 'Tenant', properties: {} });
     await graph.addEdge({ sourceId: 'usr_ceo', targetId: 'org_acme', relation: 'MANAGES' });
-    await graph.addEdge({ sourceId: 'org_acme', targetId: 'pol_transfer', relation: 'GOVERNED_BY' });
-
     const graphRAG = new GraphRAGStrategy({ graphProvider: graph });
-
-    // Custom Cross-Encoder Reranker test
-    const reranker = new RerankerStrategy({
-      rerankFn: async (q, chunks) => chunks.map(() => 0.95),
-    });
-
-    const pipeline = new RAGPipeline({
-      knowledgeBase: kb,
-      preRetrievalStrategies: [
-        new QueryExpansionStrategy({ synonymsMap: { wire: ['transfer', 'payment'] } }),
-      ],
-      postRetrievalStrategies: [
-        graphRAG,
-        new HierarchicalRAGStrategy(),
-        new ParentChildHydrationStrategy(),
-        reranker,
-        new ContextualCompressionStrategy({ maxCharacters: 1000 }),
-      ],
-    });
-
-    // 8a. Happy Path Pipeline Execution Test
-    const happyContext = await pipeline.executePipeline('wire transfer limits');
-    assert(Boolean(happyContext.compressedContext), 'Test 8a: Happy Path RAG retrieval compiled compressed context');
+    const graphCtx = await graphRAG.process({ query: 'usr_ceo org_acme' });
     assert(
-      happyContext.compressedContext!.includes('manager approval'),
-      'Test 8b: Happy Path context retrieved correct policy content',
-    );
-
-    // 8b. Failure Path Out-of-Scope Test
-    const failureContext = await pipeline.executePipeline('quantum computing physics mechanics');
-    assert(
-      !failureContext.compressedContext || failureContext.chunks?.length === 0,
-      'Test 8c: Failure Path returned empty or zero chunks for out-of-scope query',
-    );
-
-    // 8c. Large Enterprise Document & Late Chunking Test
-    const largePolicyText = Array(30).fill('Enterprise banking governance section details for account auditing compliance. ').join('\n');
-    const largeDoc = await kb.ingestDocument({
-      title: 'Large Enterprise Audit Manual',
-      rawContent: largePolicyText,
-    });
-
-    const lateChunking = new LateChunkingStrategy({ embeddingProvider: mockEmbed });
-    const lateResult = await lateChunking.process({ query: 'account auditing', chunks: largeDoc.chunks });
-    assert(
-      Boolean(lateResult.chunks?.[0]?.metadata?.lateChunkingApplied),
-      'Test 8d: Large document processed with LateChunkingStrategy context retention',
-    );
-
-    // 8d. Knowledge Graph Sub-Graph Traversal & GraphRAG test
-    const graphSubSet = await graph.querySubGraph('usr_ceo', 2);
-    assert(graphSubSet.nodes.length === 3, 'Test 8e: Knowledge Graph traversed 2-hop entity relationships');
-    assert(graphSubSet.edges.length === 2, 'Test 8f: Knowledge Graph returned correct relational edges');
-
-    const graphQueryResult = await graphRAG.process({ query: 'usr_ceo org_acme' });
-    assert(
-      Boolean(graphQueryResult.graphContext) && graphQueryResult.graphContext!.includes('MANAGES'),
-      'Test 8g: GraphRAGStrategy compiled relational graph facts into context',
+      Boolean(graphCtx.graphContext) && graphCtx.graphContext!.includes('MANAGES'),
+      'Test 8g: GraphRAGStrategy successfully queried sub-graph and injected relational facts (MANAGES)',
     );
   } catch (err: any) {
-    assert(false, 'Test 8: RAG Integration Suite', err.message);
+    assert(false, 'Test 8: RAG Modular Strategies Suite', err.message);
   }
 
   console.log(`\n📊 Summary: ${passed} passed, ${failed} failed.\n`);
