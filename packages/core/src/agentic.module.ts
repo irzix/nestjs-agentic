@@ -76,10 +76,17 @@ export class AgenticModule {
    * accumulated via multi-tokens (AGENT_PROVIDERS, POLICY_INSTANCES).
    */
   static forFeature(options: ForFeatureOptions): DynamicModule {
-    const agentProviders: Provider[] = (options.agents ?? []).flatMap((AgentClass) => [
-      { provide: AgentClass, useClass: AgentClass },
-      { provide: AGENT_PROVIDERS, useExisting: AgentClass, multi: true },
-    ]);
+    const agents = options.agents ?? [];
+    const agentClasses: Provider[] = agents.map((AgentClass) => ({
+      provide: AgentClass,
+      useClass: AgentClass,
+    }));
+
+    const agentMultiProvider: Provider[] = agents.length > 0 ? [{
+      provide: AGENT_PROVIDERS,
+      useFactory: (...instances: any[]) => instances,
+      inject: agents,
+    }] : [];
 
     const toolSetProviders: Provider[] = (options.toolSets ?? []).map((ToolSetClass) => ({
       provide: ToolSetClass,
@@ -91,7 +98,7 @@ export class AgenticModule {
       { provide: POLICY_INSTANCES, useExisting: PolicyClass, multi: true },
     ]);
 
-    const allProviders = [...agentProviders, ...toolSetProviders, ...policyProviders];
+    const allProviders = [...agentClasses, ...agentMultiProvider, ...toolSetProviders, ...policyProviders];
 
     const exportedTokens = [
       ...(options.agents ?? []),

@@ -52,7 +52,7 @@ export class AgentRunner {
       }
     }
     const map = new Map<string, AgentProvider>();
-    const list = Array.isArray(providers) ? providers : [providers];
+    const list = (Array.isArray(providers) ? providers : [providers]).flat(Infinity);
     for (const agent of list) {
       if (!agent) continue;
       const target = typeof agent === 'function' ? agent : agent.constructor;
