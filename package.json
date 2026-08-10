@@ -19,6 +19,7 @@
     "packages/core",
     "packages/memory",
     "packages/experience",
+    "packages/rag",
     "packages/runtime-adk",
     "packages/runtime-langgraph",
     "packages/meta",

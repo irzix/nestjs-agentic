@@ -25,6 +25,8 @@
       "@nestjs-agentic/memory/*": ["./packages/memory/dist/*"],
       "@nestjs-agentic/experience": ["./packages/experience/dist/index.d.ts"],
       "@nestjs-agentic/experience/*": ["./packages/experience/dist/*"],
+      "@nestjs-agentic/rag": ["./packages/rag/dist/index.d.ts"],
+      "@nestjs-agentic/rag/*": ["./packages/rag/dist/*"],
       "nestjs-agentic": ["./packages/core/dist/index.d.ts"],
       "nestjs-agentic/*": ["./packages/core/dist/*"]
     }

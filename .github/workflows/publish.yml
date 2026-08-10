@@ -70,6 +70,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Publish @nestjs-agentic/rag
+        run: |
+          cd packages/rag
+          npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish nestjs-agentic (Meta Package)
         run: |
           cd packages/meta
