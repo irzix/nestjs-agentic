@@ -21,6 +21,10 @@
       "@nestjs-agentic/core/*": ["./packages/core/dist/*"],
       "@nestjs-agentic/adk": ["./packages/runtime-adk/dist/index.d.ts"],
       "@nestjs-agentic/adk/*": ["./packages/runtime-adk/dist/*"],
+      "@nestjs-agentic/memory": ["./packages/memory/dist/index.d.ts"],
+      "@nestjs-agentic/memory/*": ["./packages/memory/dist/*"],
+      "@nestjs-agentic/experience": ["./packages/experience/dist/index.d.ts"],
+      "@nestjs-agentic/experience/*": ["./packages/experience/dist/*"],
       "nestjs-agentic": ["./packages/core/dist/index.d.ts"],
       "nestjs-agentic/*": ["./packages/core/dist/*"]
     }
