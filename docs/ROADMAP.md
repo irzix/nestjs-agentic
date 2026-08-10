@@ -99,14 +99,33 @@ Where nestjs-agentic becomes irreplaceable for enterprise teams.
 
 ---
 
-### 📡 Phase 0.3 — Multi-Agent Orchestration, Reflection & Observability
+### ✅ Phase 0.3 — Production-Grade RAG Engine, Knowledge Graph & Cognitive Experience
+
+> **Status: Released (v0.3.0)**
+
+- [x] **`@nestjs-agentic/rag` Package** — Enterprise, domain-agnostic RAG engine with 7 modular strategies:
+  - `QueryExpansionStrategy` — Custom dictionary synonym expansion + LLM sub-queries.
+  - `HierarchicalRAGStrategy` — Markdown header section node tree rollup & sibling aggregation.
+  - `ParentChildHydrationStrategy` — Parent context hydration without raw text duplication.
+  - `LateChunkingStrategy` — Blending global document vector context with chunk vectors ($\alpha = 0.7$).
+  - `ContextualCompressionStrategy` — Zero-latency extractive sentence selection & boundary truncation.
+  - `GraphRAGStrategy` — Sub-graph multi-hop entity traversal, fuzzy `searchNodes` matching, and Graph-Guided Chunk Score Boosting.
+  - `RerankerStrategy` — Term frequency scoring + custom Cross-Encoder model (`rerankFn`) support.
+- [x] **`HybridVectorStore`** — Cosine similarity, Min-Max score normalization, multi-tenant metadata filtering, and `@nestjs-agentic/memory` `SemanticStoreProvider` compatibility.
+- [x] **`InMemoryKnowledgeGraphProvider`** — Zero-dependency multi-hop entity relationship provider.
+- [x] **`@nestjs-agentic/experience`** — Trajectory reflection and experience learning layer (`ExperienceLearner`, `ReflectionEngine`) for self-correcting prompt guidance.
+
+---
+
+### 📡 Phase 0.4 — Sub-Agent Orchestration, Observability & Transports
 
 > **Status: Active Development**
 
-- [ ] **`@nestjs-agentic/experience`** — Experience learning & trajectory reflection layer for agent self-improvement and memory persistence.
 - [ ] **Sub-Agent Orchestration & Delegation** — parent-child memory namespacing and sub-agent task delegation.
 - [ ] **Immutable Audit Trail (`AuditEventStore`)** — persistent, append-only log of all policy decisions, tool executions, approvals, and rejections.
 - [ ] **AgentObserver Interface** — pluggable observer hooks (`OpenTelemetry`, `Langfuse`).
+- [ ] **`@nestjs-agentic/vercel`** — Vercel AI SDK runtime adapter with streaming support.
+- [ ] **MCP Transport** — Model Context Protocol `ToolProvider` for exposing tools to external MCP-compatible servers and clients.
 
 ---
 
