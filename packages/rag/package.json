@@ -1,0 +1,50 @@
+{
+  "name": "@nestjs-agentic/rag",
+  "version": "0.2.5",
+  "description": "Production-grade, modular RAG engine for nestjs-agentic with advanced built-in strategies (Query Expansion, Hierarchical RAG, Late Chunking, Parent-Child Hydration, Contextual Compression, and Knowledge Graph RAG).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/irzix/nestjs-agentic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/irzix/nestjs-agentic/issues"
+  },
+  "homepage": "https://github.com/irzix/nestjs-agentic#readme",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p test/tsconfig.json && node dist/test/test/rag.spec.js"
+  },
+  "dependencies": {
+    "@nestjs-agentic/memory": "*"
+  },
+  "peerDependencies": {
+    "@nestjs-agentic/core": "*",
+    "@nestjs-agentic/memory": "*",
+    "nestjs-agentic": "*",
+    "@nestjs/common": "^10.0.0 || ^11.0.0",
+    "@nestjs/core": "^10.0.0 || ^11.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "nestjs",
+    "nestjs-agentic",
+    "rag",
+    "retrieval",
+    "query-expansion",
+    "hierarchical-rag",
+    "late-chunking",
+    "parent-child",
+    "knowledge-graph",
+    "ai",
+    "agent"
+  ],
+  "license": "MIT"
+}
