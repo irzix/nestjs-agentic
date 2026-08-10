@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-10
+
+### Added
+
+- **Production-Grade RAG Package (`@nestjs-agentic/rag`)**:
+  - `Document` & `DocumentChunk` Core Data Models.
+  - `EmbeddingAdapters`: `OpenAIEmbeddingAdapter` (OpenAI & Ollama/vLLM local servers), `CustomEmbeddingAdapter` (REST endpoints), and `MockEmbeddingProvider`.
+  - `DocumentSplitters`: `SemanticDocumentSplitter` (Markdown section parsing) and `ParentChildSplitter` (sliding window overlap & parent text metadata).
+  - **7 Modular RAG Strategies**:
+    - `QueryExpansionStrategy`: Custom dictionary synonym expansion + LLM sub-queries.
+    - `HierarchicalRAGStrategy`: Markdown section node tree rollup and sibling aggregation.
+    - `ParentChildHydrationStrategy`: Parent context hydration without raw text duplication.
+    - `LateChunkingStrategy`: Blending global document vector context with chunk vectors.
+    - `ContextualCompressionStrategy`: Zero-latency extractive sentence selection & boundary truncation.
+    - `GraphRAGStrategy`: Sub-graph multi-hop entity traversal, fuzzy `searchNodes` matching, and Graph-Guided Chunk Score Boosting.
+    - `RerankerStrategy`: Term frequency scoring + custom Cross-Encoder model (`rerankFn`) support.
+  - **Graph & Vector Stores**:
+    - `HybridVectorStore`: Parallel batch embedding, Min-Max score scaling, multi-tenant metadata filtering, `@nestjs-agentic/memory` compatibility.
+    - `InMemoryKnowledgeGraphProvider`: Zero-dependency multi-hop entity relationship provider.
+  - **RAG Engines**:
+    - `KnowledgeBase`: Document ingestion, indexing, and filtered chunk querying.
+    - `RAGPipeline`: Partitioned pre-retrieval & post-retrieval strategy execution.
+- **Comprehensive Unit & Integration Test Suites**:
+  - Added 22 unit tests in `@nestjs-agentic/rag`.
+  - Added Test 8 with explicit behavioral assertions for all 7 RAG strategies in `example-financial-governance`.
+
+---
+
 ## [0.2.5] - 2026-08-10
 
 ### Added
