@@ -12,6 +12,7 @@
     "nestjs-agentic": "*",
     "@nestjs-agentic/adk": "*",
     "@nestjs-agentic/memory": "*",
+    "@nestjs-agentic/experience": "*",
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",

@@ -8,6 +8,7 @@ import {
   SemanticMemory,
   ShortTermMemory,
 } from '@nestjs-agentic/memory';
+import { ExperienceLearner } from '@nestjs-agentic/experience';
 import { AppModule } from './app.module';
 
 async function runTests() {
@@ -253,6 +254,62 @@ async function runTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 6: Multi-tier Memory Store Integration', err.message);
+  }
+
+  // TEST 7: Real Experience Reflexion & Learning Loop
+  try {
+    mockAdapter.reset();
+    mockAdapter
+      .whenAsked('Transfer $10000 from ACC-1 to ACC-2')
+      .thenCallTool('transferFunds', { fromAccount: 'ACC-1', toAccount: 'ACC-2', amount: 10000 });
+
+    const runResult = await runner.run('banking-agent', {
+      sessionId: 'sess_exp_test',
+      message: 'Transfer $10000 from ACC-1 to ACC-2',
+      context: {
+        userId: 'usr_unauthorized',
+        tenantId: 'acme_corp',
+        roles: ['guest'],
+      },
+    });
+
+    const memory = new EpisodicMemory();
+    const learner = new ExperienceLearner({ memoryStore: memory });
+
+    // Step 1: Agent trajectory failed due to role policy denial
+    const failedToolResult = runResult.toolCalls[0]?.result as any;
+    const errReason = failedToolResult?.reason ?? 'Role failure: finance_officer required';
+
+    // Step 2: Experience Learner critiques trajectory & records learned lesson
+    const reflection = await learner.critiqueTrajectory({
+      sessionId: 'sess_exp_test',
+      agentName: 'banking-agent',
+      goal: 'Financial Transfer',
+      success: false,
+      steps: [
+        {
+          stepIndex: 1,
+          toolName: 'transferFunds',
+          error: errReason,
+        },
+      ],
+    });
+
+    assert(reflection.success === false, 'Test 7a: Experience engine critiqued failed trajectory');
+    assert(
+      reflection.lessonsLearned.some((l: string) => l.includes('finance_officer')),
+      'Test 7b: Experience engine extracted role authorization lesson',
+    );
+
+    // Step 3: Next execution retrieves historical prompt guidance
+    const guidancePrompt = await learner.buildGuidancePrompt('Financial Transfer', 'sess_exp_test');
+
+    assert(
+      guidancePrompt.includes('finance_officer'),
+      'Test 7c: Prompt guidance generated for future self-correcting agent runs',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 7: Experience Reflexion & Learning', err.message);
   }
 
   console.log(`\n📊 Summary: ${passed} passed, ${failed} failed.\n`);
