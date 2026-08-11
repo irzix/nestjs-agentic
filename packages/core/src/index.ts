@@ -1,4 +1,5 @@
 export * from './constants';
+export * from './errors';
 export * from './interfaces';
 export * from './decorators';
 export * from './discovery';
@@ -7,4 +8,5 @@ export * from './services';
 export * from './stores';
 export * from './adapters';
 export * from './policies';
+export * from './utils';
 export * from './agentic.module';

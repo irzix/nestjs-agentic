@@ -2,22 +2,35 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import { AGENT_METADATA, AGENT_PROVIDERS, AGENTIC_OPTIONS, RUNTIME_ADAPTER } from '../constants';
+import { RuntimeNotConfiguredError } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
 import type {
+  AgentConfig,
   AgentContext,
   AgentProvider,
   AgentResult,
   AgentStreamEvent,
   ModelConfig,
+  ResolvedTool,
   RuntimeAdapter,
 } from '../interfaces';
+import type { ExecutionLimits } from '../interfaces/execution.interface';
+import type { ModelAdapter } from '../interfaces/model.interface';
 
 import type { StateStore } from '../interfaces/state-store.interface';
+import { AgentExecutor } from './agent-executor.service';
 
 export interface AgenticModuleOptions {
   defaultModel: ModelConfig;
   /** Custom unified StateStore (e.g. RedisStateStore, InMemoryStateStore) */
   stateStore?: StateStore;
+  /**
+   * Model adapter used by the built-in agent runtime.
+   * Equivalent to providing the MODEL_ADAPTER token directly.
+   */
+  modelAdapter?: ModelAdapter;
+  /** Default execution budgets applied to every agent run. */
+  limits?: ExecutionLimits;
 }
 
 export interface RunInput {
@@ -30,16 +43,30 @@ export interface RunInput {
     permissions?: string[];
     data?: Record<string, unknown>;
   };
+  /** Overrides agent and module execution budgets for this run. */
+  limits?: ExecutionLimits;
+  /** Cancels the run when aborted. Honored by the built-in runtime. */
+  signal?: AbortSignal;
+}
+
+/** Everything resolved from registration before a turn is executed. */
+interface PreparedRun {
+  config: AgentConfig;
+  model: ModelConfig;
+  context: AgentContext;
+  tools: ResolvedTool[];
+  limits?: ExecutionLimits;
 }
 
 @Injectable()
 export class AgentRunner {
   constructor(
     @Optional() @Inject(AGENT_PROVIDERS) private readonly agentProviders: AgentProvider[],
-    @Inject(RUNTIME_ADAPTER) private readonly runtimeAdapter: RuntimeAdapter,
+    @Optional() @Inject(RUNTIME_ADAPTER) private readonly runtimeAdapter: RuntimeAdapter | undefined,
     @Inject(AGENTIC_OPTIONS) private readonly options: AgenticModuleOptions,
     private readonly localToolProvider: LocalToolProvider,
     private readonly moduleRef: ModuleRef,
+    @Optional() private readonly executor?: AgentExecutor,
   ) {}
 
   private getAgentMap(): Map<string, AgentProvider> {
@@ -66,9 +93,12 @@ export class AgentRunner {
     return map;
   }
 
-  async run(agentName: string, input: RunInput): Promise<AgentResult> {
-    const agentMap = this.getAgentMap();
-    const agent = agentMap.get(agentName);
+  /**
+   * Resolves the registered agent, builds its execution context, and turns its
+   * declared tool sets into policy-guarded closures.
+   */
+  private prepare(agentName: string, input: RunInput): PreparedRun {
+    const agent = this.getAgentMap().get(agentName);
 
     if (!agent) {
       throw new Error(
@@ -78,9 +108,7 @@ export class AgentRunner {
     }
 
     const config = agent.define();
-    const model: ModelConfig = config.model ?? this.options.defaultModel;
-
-    const agentContext: AgentContext = {
+    const context: AgentContext = {
       sessionId: input.sessionId,
       traceId: randomUUID(),
       security: {
@@ -92,59 +120,87 @@ export class AgentRunner {
       data: input.context?.data,
     };
 
-    const tools = this.localToolProvider.buildTools(config.tools, agentContext);
+    return {
+      config,
+      model: config.model ?? this.options.defaultModel,
+      context,
+      tools: this.localToolProvider.buildTools(config.tools, context),
+      limits: input.limits ?? config.limits ?? this.options.limits,
+    };
+  }
 
-    return this.runtimeAdapter.execute({
+  /**
+   * The built-in runtime is used whenever a ModelAdapter is registered.
+   * Applications without one keep delegating whole turns to a RuntimeAdapter.
+   */
+  private useBuiltInRuntime(): boolean {
+    return Boolean(this.executor?.isAvailable());
+  }
+
+  private requireRuntimeAdapter(): RuntimeAdapter {
+    if (!this.runtimeAdapter) {
+      throw new RuntimeNotConfiguredError();
+    }
+    return this.runtimeAdapter;
+  }
+
+  async run(agentName: string, input: RunInput): Promise<AgentResult> {
+    const prepared = this.prepare(agentName, input);
+
+    if (this.useBuiltInRuntime()) {
+      return this.executor!.execute({
+        sessionId: input.sessionId,
+        message: input.message,
+        model: prepared.model,
+        tools: prepared.tools,
+        instructions: prepared.config.instructions,
+        traceId: prepared.context.traceId,
+        limits: prepared.limits,
+        signal: input.signal,
+      });
+    }
+
+    return this.requireRuntimeAdapter().execute({
       sessionId: input.sessionId,
       message: input.message,
-      tools,
-      model,
-      instructions: config.instructions,
+      tools: prepared.tools,
+      model: prepared.model,
+      instructions: prepared.config.instructions,
     });
   }
 
   async *runStream(agentName: string, input: RunInput): AsyncIterable<AgentStreamEvent> {
-    const agentMap = this.getAgentMap();
-    const agent = agentMap.get(agentName);
+    const prepared = this.prepare(agentName, input);
 
-    if (!agent) {
-      throw new Error(
-        `Agent "${agentName}" is not registered. ` +
-          `Add it to AgenticModule.forFeature({ agents: [...] }).`,
-      );
-    }
-
-    const config = agent.define();
-    const model: ModelConfig = config.model ?? this.options.defaultModel;
-
-    const agentContext: AgentContext = {
-      sessionId: input.sessionId,
-      traceId: randomUUID(),
-      security: {
-        userId: input.context?.userId,
-        tenantId: input.context?.tenantId,
-        roles: input.context?.roles,
-        permissions: input.context?.permissions,
-      },
-      data: input.context?.data,
-    };
-
-    const tools = this.localToolProvider.buildTools(config.tools, agentContext);
-
-    const adapterInput = {
-      sessionId: input.sessionId,
-      message: input.message,
-      tools,
-      model,
-      instructions: config.instructions,
-    };
-
-    if (this.runtimeAdapter.stream) {
-      yield* this.runtimeAdapter.stream(adapterInput);
+    if (this.useBuiltInRuntime()) {
+      yield* this.executor!.stream({
+        sessionId: input.sessionId,
+        message: input.message,
+        model: prepared.model,
+        tools: prepared.tools,
+        instructions: prepared.config.instructions,
+        traceId: prepared.context.traceId,
+        limits: prepared.limits,
+        signal: input.signal,
+      });
       return;
     }
 
-    const res = await this.runtimeAdapter.execute(adapterInput);
+    const adapter = this.requireRuntimeAdapter();
+    const adapterInput = {
+      sessionId: input.sessionId,
+      message: input.message,
+      tools: prepared.tools,
+      model: prepared.model,
+      instructions: prepared.config.instructions,
+    };
+
+    if (adapter.stream) {
+      yield* adapter.stream(adapterInput);
+      return;
+    }
+
+    const res = await adapter.execute(adapterInput);
     for (const toolCall of res.toolCalls) {
       yield { type: 'tool_start', toolName: toolCall.toolName, args: toolCall.args };
       yield { type: 'tool_result', toolName: toolCall.toolName, result: toolCall.result as any };
