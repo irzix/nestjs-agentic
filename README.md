@@ -188,15 +188,24 @@ export class SupportController {
 
 - **`RateLimitPolicy`**: Enforces sliding-window call frequency limits per tenant or user.
 - **`CostLimitPolicy`**: Evaluates financial amounts against configurable auto-allow and approval thresholds.
+- **`LoggingPolicy`**: Provides observability and audit trail for tool executions with configurable log levels and sensitive field masking.
 
 ```typescript
-import { CostLimitPolicy, RateLimitPolicy } from 'nestjs-agentic';
+import { CostLimitPolicy, LoggingPolicy, RateLimitPolicy } from 'nestjs-agentic';
 
 // Auto-allows <= $500, requires approval up to $5,000, denies above $5,000
 const costGuard = new CostLimitPolicy({
   paramName: 'amount',
   autoAllowLimit: 500,
   approvalLimit: 5000,
+});
+
+// Log all tool executions with sensitive field masking
+const loggingPolicy = new LoggingPolicy({
+  logLevel: 'debug',
+  sensitiveFields: ['password', 'apiKey'],
+  includeArgs: true,
+  includeContext: true,
 });
 ```
 
