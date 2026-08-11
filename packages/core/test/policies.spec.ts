@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { CostLimitPolicy, RateLimitPolicy } from '../src';
+import { CostLimitPolicy, LoggingPolicy, RateLimitPolicy } from '../src';
 import type { AgentContext } from '../src';
 
 export async function runPolicyTests() {
@@ -64,6 +64,109 @@ export async function runPolicyTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 2: RateLimitPolicy Evaluation', err.message);
+  }
+
+  // TEST 3: LoggingPolicy Basic Functionality
+  try {
+    let loggedMessage = '';
+    let loggedData: Record<string, unknown> = {};
+    const customLogger = (message: string, data: Record<string, unknown>) => {
+      loggedMessage = message;
+      loggedData = data;
+    };
+
+    const loggingPolicy = new LoggingPolicy({
+      logLevel: 'debug',
+      includeArgs: true,
+      includeContext: true,
+      logger: customLogger,
+    });
+
+    const result = await loggingPolicy.evaluate(dummyCtx, 'testTool', { arg1: 'value1', arg2: 42 });
+    assert(result.decision === 'allow', 'Test 3a: LoggingPolicy always returns allow');
+    assert(loggedMessage === '[Tool Execution] testTool', 'Test 3b: Correct log message format');
+    assert(loggedData.toolName === 'testTool', 'Test 3c: Tool name logged correctly');
+    assert(loggedData.sessionId === 'sess_policy', 'Test 3d: Session ID logged correctly');
+    assert(loggedData.traceId === 'trace_policy', 'Test 3e: Trace ID logged correctly');
+    assert(loggedData.userId === 'usr_buyer', 'Test 3f: User ID logged when includeContext=true');
+    assert(loggedData.tenantId === 'acme', 'Test 3g: Tenant ID logged when includeContext=true');
+  } catch (err: any) {
+    assert(false, 'Test 3: LoggingPolicy Basic Functionality', err.message);
+  }
+
+  // TEST 4: LoggingPolicy Sensitive Field Masking
+  try {
+    let loggedData: Record<string, unknown> = {};
+    const loggingPolicy = new LoggingPolicy({
+      sensitiveFields: ['password', 'apiKey'],
+      logger: (_message: string, data: Record<string, unknown>) => {
+        loggedData = data;
+      },
+    });
+
+    const args = {
+      username: 'john',
+      password: 'secret123',
+      apiKey: 'key_abc123',
+      amount: 100,
+    };
+
+    await loggingPolicy.evaluate(dummyCtx, 'authenticate', args);
+    const sanitizedArgs = loggedData.args as Record<string, unknown>;
+    assert(sanitizedArgs.username === 'john', 'Test 4a: Non-sensitive field logged as-is');
+    assert(sanitizedArgs.password === '***REDACTED***', 'Test 4b: Password field redacted');
+    assert(sanitizedArgs.apiKey === '***REDACTED***', 'Test 4c: API key field redacted');
+    assert(sanitizedArgs.amount === 100, 'Test 4d: Other fields remain intact');
+  } catch (err: any) {
+    assert(false, 'Test 4: LoggingPolicy Sensitive Field Masking', err.message);
+  }
+
+  // TEST 5: LoggingPolicy with includeArgs and includeContext disabled
+  try {
+    let loggedData: Record<string, unknown> = {};
+    const loggingPolicy = new LoggingPolicy({
+      includeArgs: false,
+      includeContext: false,
+      logger: (_message: string, data: Record<string, unknown>) => {
+        loggedData = data;
+      },
+    });
+
+    await loggingPolicy.evaluate(dummyCtx, 'minimalLog', { arg1: 'value' });
+    assert(loggedData.args === undefined, 'Test 5a: Args not logged when includeArgs=false');
+    assert(loggedData.userId === undefined, 'Test 5b: User ID not logged when includeContext=false');
+    assert(loggedData.tenantId === undefined, 'Test 5c: Tenant ID not logged when includeContext=false');
+    assert(loggedData.toolName === 'minimalLog', 'Test 5d: Tool name still logged');
+    assert(loggedData.sessionId === 'sess_policy', 'Test 5e: Session ID still logged');
+  } catch (err: any) {
+    assert(false, 'Test 5: LoggingPolicy with includeArgs and includeContext disabled', err.message);
+  }
+
+  // TEST 6: LoggingPolicy nested object sanitization
+  try {
+    let loggedData: Record<string, unknown> = {};
+    const loggingPolicy = new LoggingPolicy({
+      sensitiveFields: ['secret'],
+      logger: (_message: string, data: Record<string, unknown>) => {
+        loggedData = data;
+      },
+    });
+
+    const args = {
+      user: {
+        name: 'Alice',
+        secret: 'hidden',
+      },
+      publicData: 'visible',
+    };
+
+    await loggingPolicy.evaluate(dummyCtx, 'nestedTest', args);
+    const sanitizedArgs = loggedData.args as Record<string, any>;
+    assert(sanitizedArgs.publicData === 'visible', 'Test 6a: Top-level public field intact');
+    assert(sanitizedArgs.user.name === 'Alice', 'Test 6b: Nested non-sensitive field intact');
+    assert(sanitizedArgs.user.secret === '***REDACTED***', 'Test 6c: Nested sensitive field redacted');
+  } catch (err: any) {
+    assert(false, 'Test 6: LoggingPolicy nested object sanitization', err.message);
   }
 
   console.log(`\n  📊 Policies Test Results: ${passed} passed, ${failed} failed.\n`);

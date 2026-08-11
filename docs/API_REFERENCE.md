@@ -33,6 +33,10 @@ Complete reference for all public exports from `nestjs-agentic`.
   - [AgentRunner](#agentrunner)
   - [ApprovalService](#approvalservice)
   - [AgenticModule](#agenticmodule)
+- [Built-in Policies](#built-in-policies)
+  - [RateLimitPolicy](#ratelimitpolicy)
+  - [CostLimitPolicy](#costlimitpolicy)
+  - [LoggingPolicy](#loggingpolicy)
 - [Testing](#testing)
   - [MockRuntimeAdapter](#mockruntimeadapter)
 - [Tokens](#tokens)
@@ -286,6 +290,93 @@ export class ApprovalService {
    * Rejects and removes a pending approval request.
    */
   async reject(approvalId: string, reason?: string): Promise<void>;
+}
+```
+
+---
+
+## Built-in Policies
+
+### RateLimitPolicy
+
+Built-in sliding-window rate limit policy enforcing call frequency bounds per tenant, user, and tool.
+
+```typescript
+import { RateLimitPolicy } from 'nestjs-agentic';
+
+@UsePolicies(new RateLimitPolicy({ maxCallsPerMinute: 5 }))
+```
+
+**Options:**
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `maxCallsPerMinute` | `number` | `10` | Maximum allowed tool executions per sliding-window minute |
+
+---
+
+### CostLimitPolicy
+
+Built-in policy evaluating numeric risk/cost arguments across a 3-state boundary (`allow` → `require_approval` → `deny`).
+
+```typescript
+import { CostLimitPolicy } from 'nestjs-agentic';
+
+@UsePolicies(new CostLimitPolicy({ 
+  paramName: 'amount', 
+  autoAllowLimit: 500, 
+  approvalLimit: 10000 
+}))
+```
+
+**Options:**
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `paramName` | `string` | `'amount'` | Name of the numeric argument to evaluate |
+| `autoAllowLimit` | `number` | `1000` | Maximum amount allowed automatically without approval |
+| `approvalLimit` | `number` | `10000` | Maximum amount requiring human approval before rejection |
+
+---
+
+### LoggingPolicy
+
+Built-in logging policy for observability and audit trail of tool executions. This policy always returns `allow` and logs tool call details for monitoring purposes.
+
+```typescript
+import { LoggingPolicy } from 'nestjs-agentic';
+
+@UsePolicies(new LoggingPolicy({ 
+  logLevel: 'debug', 
+  sensitiveFields: ['password', 'apiKey'],
+  includeArgs: true,
+  includeContext: true
+}))
+```
+
+**Options:**
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `logLevel` | `'log' \| 'debug' \| 'verbose' \| 'warn'` | `'log'` | Log level to use for tool execution logs |
+| `includeArgs` | `boolean` | `true` | Whether to include tool arguments in the log output |
+| `includeContext` | `boolean` | `true` | Whether to include context metadata (userId, tenantId) in logs |
+| `sensitiveFields` | `string[]` | `[]` | List of argument field names to mask in logs (e.g., 'password', 'apiKey') |
+| `logger` | `(message: string, data: Record<string, unknown>) => void` | `console[logLevel]` | Custom logger function |
+
+**Log Output Format:**
+
+```typescript
+{
+  type: 'tool_execution',
+  toolName: string,
+  sessionId: string,
+  traceId: string,
+  timestamp: string,
+  userId?: string,        // if includeContext=true
+  tenantId?: string,      // if includeContext=true
+  roles?: string[],       // if includeContext=true
+  args?: Record<string, unknown>  // if includeArgs=true
 }
 ```
 
