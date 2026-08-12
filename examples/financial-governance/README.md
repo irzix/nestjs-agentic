@@ -1,101 +1,50 @@
-# Enterprise Financial Governance Demo
+# Financial Governance Example
 
-> Full modular NestJS example of **nestjs-agentic** featuring multi-policy evaluation, multi-tenant security isolation, role-based access control, and Human-in-the-Loop (HITL) approval mechanics.
+A modular NestJS example for evaluating policy chaining, application-owned tenant and role context, deterministic mock-runtime tests, and the current process-local approval API.
 
----
+This example demonstrates governance primitives; it is not proof of production tenant isolation, durable audit, distributed rate limiting, or restart-safe approval. Applications and persistence layers must enforce those guarantees.
 
-## Architecture Overview
+## Architecture
 
-```
+```text
 src/
-├── app.module.ts              # Root NestJS module configuring AgenticModule.forRoot()
-├── main.ts                    # NestJS bootstrap entrypoint
-├── accounts/                  # Domain Feature Module (Banking Ledger)
+├── app.module.ts
+├── main.ts
+├── accounts/
 │   ├── account.service.ts
 │   └── accounts.module.ts
-├── governance/                # Governance Feature Module (Security & Policies)
-│   ├── policies/
-│   │   ├── tenant-isolation.policy.ts
-│   │   └── tiered-transfer.policy.ts
+├── governance/
+│   ├── policies/tenant-isolation.policy.ts
+│   ├── policies/tiered-transfer.policy.ts
 │   └── governance.module.ts
-└── banking/                   # Agent Feature Module (Agent, Tools & HTTP Controller)
+└── banking/
     ├── banking.agent.ts
     ├── banking.controller.ts
     ├── banking.tools.ts
     └── banking.module.ts
 ```
 
----
+## Features Demonstrated
 
-## Key Features Demonstrated
+1. NestJS modules separate domain services, policies, tools, and agents.
+2. `@UsePolicies(TenantIsolationPolicy, TieredTransferPolicy)` evaluates policies before a framework-managed tool invocation.
+3. Application-provided `AgentContext` carries tenant, user, and role data; the model does not author this security context.
+4. Transfers above the configured threshold can return `pending_approval`.
+5. Tests override `RUNTIME_ADAPTER` with a configured `MockRuntimeAdapter`, so tool names and arguments are deterministic and no model API is called.
 
-1. **Modular NestJS Design**: Clean separation of Domain Modules (`AccountsModule`), Governance Modules (`GovernanceModule`), and Agent Feature Modules (`BankingModule`).
-2. **Multi-Policy Chaining**: `@UsePolicies(TenantIsolationPolicy, TieredTransferPolicy)` evaluated sequentially before any tool call executes.
-3. **Role & Tenant Governance**:
-   - `TenantIsolationPolicy`: Ensures requests contain valid tenant context.
-   - `TieredTransferPolicy`: Checks user roles (`finance_officer`) and enforces transfer caps.
-4. **Human-in-the-Loop (HITL) Workflow**: Transfers exceeding $10,000 trigger a `pending_approval` state, requiring a supervisor to call `POST /finance/approve/:approvalId`.
+Approval executes only the stored pending invocation. The closure is process-local, cannot survive restart, and does not resume the original model turn.
 
----
-
-## Running the Example
-
-### 1. Environment Setup
-
-Ensure your Gemini API key is configured:
+## Build and Test
 
 ```bash
-export GEMINI_API_KEY="your-gemini-api-key"
+npm run build
+npm test
 ```
 
-### 2. Build & Start
+## Run the HTTP Example
 
 ```bash
-cd examples/financial-governance
-npm run build
 npm start
 ```
 
----
-
-## API Endpoints & Testing
-
-### 1. Low-Risk Transfer (Auto-Allowed)
-
-```bash
-curl -X POST http://localhost:3001/finance/transfer \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sessionId": "s1",
-    "message": "Transfer $500 from ACC-100 to ACC-200",
-    "userId": "usr_safe",
-    "tenantId": "acme_corp",
-    "roles": ["finance_officer"]
-  }'
-```
-
-### 2. High-Value Transfer (Triggers HITL Approval)
-
-```bash
-curl -X POST http://localhost:3001/finance/transfer \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sessionId": "s2",
-    "message": "Transfer $25000 from ACC-100 to ACC-300",
-    "userId": "usr_corp",
-    "tenantId": "acme_corp",
-    "roles": ["finance_officer"]
-  }'
-```
-
-### 3. Approve Pending Transfer
-
-```bash
-curl -X POST http://localhost:3001/finance/approve/app_1723456789_abcd
-```
-
-### 4. Reject Pending Transfer
-
-```bash
-curl -X POST http://localhost:3001/finance/reject/app_1723456789_abcd
-```
+The HTTP application registers the experimental ADK-named runtime prototype. It does not make a provider-native model call; on every run it invokes resolved tools in registration order with empty arguments and stops early only if a tool returns `pending_approval`. Do not use the HTTP flow for real financial side effects.
