@@ -1,17 +1,16 @@
-import { Module } from '@nestjs/common';
-import { AgenticModule } from 'nestjs-agentic';
-import { RefundLimitPolicy } from './policies/refund-limit.policy';
+import { Global, Module } from '@nestjs/common';
 import { OrderService } from './order.service';
-import { OrderTools } from './tools/order.tools';
 
+/**
+ * Plain domain module.
+ *
+ * It is marked `@Global()` because `AgenticModule.forFeature()` registers tool
+ * sets inside the AgenticModule context, so `OrderTools` can only resolve
+ * `OrderService` if it is globally available.
+ */
+@Global()
 @Module({
-  imports: [
-    AgenticModule.forFeature({
-      toolSets: [OrderTools],
-      policies: [RefundLimitPolicy],
-    }),
-  ],
   providers: [OrderService],
-  exports: [OrderService, OrderTools],
+  exports: [OrderService],
 })
 export class OrderModule {}
