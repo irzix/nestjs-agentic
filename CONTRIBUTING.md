@@ -25,6 +25,7 @@ The project uses npm workspaces. `npm install` at the root handles everything.
 ```text
 packages/
   core/                 → NestJS primitives and governance boundary
+  model-openai/         → OpenAI ModelAdapter (@nestjs-agentic/openai)
   runtime-adk/          → Synthetic runtime prototype (@nestjs-agentic/adk)
   runtime-langgraph/    → Limited LangChain/LangGraph compatibility adapter
   memory/               → Experimental opt-in memory primitives

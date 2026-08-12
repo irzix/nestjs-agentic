@@ -9,7 +9,7 @@ export class OrderTools {
 
   @Tool({ description: 'Look up customer order details' })
   async getOrder(
-    @Param('orderId', { description: 'The order ID' }) orderId: string,
+    @Param('orderId', { description: 'The order ID', required: true }) orderId: string,
     @Context() ctx: AgentContext,
   ) {
     return this.orderService.findById(orderId, ctx.security.userId);
@@ -18,8 +18,9 @@ export class OrderTools {
   @Tool({ description: 'Request a refund for an order' })
   @UsePolicies(RefundLimitPolicy)
   async refundOrder(
-    @Param('orderId', { description: 'The order ID' }) orderId: string,
-    @Param('amount', { type: 'number', description: 'Amount to refund' }) amount: number,
+    @Param('orderId', { description: 'The order ID', required: true }) orderId: string,
+    @Param('amount', { type: 'number', description: 'Amount to refund', required: true })
+    amount: number,
   ) {
     return this.orderService.refund(orderId, amount);
   }

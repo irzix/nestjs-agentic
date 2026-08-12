@@ -40,8 +40,9 @@ The current release line is `0.4.x`. Core primitives are available; runtime, per
 | Agents, tools, and NestJS DI | Available | Decorators, discovery, feature registration, and context-bound tools. |
 | Tool governance | Available | `allow`, `deny`, and `require_approval` before framework-managed tool execution. |
 | Built-in agent runtime | Available | Model-to-tool loop, argument validation, execution budgets, cancellation, and streaming. Needs a `ModelAdapter`. |
+| OpenAI model adapter | Available | `@nestjs-agentic/openai` for OpenAI and Chat Completions compatible endpoints such as Azure, Ollama, vLLM, Groq, and OpenRouter. |
 | Mock runtime and mock model | Available | Deterministic agent, tool, policy, and loop testing without a model API. |
-| Model provider adapters | Planned | The `ModelAdapter` contract ships with core; no production provider adapter is published yet. |
+| Other model providers | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same contract. |
 | Human approval | Experimental | The runtime suspends a turn on `require_approval`; pause/resume is not durable across process restarts. |
 | ADK prototype and LangGraph adapter | Experimental | `@nestjs-agentic/adk` is currently a synthetic runtime prototype; `@nestjs-agentic/langgraph` provides limited compatibility with adapter-specific behavior. Full graph execution is not part of the current LangGraph adapter. |
 | Streaming and state | Experimental | Shared abstractions exist, but execution recovery and adapter semantics are not yet unified. |
@@ -54,6 +55,12 @@ See the [product roadmap](docs/ROADMAP.md) for milestones and production-readine
 
 ```bash
 npm install nestjs-agentic
+```
+
+Connect a model provider:
+
+```bash
+npm install @nestjs-agentic/openai openai
 ```
 
 Optional packages:
@@ -161,7 +168,7 @@ model
 export class AppModule {}
 ```
 
-`AgenticModule.forFeature()` registers these classes inside `AgenticModule`, so any application service they inject must come from a `@Global()` module.
+`AgenticModule.forFeature()` registers these classes inside `AgenticModule`. Keep an agent, its tool sets, and its policies in a single `forFeature()` call, and export any application services they inject from a `@Global()` module.
 
 ### 3. Run the agent and handle approval
 
@@ -223,7 +230,21 @@ These are framework primitives, not replacements for distributed rate limiting, 
 
 ## Connecting a Model
 
-Implement `ModelAdapter` to talk to a provider. It handles only provider communication; the framework owns the loop, validation, policies, budgets, and streaming.
+For OpenAI and any Chat Completions compatible endpoint, use the published adapter:
+
+```typescript
+import { AgenticModule } from 'nestjs-agentic';
+import { OpenAiModelAdapter } from '@nestjs-agentic/openai';
+
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o-mini' },
+  modelAdapter: new OpenAiModelAdapter({ apiKey: process.env.OPENAI_API_KEY }),
+});
+```
+
+The same adapter targets local and third-party servers by pointing `baseUrl` at them, for example `http://localhost:11434/v1` for Ollama. See [`@nestjs-agentic/openai`](packages/model-openai) for Azure, reasoning models, and compatibility notes.
+
+For any other provider, implement `ModelAdapter` directly. It handles only provider communication; the framework owns the loop, validation, policies, budgets, and streaming.
 
 ```typescript
 import type { ModelAdapter, ModelRequest, ModelResponse } from 'nestjs-agentic';

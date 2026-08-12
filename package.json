@@ -13,7 +13,11 @@
   "homepage": "https://github.com/irzix/nestjs-agentic#readme",
   "scripts": {
     "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "changeset": "changeset",
+    "changeset:status": "changeset status --since=origin/main",
+    "version-packages": "changeset version && npm install --package-lock-only --ignore-scripts",
+    "release": "npm run build && changeset publish"
   },
   "workspaces": [
     "packages/core",
@@ -24,6 +28,7 @@
     "packages/evaluation",
     "packages/runtime-adk",
     "packages/runtime-langgraph",
+    "packages/model-openai",
     "packages/meta",
     "examples/*",
     "apps/*"
@@ -34,6 +39,7 @@
     "@langchain/langgraph": "^1.4.9",
     "@nestjs/testing": "^10.4.22",
     "@types/node": "^26.2.0",
+    "openai": "^7.4.0",
     "typescript": "^7.0.2"
   }
 }

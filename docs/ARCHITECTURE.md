@@ -16,7 +16,11 @@ Application
     +-- @nestjs-agentic/core
     |     agents, tools, policies, approvals, stores, AgentRunner
     |
-    +-- optional runtime adapter
+    +-- model adapter for the built-in runtime
+    |     @nestjs-agentic/openai
+    |     custom ModelAdapter
+    |
+    +-- or an external runtime adapter
     |     @nestjs-agentic/adk
     |     @nestjs-agentic/langgraph
     |     custom RuntimeAdapter
@@ -157,7 +161,7 @@ interface ModelAdapter {
 }
 ```
 
-`MockModelAdapter` ships with core so agents, policies, and the loop can be tested deterministically without a provider. No production provider adapter is published yet.
+`MockModelAdapter` ships with core so agents, policies, and the loop can be tested deterministically without a provider. `@nestjs-agentic/openai` implements the contract for OpenAI and Chat Completions compatible endpoints.
 
 ## Runtime Adapter Boundary
 
