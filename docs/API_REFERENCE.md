@@ -455,7 +455,10 @@ AgenticModule.forFeature({
 
 The application must register either a `ModelAdapter` or a `RuntimeAdapter`. Passing `modelAdapter` to `forRoot()` is the recommended path, because `AgentExecutor` is instantiated inside `AgenticModule` and resolves the token from that context.
 
-`forFeature()` also registers agents, tool sets, and policies in the `AgenticModule` context. Any application services those classes inject must therefore be exported from a `@Global()` module.
+Two `forFeature()` rules follow from it registering providers in the `AgenticModule` context:
+
+1. Register an agent together with its tool sets and policies in a **single** `forFeature()` call. Separate calls create separate module contexts, so an agent cannot inject a tool set registered by another call.
+2. Application services injected by agents or tool sets must be exported from a `@Global()` module.
 
 ## Session and State Stores
 

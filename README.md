@@ -168,7 +168,7 @@ model
 export class AppModule {}
 ```
 
-`AgenticModule.forFeature()` registers these classes inside `AgenticModule`, so any application service they inject must come from a `@Global()` module.
+`AgenticModule.forFeature()` registers these classes inside `AgenticModule`. Keep an agent, its tool sets, and its policies in a single `forFeature()` call, and export any application services they inject from a `@Global()` module.
 
 ### 3. Run the agent and handle approval
 
