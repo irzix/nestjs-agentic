@@ -5,213 +5,101 @@
 <h1 align="center">nestjs-agentic</h1>
 
 <p align="center">
-  <b>Agentic Infrastructure & Governance Layer for NestJS</b><br>
-  Build, govern, and orchestrate autonomous AI agents inside your existing NestJS services — without architecture drift.
+  <b>The NestJS-native runtime for governed AI agents</b><br>
+  Define agents and tools with NestJS, enforce policy before side effects, and keep model integrations replaceable.
 </p>
 
 <p align="center">
-  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%2B-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS" /></a>
+  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%20%7C%20v11-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS" /></a>
   <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/v/nestjs-agentic.svg?color=E0234E" alt="NPM Version" /></a>
   <a href="https://github.com/irzix/nestjs-agentic/actions"><img src="https://github.com/irzix/nestjs-agentic/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0%2B-blue?logo=typescript&logoColor=white" alt="TypeScript" /></a>
   <a href="https://github.com/irzix/nestjs-agentic/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/nestjs-agentic.svg?color=blue" alt="License" /></a>
 </p>
 
----
-
 ## What is nestjs-agentic?
 
-Most agentic frameworks force you to build outside your backend — a separate Python service, a standalone graph, a different runtime. **nestjs-agentic** is different.
+`nestjs-agentic` keeps agent-facing capabilities inside the NestJS module and dependency-injection system. Application services remain ordinary providers; runtimes receive context-bound tool closures that evaluate policy before invoking side effects.
 
-It is the **agentic infrastructure layer for NestJS**: define agents and tools using the decorators you already know, enforce policy guardrails before every tool call, and wire your existing services into any LLM runtime — all inside the NestJS DI container.
-
+```text
+NestJS service
+    -> @ToolSet and @Tool
+    -> context-bound ResolvedTool
+    -> allow / deny / require_approval
+    -> RuntimeAdapter
 ```
-NestJS Services (DB / APIs) ──► @ToolSet & @Tool ──► @UsePolicies ──► [ allow / deny / HITL ] ──► RuntimeAdapter ──► LLM
-```
 
----
+## Current Status
 
-## The 4 Core Pillars
+The current release line is `0.4.x`. Published does not mean production-ready, and breaking changes remain possible before 1.0.
 
-| Pillar | What it gives you |
-|--------|-------------------|
-| **NestJS Primitives & DI** | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context` — full DI, no rewrites |
-| **Governance & HITL Safety** | 3-state policy engine (`allow`, `deny`, `require_approval`) on every tool call |
-| **Pluggable Runtime Adapters** | Google ADK, Vercel AI SDK, LangGraph, or custom — swap without touching tools |
-| **Multi-Agent Orchestration** | Sub-agent delegation via `AgentConfig.subAgents` *(coming in v0.2)* |
-
----
+| Area | Status | Scope |
+| --- | --- | --- |
+| Agents, tools, NestJS DI, policies, mock runtime | Available | Core decorators, discovery, context-bound execution, governance decisions, and deterministic tests. |
+| Human approval | Experimental | Approve/reject an individual process-local tool invocation; durable pause/resume is not available. |
+| ADK prototype and LangGraph adapter | Experimental | The ADK-named package is a synthetic runtime prototype; the LangGraph package offers limited compatibility with adapter-specific limitations. |
+| Memory, RAG, experience, orchestration, evaluation | Experimental | Optional packages that applications must integrate explicitly. |
+| Durable execution and observability | Planned | Recovery, resumable approval, standardized tracing, and audit events. |
+| Vercel AI SDK and MCP | Planned | Future integrations over the common runtime and governance contracts. |
 
 ## Installation
 
 ```bash
-# Core package
 npm install nestjs-agentic
-
-# Google ADK Adapter (optional)
-npm install @nestjs-agentic/adk
 ```
 
----
+Use `MockRuntimeAdapter` for deterministic governance tests without a model API. The current `@nestjs-agentic/adk` package is a synthetic runtime prototype, while `@nestjs-agentic/langgraph` provides limited compatibility. Review their package READMEs before evaluation.
 
-## Quick Start (3 Steps)
-
-### 1. Define Policy & Tools
+## Minimal Governed Tool
 
 ```typescript
 import { Injectable } from '@nestjs/common';
-import { ToolSet, Tool, Param, Context, UsePolicies } from 'nestjs-agentic';
-import type { AgentContext, ToolPolicy, PolicyResult } from 'nestjs-agentic';
+import {
+  AgentContext,
+  Context,
+  Param,
+  PolicyResult,
+  Tool,
+  ToolPolicy,
+  ToolSet,
+  UsePolicies,
+} from 'nestjs-agentic';
 
 @Injectable()
 export class RefundLimitPolicy implements ToolPolicy {
   async evaluate(
-    ctx: AgentContext,
-    toolName: string,
+    _ctx: AgentContext,
+    _toolName: string,
     args: Record<string, unknown>,
   ): Promise<PolicyResult> {
     return Number(args.amount) > 500
-      ? { decision: 'require_approval', reason: 'Refund exceeds $500 threshold.' }
+      ? { decision: 'require_approval', reason: 'Refund exceeds $500.' }
       : { decision: 'allow' };
   }
 }
 
-@ToolSet({ name: 'order', tags: ['order', 'sales'] })
+@ToolSet({ name: 'orders' })
 export class OrderTools {
-  constructor(private readonly orderService: OrderService) {}
-
-  @Tool({ description: 'Refund an order by ID and amount' })
+  @Tool({ name: 'refundOrder', description: 'Refund an order' })
   @UsePolicies(RefundLimitPolicy)
   async refundOrder(
     @Param('orderId') orderId: string,
-    @Param('amount') amount: number,
+    @Param('amount', { type: 'number' }) amount: number,
     @Context() ctx: AgentContext,
   ) {
-    return this.orderService.refund(orderId, amount, ctx.security.userId);
+    return { orderId, amount, requestedBy: ctx.security.userId };
   }
 }
 ```
 
-### 2. Define Agent & Module
-
-```typescript
-import { Module } from '@nestjs/common';
-import { Agent, AgenticModule, RUNTIME_ADAPTER } from 'nestjs-agentic';
-import type { AgentProvider, AgentConfig } from 'nestjs-agentic';
-import { AdkRuntimeAdapter } from '@nestjs-agentic/adk';
-
-@Agent({ name: 'customer-support', description: 'Handles order lookups and refund inquiries' })
-export class SupportAgent implements AgentProvider {
-  constructor(private readonly orderTools: OrderTools) {}
-
-  define(): AgentConfig {
-    return {
-      instructions: 'You are a helpful customer support agent.',
-      tools: [this.orderTools],
-    };
-  }
-}
-
-@Module({
-  imports: [
-    AgenticModule.forRoot({ defaultModel: { provider: 'google', model: 'gemini-2.0-flash' } }),
-    AgenticModule.forFeature({
-      agents: [SupportAgent],
-      toolSets: [OrderTools],
-      policies: [RefundLimitPolicy],
-    }),
-  ],
-  providers: [{ provide: RUNTIME_ADAPTER, useClass: AdkRuntimeAdapter }],
-})
-export class SupportModule {}
-```
-
-### 3. Run Agent & Handle HITL Approvals
-
-```typescript
-import { Controller, Post, Body, Param } from '@nestjs/common';
-import { AgentRunner, ApprovalService } from 'nestjs-agentic';
-
-@Controller('support')
-export class SupportController {
-  constructor(
-    private readonly runner: AgentRunner,
-    private readonly approvalService: ApprovalService,
-  ) {}
-
-  @Post('chat')
-  async chat(@Body() body: { sessionId: string; message: string }) {
-    return this.runner.run('customer-support', {
-      sessionId: body.sessionId,
-      message: body.message,
-      context: { userId: 'user_123', tenantId: 'acme' },
-    });
-  }
-
-  /** Called by a human supervisor to approve a pending tool call. */
-  @Post('approve/:id')
-  async approve(@Param('id') id: string) {
-    return this.approvalService.approve(id);
-  }
-
-  /** Called to reject and discard a pending tool call. */
-  @Post('reject/:id')
-  async reject(@Param('id') id: string) {
-    return this.approvalService.reject(id);
-  }
-}
-```
-
----
-
-## Testing Without LLM API Keys
-
-Use `MockRuntimeAdapter` to unit test your agents, tools, and policies without any real LLM calls:
-
-```typescript
-import { Test } from '@nestjs/testing';
-import { AgenticModule, AgentRunner, MockRuntimeAdapter, RUNTIME_ADAPTER } from 'nestjs-agentic';
-
-describe('SupportAgent — Refund Policy', () => {
-  let runner: AgentRunner;
-
-  beforeEach(async () => {
-    const module = await Test.createTestingModule({
-      imports: [
-        AgenticModule.forRoot({ defaultModel: { provider: 'google', model: 'gemini-2.0-flash' } }),
-        AgenticModule.forFeature({
-          agents: [SupportAgent],
-          toolSets: [OrderTools],
-          policies: [RefundLimitPolicy],
-        }),
-      ],
-      providers: [{ provide: RUNTIME_ADAPTER, useClass: MockRuntimeAdapter }],
-    }).compile();
-
-    runner = module.get(AgentRunner);
-  });
-
-  it('should require approval on refund > $500', async () => {
-    const result = await runner.run('customer-support', {
-      sessionId: 'test-session',
-      message: 'Refund $600 for order #42',
-    });
-
-    expect(result.toolCalls[0].result.status).toBe('pending_approval');
-  });
-});
-```
-
----
+The current approval continuation is stored as a process-local closure. Approval executes that pending tool invocation but does not resume the original model turn or survive a restart.
 
 ## Documentation
 
-- 🗺️ [Product Roadmap & Architectural Vision](https://github.com/irzix/nestjs-agentic/blob/main/docs/ROADMAP.md)
-- 📐 [Architecture Guide & Diagrams](https://github.com/irzix/nestjs-agentic/blob/main/docs/ARCHITECTURE.md)
-- 📚 [API Reference](https://github.com/irzix/nestjs-agentic/blob/main/docs/API_REFERENCE.md)
-
----
+- [Product Roadmap](https://github.com/irzix/nestjs-agentic/blob/main/docs/ROADMAP.md)
+- [Architecture Guide](https://github.com/irzix/nestjs-agentic/blob/main/docs/ARCHITECTURE.md)
+- [API Reference](https://github.com/irzix/nestjs-agentic/blob/main/docs/API_REFERENCE.md)
 
 ## License
 
-[MIT](LICENSE) © [irzix](https://github.com/irzix)
+[MIT](https://github.com/irzix/nestjs-agentic/blob/main/LICENSE) © [irzix](https://github.com/irzix)
