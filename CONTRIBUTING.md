@@ -12,7 +12,7 @@ Thanks for your interest in contributing. This document covers the practical stu
 ### Setup
 
 ```bash
-git clone https://github.com/your-org/nestjs-agentic.git
+git clone https://github.com/irzix/nestjs-agentic.git
 cd nestjs-agentic
 npm install
 npm run build
@@ -22,12 +22,21 @@ The project uses npm workspaces. `npm install` at the root handles everything.
 
 ### Project structure
 
-```
+```text
 packages/
-  core/          → Main library (nestjs-agentic)
-  runtime-adk/   → Google ADK adapter (@nestjs-agentic/adk)
+  core/                 → NestJS primitives and governance boundary
+  runtime-adk/          → Synthetic runtime prototype (@nestjs-agentic/adk)
+  runtime-langgraph/    → Limited LangChain/LangGraph compatibility adapter
+  memory/               → Experimental opt-in memory primitives
+  rag/                  → Experimental opt-in retrieval primitives
+  orchestration/        → Experimental delegation and refinement APIs
+  evaluation/           → Experimental metrics and benchmarks
 examples/
-  customer-support/  → Working demo app
+  customer-support/     → ADK prototype evaluation example
+  financial-governance/ → Governance and mock-runtime example
+  langgraph-workflow/   → LangGraph adapter fallback evaluation
+apps/
+  landing/              → Project website
 ```
 
 ### Running tests
@@ -36,8 +45,8 @@ examples/
 # All packages
 npm test
 
-# Single package
-cd packages/core && npm test
+# Single package without changing directories
+npm test --workspace=@nestjs-agentic/core
 ```
 
 ### Building
@@ -46,13 +55,15 @@ cd packages/core && npm test
 npm run build
 ```
 
-### Running the demo
+### Running an example
+
+The customer-support HTTP example registers the synthetic ADK-named runtime prototype. It does not call Google ADK or Gemini and invokes tools with empty arguments, so use it only for evaluation:
 
 ```bash
-cd examples/customer-support
-cp .env.example .env   # Add your GEMINI_API_KEY
-npm run start:dev
+npm run start:dev --workspace=example-customer-support
 ```
+
+For deterministic governance behavior, prefer the test suites that configure `MockRuntimeAdapter`.
 
 ## How to contribute
 
@@ -103,14 +114,15 @@ We don't have an automated formatter enforced yet. Just follow what you see in t
 
 ## Architecture decisions
 
-The [Architecture Guide](docs/ARCHITECTURE.md) explains the design decisions behind the library. If you're working on something that touches core abstractions (RuntimeAdapter, ToolProvider, PolicyExecutor), read it first.
+The [Architecture Guide](docs/ARCHITECTURE.md) explains the design decisions behind the library. If you're working on core abstractions such as `RuntimeAdapter`, `ResolvedTool`, policies, approvals, or state stores, read it first.
 
 Key principles:
 
-- **Core knows nothing about specific runtimes.** No ADK, LangGraph, or OpenAI imports in `packages/core`.
-- **Policies live inside tool closures.** RuntimeAdapters don't need to know about policy enforcement.
-- **Explicit registration only.** No classpath scanning. Everything goes through `forFeature()`.
-- **Deny is a return value, not an exception.** Policy denials come back as `{ success: false, denied: true, reason }`.
+- **Core knows nothing about specific runtimes.** No ADK, LangGraph, or provider SDK imports belong in `packages/core`.
+- **Policies live inside resolved tool closures.** Runtime adapters invoke `ResolvedTool.execute()` and do not bypass governance.
+- **Explicit registration only.** Agents, tool sets, and policies are registered through `forFeature()`.
+- **Policy outcomes are return values.** A denial returns `{ success: false, status: 'denied', reason }`; it is not thrown as an exception.
+- **Claims follow implementation and tests.** Mark incomplete provider, durability, and observability behavior as experimental.
 
 ## Versioning
 
