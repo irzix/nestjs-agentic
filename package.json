@@ -24,6 +24,7 @@
     "packages/evaluation",
     "packages/runtime-adk",
     "packages/runtime-langgraph",
+    "packages/model-openai",
     "packages/meta",
     "examples/*",
     "apps/*"
@@ -34,6 +35,7 @@
     "@langchain/langgraph": "^1.4.9",
     "@nestjs/testing": "^10.4.22",
     "@types/node": "^26.2.0",
+    "openai": "^7.4.0",
     "typescript": "^7.0.2"
   }
 }
