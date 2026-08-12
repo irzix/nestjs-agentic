@@ -36,6 +36,8 @@ The current release line is `0.4.x`. Published does not mean production-ready, a
 | Area | Status | Scope |
 | --- | --- | --- |
 | Agents, tools, NestJS DI, policies, mock runtime | Available | Core decorators, discovery, context-bound execution, governance decisions, and deterministic tests. |
+| Built-in agent runtime | Available | Governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming. Requires a `ModelAdapter`. |
+| Model provider adapters | Planned | The `ModelAdapter` contract and `MockModelAdapter` ship with core; no production provider adapter is published yet. |
 | Human approval | Experimental | Approve/reject an individual process-local tool invocation; durable pause/resume is not available. |
 | ADK prototype and LangGraph adapter | Experimental | The ADK-named package is a synthetic runtime prototype; the LangGraph package offers limited compatibility with adapter-specific limitations. |
 | Memory, RAG, experience, orchestration, evaluation | Experimental | Optional packages that applications must integrate explicitly. |

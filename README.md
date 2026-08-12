@@ -39,8 +39,10 @@ The current release line is `0.4.x`. Core primitives are available; runtime, per
 | --- | --- | --- |
 | Agents, tools, and NestJS DI | Available | Decorators, discovery, feature registration, and context-bound tools. |
 | Tool governance | Available | `allow`, `deny`, and `require_approval` before framework-managed tool execution. |
-| Mock runtime | Available | Deterministic tool and policy testing without a model API. |
-| Human approval | Experimental | Approve and reject APIs are available; pause/resume is not durable across process restarts. |
+| Built-in agent runtime | Available | Model-to-tool loop, argument validation, execution budgets, cancellation, and streaming. Needs a `ModelAdapter`. |
+| Mock runtime and mock model | Available | Deterministic agent, tool, policy, and loop testing without a model API. |
+| Model provider adapters | Planned | The `ModelAdapter` contract ships with core; no production provider adapter is published yet. |
+| Human approval | Experimental | The runtime suspends a turn on `require_approval`; pause/resume is not durable across process restarts. |
 | ADK prototype and LangGraph adapter | Experimental | `@nestjs-agentic/adk` is currently a synthetic runtime prototype; `@nestjs-agentic/langgraph` provides limited compatibility with adapter-specific behavior. Full graph execution is not part of the current LangGraph adapter. |
 | Streaming and state | Experimental | Shared abstractions exist, but execution recovery and adapter semantics are not yet unified. |
 | Memory, RAG, experience, orchestration, evaluation | Experimental | Opt-in packages available for evaluation and feedback. |
@@ -68,7 +70,7 @@ npm install @nestjs-agentic/langgraph @langchain/core @langchain/langgraph
 
 ## Quick Start
 
-The example uses `MockRuntimeAdapter`, so it is deterministic and requires no API key.
+The example uses `MockModelAdapter`, so the full tool-calling loop runs deterministically without an API key. Swap in your own `ModelAdapter` to talk to a real provider.
 
 ### 1. Define a policy and tool set
 
@@ -121,8 +123,7 @@ import {
   AgentConfig,
   AgenticModule,
   AgentProvider,
-  MockRuntimeAdapter,
-  RUNTIME_ADAPTER,
+  MockModelAdapter,
 } from 'nestjs-agentic';
 
 @Agent({ name: 'support', description: 'Handles support requests' })
@@ -137,15 +138,18 @@ export class SupportAgent implements AgentProvider {
   }
 }
 
-const mockRuntime = new MockRuntimeAdapter();
-mockRuntime
+const model = new MockModelAdapter();
+model
   .whenAsked('Refund $600 for order #42')
-  .thenCallTool('refundOrder', { orderId: '42', amount: 600 });
+  .callTool('refundOrder', { orderId: '42', amount: 600 })
+  .reply('That refund needs approval before I can complete it.');
 
 @Module({
   imports: [
     AgenticModule.forRoot({
       defaultModel: { provider: 'mock', model: 'deterministic' },
+      modelAdapter: model,
+      limits: { maxIterations: 6 },
     }),
     AgenticModule.forFeature({
       agents: [SupportAgent],
@@ -153,10 +157,11 @@ mockRuntime
       policies: [RefundLimitPolicy],
     }),
   ],
-  providers: [{ provide: RUNTIME_ADAPTER, useValue: mockRuntime }],
 })
 export class AppModule {}
 ```
+
+`AgenticModule.forFeature()` registers these classes inside `AgenticModule`, so any application service they inject must come from a `@Global()` module.
 
 ### 3. Run the agent and handle approval
 
@@ -195,7 +200,18 @@ export class SupportController {
 }
 ```
 
-`runner.runStream()` exposes structured `token`, `tool_start`, `tool_result`, `approval_required`, and `complete` events. Event behavior currently depends on the selected runtime adapter.
+`runner.runStream()` exposes structured `token`, `tool_start`, `tool_result`, `approval_required`, and `complete` events.
+
+Each run is bounded. Pass `limits` and a `signal` to cap iterations, tool calls, tokens, and wall-clock time, or to cancel work in flight:
+
+```typescript
+await runner.run('support', {
+  sessionId,
+  message,
+  limits: { maxIterations: 4, maxToolCalls: 8, timeoutMs: 30_000 },
+  signal: abortController.signal,
+});
+```
 
 ## Built-in Policies
 
@@ -205,18 +221,35 @@ export class SupportController {
 
 These are framework primitives, not replacements for distributed rate limiting, durable audit storage, or application authorization.
 
-## Runtime Adapters
+## Connecting a Model
 
-Applications provide a `RuntimeAdapter` through the `RUNTIME_ADAPTER` token. The core package does not import model or graph SDKs.
+Implement `ModelAdapter` to talk to a provider. It handles only provider communication; the framework owns the loop, validation, policies, budgets, and streaming.
 
 ```typescript
-{
-  provide: RUNTIME_ADAPTER,
-  useClass: MyRuntimeAdapter,
+import type { ModelAdapter, ModelRequest, ModelResponse } from 'nestjs-agentic';
+
+export class MyModelAdapter implements ModelAdapter {
+  async generate(request: ModelRequest): Promise<ModelResponse> {
+    const completion = await callProvider({
+      model: request.model.model,
+      messages: request.messages,
+      tools: request.tools,
+      signal: request.signal,
+    });
+
+    return {
+      content: completion.text,
+      toolCalls: completion.toolCalls,
+      usage: completion.usage,
+      finishReason: completion.toolCalls.length ? 'tool_calls' : 'stop',
+    };
+  }
 }
 ```
 
-The current `@nestjs-agentic/adk` package is a synthetic runtime prototype, while `@nestjs-agentic/langgraph` provides limited compatibility with LangChain model and checkpointer types. Both are experimental. The roadmap prioritizes a provider-neutral model contract and independent tool-calling runtime before additional adapters.
+The core package does not import model or graph SDKs. Applications that already own an external runtime can still register a `RuntimeAdapter` through `RUNTIME_ADAPTER`, which continues to receive whole turns.
+
+The current `@nestjs-agentic/adk` package is a synthetic runtime prototype, while `@nestjs-agentic/langgraph` provides limited compatibility with LangChain model and checkpointer types. Both are experimental, and the roadmap moves them onto the common contracts.
 
 ## Documentation
 

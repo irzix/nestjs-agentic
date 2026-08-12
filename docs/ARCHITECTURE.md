@@ -27,7 +27,7 @@ Application
 
 | Package area | Responsibility |
 | --- | --- |
-| `core` | NestJS registration, metadata discovery, agent context, governed tools, runtime boundary, approvals, and store contracts. |
+| `core` | NestJS registration, metadata discovery, agent context, governed tools, the built-in agent runtime, model and runtime contracts, approvals, and store contracts. |
 | Runtime adapters | Translate the framework runtime input to a provider or compatibility SDK. Current adapters are experimental and may not provide identical behavior. |
 | `memory`, `experience`, `rag` | Opt-in cognitive and retrieval primitives. They are not automatically attached to `AgentRunner`. |
 | `orchestration` | Opt-in delegation, parallel execution, fallback, and refinement built on `AgentRunner`. It is not currently a durable graph engine. |
@@ -41,7 +41,7 @@ flowchart TD
     RUNNER --> AGENT[Resolve AgentProvider and AgentConfig]
     AGENT --> CONTEXT[Create AgentContext]
     CONTEXT --> TOOLS[LocalToolProvider builds ResolvedTools]
-    TOOLS --> ADAPTER[RuntimeAdapter execute or stream]
+    TOOLS --> ADAPTER[AgentExecutor, or RuntimeAdapter when no ModelAdapter is registered]
     ADAPTER --> INVOKE[Runtime invokes ResolvedTool.execute]
     INVOKE --> POLICIES[Evaluate tool policies]
     POLICIES -->|allow| METHOD[Invoke NestJS provider method]
@@ -114,14 +114,54 @@ The current approval API protects an individual tool invocation, but it is not y
 
 - continuation is stored as a process-local JavaScript closure;
 - a process restart cannot reconstruct that closure;
-- approval executes the pending tool but does not resume the original model turn;
+- the built-in runtime suspends the turn and returns the `approvalId`, but approving it executes only the pending tool and does not resume the model loop;
 - durable checkpoint and exactly-once behavior are roadmap work.
 
 Applications should treat the current HITL implementation as experimental when restart recovery or multi-instance execution is required.
 
+## Built-in Agent Runtime
+
+When the application registers a `ModelAdapter`, `AgentRunner` executes the turn through the framework-owned `AgentExecutor` instead of handing the whole turn to a runtime adapter:
+
+```mermaid
+flowchart TD
+    RUNNER[AgentRunner] --> EXEC[AgentExecutor]
+    EXEC --> MODEL[ModelAdapter.generate or stream]
+    MODEL --> DECIDE{Tool calls requested?}
+    DECIDE -->|no| DONE[Return final answer]
+    DECIDE -->|yes| VALIDATE[Validate args against ToolParamSchema]
+    VALIDATE -->|invalid| FEEDBACK[Report error to the model]
+    VALIDATE -->|valid| TOOL[ResolvedTool.execute]
+    TOOL --> POLICY[Policy decision]
+    POLICY -->|allow or deny| FEEDBACK
+    POLICY -->|require approval| SUSPEND[Suspend turn with approvalId]
+    FEEDBACK --> BUDGET[Check iteration, tool-call, token, time budgets]
+    BUDGET --> MODEL
+```
+
+The executor owns the behavior that every agent framework needs:
+
+- iteration over model rounds until a final answer;
+- argument validation, which drops undeclared keys and rejects incomplete calls before an application method runs;
+- governed tool invocation through `ResolvedTool.execute()`;
+- suspension when a policy requires approval;
+- bounded execution via `ExecutionLimits` and an `AbortSignal`;
+- token and tool lifecycle streaming through the shared `AgentStreamEvent` union.
+
+A `ModelAdapter` only talks to a provider. It does not execute tools, evaluate policies, or manage the loop:
+
+```typescript
+interface ModelAdapter {
+  generate(request: ModelRequest): Promise<ModelResponse>;
+  stream?(request: ModelRequest): AsyncIterable<ModelStreamChunk>;
+}
+```
+
+`MockModelAdapter` ships with core so agents, policies, and the loop can be tested deterministically without a provider. No production provider adapter is published yet.
+
 ## Runtime Adapter Boundary
 
-The current core contract is intentionally small:
+The original delegation contract remains supported for applications that bring an entire external runtime:
 
 ```typescript
 interface RuntimeAdapter {
@@ -130,7 +170,7 @@ interface RuntimeAdapter {
 }
 ```
 
-This keeps core independent from provider SDKs, but it does not yet standardize model messages, tool-call rounds, usage, cancellation, checkpoints, or provider errors. Consequently, current adapters can differ in behavior.
+`AgentRunner` prefers the built-in runtime when a `ModelAdapter` is registered and otherwise uses the registered `RuntimeAdapter`, so existing applications keep working unchanged. This contract does not standardize model messages, tool-call rounds, usage, cancellation, or provider errors, so adapters written against it can differ in behavior.
 
 - `MockRuntimeAdapter` supports deterministic framework tests.
 - `AdkRuntimeAdapter` is an experimental synthetic runtime prototype published under `@nestjs-agentic/adk`; it does not currently integrate with provider-native ADK APIs.
@@ -140,9 +180,11 @@ The independent runtime milestone will move common model and tool-loop behavior 
 
 ## Streaming: Current Behavior
 
-`AgentRunner.runStream()` exposes `AgentStreamEvent` values. If an adapter implements `stream()`, the runner delegates to it. Otherwise, the runner converts the completed `AgentResult` into tool and completion events.
+`AgentRunner.runStream()` exposes `AgentStreamEvent` values.
 
-The event types are shared, but current adapters do not yet guarantee equivalent token streaming, cancellation, error, approval, or ordering semantics. Canonical event behavior is part of the independent runtime roadmap.
+With the built-in runtime, events follow a defined order per round: model tokens, then `tool_start`, then either `tool_result` or `approval_required`, and finally `complete`. Adapters that implement `ModelAdapter.stream()` produce incremental tokens; those that only implement `generate()` emit the round content as a single token event.
+
+When execution is delegated to a `RuntimeAdapter`, event behavior depends on that adapter. If it does not implement `stream()`, the runner converts the completed `AgentResult` into tool and completion events. Errors currently propagate as thrown exceptions rather than stream events; a canonical error event is roadmap work.
 
 ## State, Sessions, and Memory
 

@@ -31,8 +31,10 @@ The current release line is `0.4.x`.
 | NestJS agents and tools | Available | Decorators, discovery, module registration, dependency injection, and context-bound tools. |
 | Tool policies | Available | `allow`, `deny`, and `require_approval` decisions before framework-managed tool execution. |
 | Mock runtime | Available | Deterministic agent and governance testing without external model calls. |
-| Human approval | Experimental | Approval and rejection APIs are available; durable pause and resume across process restarts is not yet supported. |
-| Runtime adapters | Experimental | The ADK-named package is currently a synthetic runtime prototype. The LangGraph package provides limited LangChain and checkpointer compatibility, but full graph execution is not currently part of the adapter. |
+| Built-in agent runtime | Available | `AgentExecutor` runs the governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming. Requires an application-supplied `ModelAdapter`. |
+| Model adapters | Planned | The `ModelAdapter` contract and a deterministic `MockModelAdapter` ship with core; no production provider adapter is published yet. |
+| Human approval | Experimental | Approval and rejection APIs are available and the runtime suspends a turn on `require_approval`; durable pause and resume across process restarts is not yet supported. |
+| Legacy runtime adapters | Experimental | The ADK-named package is currently a synthetic runtime prototype. The LangGraph package provides limited LangChain and checkpointer compatibility, but full graph execution is not currently part of the adapter. |
 | Streaming and state | Experimental | Shared event and state abstractions exist, but adapter behavior and execution recovery are not yet unified. |
 | Memory and experience | Experimental | Memory, summarization, reflection, and experience primitives are available as opt-in packages. |
 | RAG | Experimental | Retrieval strategies, vector-store abstractions, and knowledge-graph primitives are available as opt-in packages. |
@@ -58,17 +60,17 @@ Version numbers are directional and may change as the contracts are validated.
 
 ### 0.5 — Independent Agent Runtime
 
-> **Status: Planned**
+> **Status: In progress**
 
 Goal: run a complete, governed agent turn without requiring LangGraph or another orchestration framework.
 
-- [ ] Define vendor-neutral model, message, tool-call, usage, and runtime event contracts.
-- [ ] Implement the complete model-to-tool loop: model response, governed tool execution, tool results, and final response.
-- [ ] Support real token and tool-event streaming across compatible adapters.
-- [ ] Add cancellation, deadlines, and configurable execution budgets.
-- [ ] Validate tool arguments and normalize provider-specific tool-call formats.
+- [x] Define vendor-neutral model, message, tool-call, and usage contracts (`ModelAdapter`).
+- [x] Implement the complete model-to-tool loop: model response, governed tool execution, tool results, and final response (`AgentExecutor`).
+- [x] Stream model tokens and governed tool lifecycle events through the shared event union.
+- [x] Add cancellation, deadlines, and configurable execution budgets (`ExecutionLimits`, `AbortSignal`).
+- [x] Validate tool arguments against declared parameters before invoking application methods.
 - [ ] Ship at least one production-intent direct model adapter.
-- [ ] Add a shared behavioral contract-test suite for all runtime and model adapters.
+- [ ] Publish a reusable behavioral contract-test suite for third-party adapters.
 - [ ] Evolve the ADK-named prototype and LangGraph compatibility package onto the common adapter contracts.
 
 **Exit criteria:** a NestJS application can run, stream, cancel, and test a governed tool-calling agent without adopting a graph framework.
