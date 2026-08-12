@@ -1,119 +1,92 @@
-# API Reference
+# Core API Reference
 
-Complete reference for all public exports from `nestjs-agentic`.
+This document describes the public API exported by `@nestjs-agentic/core` and re-exported by the `nestjs-agentic` meta-package in the `0.4.x` release line.
 
----
-
-## Table of Contents
-
-- [Decorators](#decorators)
-  - [@Agent](#agent)
-  - [@ToolSet](#toolset)
-  - [@Tool](#tool)
-  - [@Param](#param)
-  - [@Context](#context)
-  - [@UsePolicies](#usepolicies)
-- [Interfaces & Types](#interfaces--types)
-  - [AgentProvider](#agentprovider)
-  - [AgentConfig](#agentconfig)
-  - [AgentContext](#agentcontext)
-  - [AgentSecurityContext](#agentsecuritycontext)
-  - [ToolPolicy](#toolpolicy)
-  - [PolicyResult](#policyresult)
-  - [PendingApproval](#pendingapproval)
-  - [ApprovalStore](#approvalstore)
-  - [ToolProvider](#toolprovider)
-  - [ResolvedTool](#resolvedtool)
-  - [ToolExecutionInput](#toolexecutioninput)
-  - [ToolExecutionResult](#toolexecutionresult)
-  - [RuntimeAdapter](#runtimeadapter)
-  - [AgentResult](#agentresult)
-  - [AgentObserver](#agentobserver)
-- [Services](#services)
-  - [AgentRunner](#agentrunner)
-  - [ApprovalService](#approvalservice)
-  - [AgenticModule](#agenticmodule)
-- [Built-in Policies](#built-in-policies)
-  - [RateLimitPolicy](#ratelimitpolicy)
-  - [CostLimitPolicy](#costlimitpolicy)
-  - [LoggingPolicy](#loggingpolicy)
-- [Testing](#testing)
-  - [MockRuntimeAdapter](#mockruntimeadapter)
-- [Tokens](#tokens)
-
----
+Runtime-specific, memory, RAG, orchestration, experience, and evaluation APIs are documented by their own packages. Experimental behavior and planned contracts are identified explicitly below.
 
 ## Decorators
 
-### @Agent
+### `@Agent(options)`
 
-Marks a class as an agent provider.
-
-```typescript
-@Agent(options: AgentDecoratorOptions)
-```
-
-| Property | Type | Required | Description |
-|---|---|---|---|
-| `name` | `string` | ✅ | Unique agent identifier used in `AgentRunner.run(name)`. |
-| `description` | `string` | ✅ | Human-readable description passed to the LLM. |
-| `model` | `ModelConfig` | ❌ | Model configuration (`{ provider, model }`). Defaults to `defaultModel` from `forRoot()`. |
-
----
-
-### @ToolSet
-
-Marks a NestJS provider class as a container for related tools.
+Marks an `AgentProvider` class and applies NestJS `@Injectable()`.
 
 ```typescript
-@ToolSet(options: ToolSetDecoratorOptions)
+interface AgentDecoratorOptions {
+  name: string;
+  description: string;
+  model?: ModelConfig;
+}
 ```
 
-| Property | Type | Required | Description |
-|---|---|---|---|
-| `name` | `string` | ✅ | Domain name for this tool group. |
-| `description` | `string` | ❌ | Description of this tool domain. |
-| `tags` | `string[]` | ❌ | Descriptive metadata tags for discovery and documentation. |
+- `name` is the identifier passed to `AgentRunner.run()` and `runStream()`.
+- `model` overrides the root `defaultModel` for this agent.
 
----
+### `@ToolSet(options)`
 
-### @Tool
-
-Marks a method inside a `@ToolSet` class as callable by an LLM.
+Marks a class as a NestJS provider containing model-callable tools and applies `@Injectable()`.
 
 ```typescript
-@Tool(options: ToolDecoratorOptions)
+interface ToolSetOptions {
+  name: string;
+  description?: string;
+  tags?: string[];
+}
 ```
 
----
+### `@Tool(options)`
 
-### @Param
-
-Declares a parameter on a `@Tool` method.
+Marks a method inside a tool set as callable through a resolved, policy-guarded closure.
 
 ```typescript
-@Param(name: string, options?: ParamDecoratorOptions)
+interface ToolOptions {
+  description: string;
+  name?: string; // defaults to the method name
+}
 ```
 
----
+### `@Param(name, options?)`
 
-### @Context
+Exposes a method parameter in the tool input schema.
 
-Injects the current `AgentContext` into a tool method parameter (not exposed to the LLM).
+```typescript
+interface ParamOptions {
+  description?: string;
+  type?: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  required?: boolean;
+}
+```
 
----
+### `@Context()`
 
-### @UsePolicies
+Injects the current `AgentContext` into a tool method parameter. This parameter is not included in the tool schema passed to the runtime.
 
-Attaches one or more policies to a tool method or an entire `@ToolSet` class.
+### `@UsePolicies(...policies)`
 
----
+Attaches `ToolPolicy` classes to a tool method or tool-set class. Register each policy class through `AgenticModule.forFeature({ policies: [...] })`.
 
-## Interfaces & Types
+## Agent Contracts
 
-### AgentContext
+```typescript
+interface ModelConfig {
+  provider: 'google' | 'openai' | 'anthropic' | (string & {});
+  model: string;
+}
 
-Context object injected into tool handlers via `@Context()`. Never sent to the LLM.
+interface AgentConfig {
+  instructions: string;
+  tools: object[];
+  subAgents?: AgentProvider[];
+  model?: ModelConfig;
+}
+
+interface AgentProvider {
+  define(): AgentConfig;
+}
+```
+
+`AgentConfig.subAgents` is present in the public type but is not automatically converted to tools or executed by `AgentRunner` in `0.4.x`. Use the experimental `@nestjs-agentic/orchestration` package explicitly for current delegation APIs.
+
+## Agent Context
 
 ```typescript
 interface AgentSecurityContext {
@@ -126,66 +99,14 @@ interface AgentSecurityContext {
 interface AgentContext {
   security: AgentSecurityContext;
   sessionId: string;
-  traceId: string;          // auto-generated UUID per run
+  traceId: string;
   data?: Record<string, unknown>;
 }
 ```
 
----
+`AgentRunner` generates a new `traceId` for each run. `LocalToolProvider` binds this context to resolved tool closures so runtimes do not receive security fields as model-authored tool arguments.
 
-### AgentProvider & AgentConfig
-
-```typescript
-interface AgentConfig {
-  instructions: string;
-  tools: object[];           // @ToolSet instances
-  subAgents?: AgentProvider[]; // @future v0.2 multi-agent
-  model?: ModelConfig;       // overrides forRoot() defaultModel
-}
-
-interface AgentProvider {
-  define(): AgentConfig;
-}
-```
-
----
-
-### ToolPolicy & PolicyResult
-
-3-state policy decision supporting Human-in-the-Loop (HITL) approval requirements.
-
-```typescript
-interface ToolPolicy {
-  evaluate(
-    ctx: AgentContext,
-    toolName: string,
-    args: Record<string, unknown>,
-  ): Promise<PolicyResult>;
-}
-
-type PolicyResult =
-  | { decision: 'allow' }
-  | { decision: 'deny'; reason: string }
-  | { decision: 'require_approval'; reason: string };
-```
-
-### ToolExecutionInput & ToolExecutionResult
-
-`ToolExecutionInput` only carries `args` — `AgentContext` is pre-bound inside the
-tool closure by `LocalToolProvider` and is never exposed to the adapter or the LLM.
-
-```typescript
-interface ToolExecutionInput {
-  args: Record<string, unknown>;
-}
-
-type ToolExecutionResult<T = unknown> =
-  | { success: true; data: T }
-  | { success: false; status: 'denied'; reason: string }
-  | { success: false; status: 'pending_approval'; reason: string; approvalId: string };
-```
-
-### ResolvedTool & ToolProvider
+## Tool Contracts
 
 ```typescript
 interface ToolParamSchema {
@@ -194,6 +115,20 @@ interface ToolParamSchema {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   required?: boolean;
 }
+
+interface ToolExecutionInput {
+  args: Record<string, unknown>;
+}
+
+type ToolExecutionResult<T = unknown> =
+  | { success: true; data: T }
+  | { success: false; status: 'denied'; reason: string }
+  | {
+      success: false;
+      status: 'pending_approval';
+      reason: string;
+      approvalId: string;
+    };
 
 interface ResolvedTool {
   name: string;
@@ -205,16 +140,38 @@ interface ResolvedTool {
 interface ToolProvider {
   getTools(): ResolvedTool[];
 }
+
+interface ToolCallRecord {
+  toolName: string;
+  args: Record<string, unknown>;
+  result: unknown;
+}
 ```
 
-### RuntimeAdapter & AgentResult
+A compliant runtime calls `ResolvedTool.execute()` and does not invoke application providers directly. Policy and approval behavior is contained inside that closure.
+
+## Policy Contracts
 
 ```typescript
-interface ModelConfig {
-  provider: 'google' | 'openai' | 'anthropic' | string;
-  model: string;
-}
+type PolicyResult =
+  | { decision: 'allow' }
+  | { decision: 'deny'; reason: string }
+  | { decision: 'require_approval'; reason: string };
 
+interface ToolPolicy {
+  evaluate(
+    ctx: AgentContext,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<PolicyResult>;
+}
+```
+
+Policies execute in declaration order. A deny or approval decision stops execution before the application tool method is called.
+
+## Runtime Contracts
+
+```typescript
 interface AgentRunInput {
   sessionId: string;
   message: string;
@@ -231,11 +188,70 @@ interface AgentResult {
 
 interface RuntimeAdapter {
   execute(input: AgentRunInput): Promise<AgentResult>;
-  stream?(input: AgentRunInput): AsyncIterable<string>; // optional
+  stream?(input: AgentRunInput): AsyncIterable<AgentStreamEvent>;
 }
 ```
 
-### PendingApproval & ApprovalStore
+The `0.4.x` runtime contract does not yet standardize cancellation, model messages, usage, checkpoints, or provider errors. Runtime adapters are responsible for their own model behavior until the independent runtime contracts described in the roadmap are introduced.
+
+### Stream Events
+
+```typescript
+type AgentStreamEvent =
+  | { type: 'token'; text: string }
+  | {
+      type: 'tool_start';
+      id?: string;
+      toolName: string;
+      args: Record<string, unknown>;
+    }
+  | {
+      type: 'tool_result';
+      id?: string;
+      toolName: string;
+      result: ToolExecutionResult;
+    }
+  | {
+      type: 'approval_required';
+      id?: string;
+      toolName: string;
+      approvalId: string;
+      reason: string;
+    }
+  | { type: 'complete'; sessionId: string; output: string };
+```
+
+These event types are public. Ordering and token behavior currently depend on the selected adapter.
+
+## `AgentRunner`
+
+```typescript
+interface RunInput {
+  sessionId: string;
+  message: string;
+  context?: {
+    userId?: string;
+    tenantId?: string;
+    roles?: string[];
+    permissions?: string[];
+    data?: Record<string, unknown>;
+  };
+}
+
+class AgentRunner {
+  run(agentName: string, input: RunInput): Promise<AgentResult>;
+  runStream(
+    agentName: string,
+    input: RunInput,
+  ): AsyncIterable<AgentStreamEvent>;
+}
+```
+
+`run()` resolves the registered agent, creates context, resolves governed tools, and delegates to `RuntimeAdapter.execute()`.
+
+`runStream()` delegates to `RuntimeAdapter.stream()` when available. Otherwise, it converts a completed `AgentResult` into tool, token, and completion events.
+
+## Approval API
 
 ```typescript
 interface PendingApproval {
@@ -245,7 +261,6 @@ interface PendingApproval {
   context: AgentContext;
   reason: string;
   createdAt: Date;
-  /** Tool closure invoked on approval — stored internally by LocalToolProvider. */
   execute: () => Promise<unknown>;
 }
 
@@ -254,11 +269,142 @@ interface ApprovalStore {
   get(id: string): Promise<PendingApproval | null>;
   delete(id: string): Promise<void>;
 }
+
+class ApprovalService {
+  approve(approvalId: string): Promise<ToolExecutionResult>;
+  reject(approvalId: string): Promise<void>;
+}
 ```
 
-### AgentObserver
+`approve()` invokes the stored closure and then removes the record. In `0.4.x`, the closure is process-local and cannot be reconstructed after a restart. The API protects individual tool invocations; it does not resume the original model turn.
 
-All methods are optional — implement only what you need.
+## Module Configuration
+
+```typescript
+interface AgenticModuleOptions {
+  defaultModel: ModelConfig;
+  stateStore?: StateStore;
+}
+
+interface ForFeatureOptions {
+  agents?: Type<AgentProvider>[];
+  toolSets?: Type<object>[];
+  policies?: Type<ToolPolicy>[];
+}
+
+class AgenticModule {
+  static forRoot(options: AgenticModuleOptions): DynamicModule;
+  static forFeature(options: ForFeatureOptions): DynamicModule;
+}
+```
+
+Call `forRoot()` once to register core services and defaults. Call `forFeature()` in feature modules to register agents, tool sets, and policies.
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel: { provider: 'mock', model: 'deterministic' },
+});
+
+AgenticModule.forFeature({
+  agents: [SupportAgent],
+  toolSets: [OrderTools],
+  policies: [RefundLimitPolicy],
+});
+```
+
+A `RUNTIME_ADAPTER` provider is required by `AgentRunner` and must be registered by the application.
+
+## Session and State Stores
+
+```typescript
+interface SessionStore {
+  get(sessionId: string): Promise<unknown | null>;
+  set(sessionId: string, data: unknown): Promise<void>;
+  delete(sessionId: string): Promise<void>;
+}
+
+interface StateStore {
+  get<T = unknown>(key: string): Promise<T | null>;
+  set<T = unknown>(key: string, value: T, ttlSeconds?: number): Promise<void>;
+  delete(key: string): Promise<void>;
+  clear?(prefix?: string): Promise<void>;
+}
+```
+
+Exported implementations:
+
+| Class | Purpose |
+| --- | --- |
+| `InMemoryApprovalStore` | Default approval store; process-local. |
+| `InMemorySessionStore` | Default session store; process-local. |
+| `InMemoryStateStore` | Default `STATE_STORE`; process-local. |
+| `RedisStateStore` | JSON-serializing `StateStore` using a compatible Redis client. |
+
+```typescript
+const stateStore = new RedisStateStore({
+  client: redisClient,
+  keyPrefix: 'agentic:state:',
+});
+
+AgenticModule.forRoot({
+  defaultModel: { provider: 'mock', model: 'deterministic' },
+  stateStore,
+});
+```
+
+Registering a `StateStore` does not automatically persist `AgentRunner` executions in `0.4.x`.
+
+## Built-in Policies
+
+### `RateLimitPolicy`
+
+```typescript
+new RateLimitPolicy({ maxCallsPerMinute: 5 });
+```
+
+The implementation uses a process-local sliding window keyed by tenant, user, and tool. Use distributed application infrastructure when limits must be shared across instances.
+
+### `CostLimitPolicy`
+
+```typescript
+new CostLimitPolicy({
+  paramName: 'amount',       // default: 'amount'
+  autoAllowLimit: 500,       // default: 1000
+  approvalLimit: 5_000,      // default: 10000
+});
+```
+
+Values at or below `autoAllowLimit` are allowed, values through `approvalLimit` require approval, and larger values are denied.
+
+### `LoggingPolicy`
+
+```typescript
+new LoggingPolicy({
+  logLevel: 'debug',
+  includeArgs: true,
+  includeContext: true,
+  sensitiveFields: ['password', 'apiKey'],
+  logger: (message, data) => applicationLogger.debug(message, data),
+});
+```
+
+This policy logs the attempted invocation and always returns `allow`. It is not a persistent audit store.
+
+## `MockRuntimeAdapter`
+
+```typescript
+const runtime = new MockRuntimeAdapter();
+
+runtime
+  .whenAsked('Refund order 42')
+  .thenCallTool('refundOrder', { orderId: '42', amount: 600 });
+
+runtime.reset();
+```
+
+Configured messages invoke the selected resolved tool. Unconfigured messages return a deterministic mock response. The adapter also emits structured stream events.
+
+## Observer Contract
 
 ```typescript
 interface AgentObserver {
@@ -270,145 +416,16 @@ interface AgentObserver {
 }
 ```
 
----
+`AgentObserver` and `AGENT_OBSERVERS` are exported extension contracts, but `AgentRunner` does not dispatch these hooks in `0.4.x`. End-to-end observer wiring is planned.
 
-## Services
+## Injection Tokens
 
-### ApprovalService
+| Token | Purpose | Current behavior |
+| --- | --- | --- |
+| `RUNTIME_ADAPTER` | Selected runtime implementation | Required application provider. |
+| `APPROVAL_STORE` | `ApprovalStore` implementation | Defaults to `InMemoryApprovalStore`. |
+| `SESSION_STORE` | `SessionStore` implementation | Defaults to `InMemorySessionStore`. |
+| `STATE_STORE` | `StateStore` implementation | Defaults to `InMemoryStateStore`. |
+| `AGENT_OBSERVERS` | Observer multi-provider contract | Exported but not dispatched by `AgentRunner` in `0.4.x`. |
 
-Injectable service to execute pending HITL tool requests.
-
-```typescript
-@Injectable()
-export class ApprovalService {
-  /**
-   * Executes the pending tool call with stored args & context.
-   */
-  async approve(approvalId: string): Promise<ToolExecutionResult>;
-
-  /**
-   * Rejects and removes a pending approval request.
-   */
-  async reject(approvalId: string, reason?: string): Promise<void>;
-}
-```
-
----
-
-## Built-in Policies
-
-### RateLimitPolicy
-
-Built-in sliding-window rate limit policy enforcing call frequency bounds per tenant, user, and tool.
-
-```typescript
-import { RateLimitPolicy } from 'nestjs-agentic';
-
-@UsePolicies(new RateLimitPolicy({ maxCallsPerMinute: 5 }))
-```
-
-**Options:**
-
-| Property | Type | Default | Description |
-|---|---|---|---|
-| `maxCallsPerMinute` | `number` | `10` | Maximum allowed tool executions per sliding-window minute |
-
----
-
-### CostLimitPolicy
-
-Built-in policy evaluating numeric risk/cost arguments across a 3-state boundary (`allow` → `require_approval` → `deny`).
-
-```typescript
-import { CostLimitPolicy } from 'nestjs-agentic';
-
-@UsePolicies(new CostLimitPolicy({ 
-  paramName: 'amount', 
-  autoAllowLimit: 500, 
-  approvalLimit: 10000 
-}))
-```
-
-**Options:**
-
-| Property | Type | Default | Description |
-|---|---|---|---|
-| `paramName` | `string` | `'amount'` | Name of the numeric argument to evaluate |
-| `autoAllowLimit` | `number` | `1000` | Maximum amount allowed automatically without approval |
-| `approvalLimit` | `number` | `10000` | Maximum amount requiring human approval before rejection |
-
----
-
-### LoggingPolicy
-
-Built-in logging policy for observability and audit trail of tool executions. This policy always returns `allow` and logs tool call details for monitoring purposes.
-
-```typescript
-import { LoggingPolicy } from 'nestjs-agentic';
-
-@UsePolicies(new LoggingPolicy({ 
-  logLevel: 'debug', 
-  sensitiveFields: ['password', 'apiKey'],
-  includeArgs: true,
-  includeContext: true
-}))
-```
-
-**Options:**
-
-| Property | Type | Default | Description |
-|---|---|---|---|
-| `logLevel` | `'log' \| 'debug' \| 'verbose' \| 'warn'` | `'log'` | Log level to use for tool execution logs |
-| `includeArgs` | `boolean` | `true` | Whether to include tool arguments in the log output |
-| `includeContext` | `boolean` | `true` | Whether to include context metadata (userId, tenantId) in logs |
-| `sensitiveFields` | `string[]` | `[]` | List of argument field names to mask in logs (e.g., 'password', 'apiKey') |
-| `logger` | `(message: string, data: Record<string, unknown>) => void` | `console[logLevel]` | Custom logger function |
-
-**Log Output Format:**
-
-```typescript
-{
-  type: 'tool_execution',
-  toolName: string,
-  sessionId: string,
-  traceId: string,
-  timestamp: string,
-  userId?: string,        // if includeContext=true
-  tenantId?: string,      // if includeContext=true
-  roles?: string[],       // if includeContext=true
-  args?: Record<string, unknown>  // if includeArgs=true
-}
-```
-
----
-
-## Default Store Implementations
-
-Two in-memory stores are provided out of the box. They are used automatically
-by `AgenticModule` unless overridden with a custom provider.
-
-| Class | Token to override | Notes |
-|---|---|---|
-| `InMemoryApprovalStore` | `APPROVAL_STORE` | Not suitable for multi-instance deployments |
-| `InMemorySessionStore` | `SESSION_STORE` | Not suitable for multi-instance deployments |
-
-To plug in Redis or any other backend:
-
-```typescript
-{ provide: APPROVAL_STORE, useClass: RedisApprovalStore }
-{ provide: SESSION_STORE, useClass: RedisSessionStore }
-```
-
----
-
-## Tokens
-
-| Token | Description |
-|---|---|
-| `RUNTIME_ADAPTER` | Token for providing custom or built-in `RuntimeAdapter` |
-| `APPROVAL_STORE` | Token for providing custom `ApprovalStore` (default: `InMemoryApprovalStore`) |
-| `SESSION_STORE` | Token for providing custom `SessionStore` (default: `InMemorySessionStore`) |
-| `AGENT_OBSERVERS` | Multi-provider token for `AgentObserver` implementations |
-| `POLICY_INSTANCES` | Internal — populated by `forFeature({ policies: [] })` |
-| `AGENT_PROVIDERS` | Internal — populated by `forFeature({ agents: [] })` |
-| `AGENTIC_OPTIONS` | Internal — populated by `forRoot()` |
+Other exported constants primarily support framework metadata and internal provider discovery and should not be treated as stable application extension points before 1.0.
