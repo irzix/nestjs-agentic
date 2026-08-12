@@ -1,5 +1,12 @@
 # @nestjs-agentic/orchestration
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies [6eabac1]
+  - @nestjs-agentic/core@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes
