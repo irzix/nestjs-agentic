@@ -70,6 +70,7 @@ Goal: run a complete, governed agent turn without requiring LangGraph or another
 - [x] Stream model tokens and governed tool lifecycle events through the shared event union.
 - [x] Add cancellation, deadlines, and configurable execution budgets (`ExecutionLimits`, `AbortSignal`).
 - [x] Validate tool arguments against declared parameters before invoking application methods.
+- [x] Recover from tool exceptions by reporting them to the model, while keeping framework errors fatal.
 - [x] Ship at least one production-intent direct model adapter (`@nestjs-agentic/openai`).
 - [ ] Publish a reusable behavioral contract-test suite for third-party adapters.
 - [ ] Evolve the ADK-named prototype and LangGraph compatibility package onto the common adapter contracts.

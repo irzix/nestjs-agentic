@@ -278,6 +278,26 @@ Loop behavior per round:
 5. Stop the turn when a policy returns `require_approval`, surfacing the `approvalId`.
 6. Append tool results and continue until a final answer or an exhausted budget.
 
+## Tool Failures
+
+```typescript
+type ToolErrorHandling = 'report' | 'throw'; // default: 'report'
+```
+
+When an application tool throws, the runtime reports the failure to the model and continues the turn, mirroring how invalid arguments are handled. The model receives a tool message shaped as:
+
+```json
+{ "success": false, "status": "error", "error": "Order 99 not found in ledger" }
+```
+
+The same payload is recorded on `AgentResult.toolCalls`, and `runStream()` emits a `tool_error` event so a stream never leaves a `tool_start` without a terminal event.
+
+Only the error message is forwarded, truncated to 500 characters. Stack traces are never sent to the model or written into the transcript.
+
+Set `toolErrorHandling: 'throw'` to end the run instead, resolved per run with the precedence: `RunInput`, then `AgentConfig`, then `AgenticModuleOptions`, then the default.
+
+Framework errors are always fatal regardless of this setting, because they signal misconfiguration rather than a recoverable tool failure. Cancellation observed during a tool invocation is reported as `ExecutionCancelledError`.
+
 ## Errors
 
 ```typescript
@@ -285,6 +305,9 @@ class AgenticError extends Error {}
 class ToolValidationError extends AgenticError {
   toolName: string;
   issues: string[];
+}
+class PolicyNotRegisteredError extends AgenticError {
+  policyName: string;
 }
 class ExecutionLimitExceededError extends AgenticError {
   kind: 'max_iterations' | 'max_tool_calls' | 'timeout' | 'max_total_tokens';
@@ -294,7 +317,7 @@ class ExecutionCancelledError extends AgenticError {}
 class RuntimeNotConfiguredError extends AgenticError {}
 ```
 
-`ToolValidationError` is reported back to the model rather than thrown. Budget and cancellation errors are thrown to the caller.
+`ToolValidationError` is reported back to the model rather than thrown. Budget, cancellation, and configuration errors are thrown to the caller.
 
 ## Runtime Contracts
 
@@ -345,10 +368,11 @@ type AgentStreamEvent =
       approvalId: string;
       reason: string;
     }
+  | { type: 'tool_error'; id?: string; toolName: string; error: string }
   | { type: 'complete'; sessionId: string; output: string };
 ```
 
-These event types are public. Ordering and token behavior currently depend on the selected adapter.
+These event types are public. With the built-in runtime each tool call ends in exactly one of `tool_result`, `approval_required`, or `tool_error`. Ordering and token behavior for a delegated `RuntimeAdapter` depend on that adapter.
 
 ## `AgentRunner`
 

@@ -40,6 +40,21 @@ export class ExecutionCancelledError extends AgenticError {
   }
 }
 
+/**
+ * Raised when a tool declares a policy that was never registered.
+ *
+ * This is a configuration mistake rather than a recoverable tool failure, so the
+ * runtime surfaces it to the caller instead of reporting it to the model.
+ */
+export class PolicyNotRegisteredError extends AgenticError {
+  constructor(readonly policyName: string) {
+    super(
+      `Policy "${policyName}" is not registered. ` +
+        `Add it to AgenticModule.forFeature({ policies: [${policyName}] }).`,
+    );
+  }
+}
+
 /** Raised when no runtime is available to execute an agent. */
 export class RuntimeNotConfiguredError extends AgenticError {
   constructor() {

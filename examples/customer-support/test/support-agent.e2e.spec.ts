@@ -126,29 +126,36 @@ async function main() {
     assert(false, 'Test 2: Approval flow', err.message);
   }
 
-  // TEST 3: Security context is enforced by the application service
+  // TEST 3: Security context is enforced by the service, and the refusal is
+  // handed back to the model rather than ending the conversation
   try {
     const script = new ScriptedOpenAi()
       .callTools([{ name: 'getOrder', args: { orderId: '123' } }])
-      .reply('I could not access that order.');
+      .reply('You do not have access to that order.');
 
     const moduleRef = await bootstrap(script);
     const runner = moduleRef.get(AgentRunner, { strict: false });
 
-    let caught: unknown;
-    try {
-      await runner.run('customer-support', {
-        sessionId: 'sess_e2e_3',
-        message: 'Show me order 123',
-        context: { userId: 'someone-else' },
-      });
-    } catch (err) {
-      caught = err;
-    }
+    const result = await runner.run('customer-support', {
+      sessionId: 'sess_e2e_3',
+      message: 'Show me order 123',
+      context: { userId: 'someone-else' },
+    });
 
+    const failure = result.toolCalls[0]?.result as any;
     assert(
-      caught instanceof Error && String((caught as Error).message).includes('Access denied'),
+      String(failure?.error).includes('Access denied'),
       'Test 3a: Tool receives the caller identity, not a model-supplied one',
+    );
+
+    const toolMessage = script.requests[1].body.messages.find((m: any) => m.role === 'tool');
+    assert(
+      String(toolMessage?.content).includes('Access denied'),
+      'Test 3b: Refusal reported back to the model',
+    );
+    assert(
+      result.output === 'You do not have access to that order.',
+      'Test 3c: Model answers within the same turn',
     );
 
     await moduleRef.close();

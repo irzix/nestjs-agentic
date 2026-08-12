@@ -148,6 +148,7 @@ The executor owns the behavior that every agent framework needs:
 - iteration over model rounds until a final answer;
 - argument validation, which drops undeclared keys and rejects incomplete calls before an application method runs;
 - governed tool invocation through `ResolvedTool.execute()`;
+- reporting a thrown tool error back to the model so the turn can recover, while framework configuration errors stay fatal;
 - suspension when a policy requires approval;
 - bounded execution via `ExecutionLimits` and an `AbortSignal`;
 - token and tool lifecycle streaming through the shared `AgentStreamEvent` union.
@@ -186,9 +187,9 @@ The independent runtime milestone will move common model and tool-loop behavior 
 
 `AgentRunner.runStream()` exposes `AgentStreamEvent` values.
 
-With the built-in runtime, events follow a defined order per round: model tokens, then `tool_start`, then either `tool_result` or `approval_required`, and finally `complete`. Adapters that implement `ModelAdapter.stream()` produce incremental tokens; those that only implement `generate()` emit the round content as a single token event.
+With the built-in runtime, events follow a defined order per round: model tokens, then `tool_start`, then exactly one of `tool_result`, `approval_required`, or `tool_error`, and finally `complete`. Adapters that implement `ModelAdapter.stream()` produce incremental tokens; those that only implement `generate()` emit the round content as a single token event.
 
-When execution is delegated to a `RuntimeAdapter`, event behavior depends on that adapter. If it does not implement `stream()`, the runner converts the completed `AgentResult` into tool and completion events. Errors currently propagate as thrown exceptions rather than stream events; a canonical error event is roadmap work.
+When execution is delegated to a `RuntimeAdapter`, event behavior depends on that adapter. If it does not implement `stream()`, the runner converts the completed `AgentResult` into tool and completion events. Failures that end a run, such as an exhausted budget or cancellation, still propagate as thrown errors rather than stream events.
 
 ## State, Sessions, and Memory
 

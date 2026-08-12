@@ -2,6 +2,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import { APPROVAL_STORE, POLICY_INSTANCES } from '../constants';
+import { PolicyNotRegisteredError } from '../errors';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
 import type {
@@ -116,10 +117,7 @@ export class LocalToolProvider {
           const policy = this.resolvePolicy(Constructor, policyMap);
 
           if (!policy) {
-            throw new Error(
-              `Policy "${Constructor.name}" is not registered. ` +
-                `Add it to AgenticModule.forFeature({ policies: [${Constructor.name}] }).`,
-            );
+            throw new PolicyNotRegisteredError(Constructor.name);
           }
 
           const result = await policy.evaluate(agentContext, tool.toolName, args);
