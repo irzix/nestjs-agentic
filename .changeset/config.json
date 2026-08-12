@@ -2,10 +2,26 @@
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "nestjs-agentic",
+      "@nestjs-agentic/core",
+      "@nestjs-agentic/memory",
+      "@nestjs-agentic/experience",
+      "@nestjs-agentic/rag",
+      "@nestjs-agentic/orchestration",
+      "@nestjs-agentic/evaluation",
+      "@nestjs-agentic/openai",
+      "@nestjs-agentic/adk",
+      "@nestjs-agentic/langgraph"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["example-customer-support"]
+  "privatePackages": { "version": false, "tag": false },
+  "___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
+    "onlyUpdatePeerDependentsWhenOutOfRange": true
+  }
 }
