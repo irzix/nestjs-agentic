@@ -1,3 +1,4 @@
+import type { ExecutionLimits } from './execution.interface';
 import type { ModelConfig } from './runtime.interface';
 
 export interface AgentConfig {
@@ -6,12 +7,17 @@ export interface AgentConfig {
   tools: object[];
   /**
    * Sub-agents that this agent can delegate work to.
-   * Each sub-agent is automatically wrapped as a ResolvedTool.
-   * @future Multi-agent orchestration — implementation planned for v0.2.
+   * Not executed automatically by AgentRunner in the current release; use
+   * `@nestjs-agentic/orchestration` for explicit delegation.
    */
   subAgents?: AgentProvider[];
   /** Override the default model defined in AgenticModule.forRoot(). */
   model?: ModelConfig;
+  /**
+   * Execution budgets applied when the built-in runtime runs this agent.
+   * Overrides module-level limits and can be overridden per run.
+   */
+  limits?: ExecutionLimits;
 }
 
 export interface AgentProvider {

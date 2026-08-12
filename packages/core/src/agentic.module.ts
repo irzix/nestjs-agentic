@@ -8,8 +8,10 @@ import {
 } from './constants';
 import { ToolDiscoveryService } from './discovery/tool-discovery.service';
 import type { AgentProvider, ToolPolicy, StateStore } from './interfaces';
+import { MODEL_ADAPTER } from './interfaces/model.interface';
 import { STATE_STORE } from './interfaces/state-store.interface';
 import { LocalToolProvider } from './providers/local-tool.provider';
+import { AgentExecutor } from './services/agent-executor.service';
 import { AgentRunner, AgenticModuleOptions } from './services/agent-runner.service';
 import { ApprovalService } from './services/approval.service';
 import { InMemoryApprovalStore } from './stores/in-memory-approval.store';
@@ -32,6 +34,7 @@ export interface ForFeatureOptions {
 const CORE_PROVIDERS: Provider[] = [
   ToolDiscoveryService,
   LocalToolProvider,
+  AgentExecutor,
   AgentRunner,
   ApprovalService,
   { provide: APPROVAL_STORE, useClass: InMemoryApprovalStore },
@@ -50,22 +53,31 @@ export class AgenticModule {
       ? { provide: STATE_STORE, useValue: options.stateStore }
       : { provide: STATE_STORE, useClass: InMemoryStateStore };
 
+    // Registering the adapter here keeps it resolvable by AgentExecutor, which is
+    // instantiated inside this module rather than in the consuming module.
+    const modelAdapterProviders: Provider[] = options.modelAdapter
+      ? [{ provide: MODEL_ADAPTER, useValue: options.modelAdapter }]
+      : [];
+
     return {
       module: AgenticModule,
       global: true,
       providers: [
         { provide: AGENTIC_OPTIONS, useValue: options },
         stateStoreProvider,
+        ...modelAdapterProviders,
         ...CORE_PROVIDERS,
       ],
       exports: [
         AgentRunner,
+        AgentExecutor,
         ApprovalService,
         LocalToolProvider,
         ToolDiscoveryService,
         STATE_STORE,
         APPROVAL_STORE,
         SESSION_STORE,
+        ...(options.modelAdapter ? [MODEL_ADAPTER] : []),
       ],
     };
   }

@@ -169,6 +169,133 @@ interface ToolPolicy {
 
 Policies execute in declaration order. A deny or approval decision stops execution before the application tool method is called.
 
+## Model Contracts
+
+Registering a `ModelAdapter` activates the built-in agent runtime.
+
+```typescript
+const MODEL_ADAPTER: symbol;
+
+interface ModelAdapter {
+  generate(request: ModelRequest): Promise<ModelResponse>;
+  stream?(request: ModelRequest): AsyncIterable<ModelStreamChunk>;
+}
+
+interface ModelRequest {
+  model: ModelConfig;
+  messages: ModelMessage[];
+  tools: ModelToolSchema[];
+  signal?: AbortSignal;
+  metadata: {
+    sessionId: string;
+    traceId: string;
+    executionId: string;
+    iteration: number;
+  };
+}
+
+interface ModelResponse {
+  content: string;
+  toolCalls?: ModelToolCall[];
+  usage?: ModelUsage;
+  finishReason?: 'stop' | 'tool_calls' | 'length' | 'content_filter' | 'unknown';
+}
+
+type ModelMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string; toolCalls?: ModelToolCall[] }
+  | { role: 'tool'; toolCallId: string; toolName: string; content: string };
+
+interface ModelToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+interface ModelToolSchema {
+  name: string;
+  description: string;
+  parameters: ToolParamSchema[];
+}
+
+interface ModelUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+type ModelStreamChunk =
+  | { type: 'token'; text: string }
+  | { type: 'response'; response: ModelResponse };
+```
+
+A `ModelAdapter` is responsible only for provider communication. It must not execute tools, evaluate policies, or drive the loop. Implementations of `stream()` must finish by yielding a `response` chunk containing the complete round.
+
+## Execution Budgets
+
+```typescript
+interface ExecutionLimits {
+  maxIterations?: number; // default 10
+  maxToolCalls?: number; // default 32
+  timeoutMs?: number; // unlimited when omitted
+  maxTotalTokens?: number; // unlimited when omitted
+}
+```
+
+Limits resolve per run with the precedence: `RunInput.limits`, then `AgentConfig.limits`, then `AgenticModuleOptions.limits`, then framework defaults.
+
+## `AgentExecutor`
+
+```typescript
+interface AgentExecutionInput {
+  sessionId: string;
+  message: string;
+  model: ModelConfig;
+  tools: ResolvedTool[];
+  instructions?: string;
+  traceId?: string;
+  history?: ModelMessage[];
+  limits?: ExecutionLimits;
+  signal?: AbortSignal;
+}
+
+class AgentExecutor {
+  isAvailable(): boolean;
+  execute(input: AgentExecutionInput): Promise<AgentResult>;
+  stream(input: AgentExecutionInput): AsyncIterable<AgentStreamEvent>;
+}
+```
+
+`AgentExecutor` is registered by `AgenticModule.forRoot()`. `AgentRunner` uses it automatically, so most applications do not call it directly.
+
+Loop behavior per round:
+
+1. Send instructions, history, and the user message to the model.
+2. If no tool calls are returned, finish with the model content.
+3. Validate each requested call against the tool's declared parameters. Undeclared keys are dropped, and invalid calls are reported to the model without invoking the application method.
+4. Execute valid calls through `ResolvedTool.execute()`, which applies policies.
+5. Stop the turn when a policy returns `require_approval`, surfacing the `approvalId`.
+6. Append tool results and continue until a final answer or an exhausted budget.
+
+## Errors
+
+```typescript
+class AgenticError extends Error {}
+class ToolValidationError extends AgenticError {
+  toolName: string;
+  issues: string[];
+}
+class ExecutionLimitExceededError extends AgenticError {
+  kind: 'max_iterations' | 'max_tool_calls' | 'timeout' | 'max_total_tokens';
+  limit: number;
+}
+class ExecutionCancelledError extends AgenticError {}
+class RuntimeNotConfiguredError extends AgenticError {}
+```
+
+`ToolValidationError` is reported back to the model rather than thrown. Budget and cancellation errors are thrown to the caller.
+
 ## Runtime Contracts
 
 ```typescript
@@ -192,7 +319,7 @@ interface RuntimeAdapter {
 }
 ```
 
-The `0.4.x` runtime contract does not yet standardize cancellation, model messages, usage, checkpoints, or provider errors. Runtime adapters are responsible for their own model behavior until the independent runtime contracts described in the roadmap are introduced.
+`RuntimeAdapter` remains supported for applications that delegate an entire turn to an external runtime. It does not standardize cancellation, model messages, usage, or checkpoints, so such adapters own their behavior. Prefer `ModelAdapter` with the built-in runtime for new applications.
 
 ### Stream Events
 
@@ -236,6 +363,8 @@ interface RunInput {
     permissions?: string[];
     data?: Record<string, unknown>;
   };
+  limits?: ExecutionLimits;
+  signal?: AbortSignal;
 }
 
 class AgentRunner {
@@ -247,9 +376,15 @@ class AgentRunner {
 }
 ```
 
-`run()` resolves the registered agent, creates context, resolves governed tools, and delegates to `RuntimeAdapter.execute()`.
+`run()` resolves the registered agent, creates the context, and resolves governed tools. Execution is then routed by registration:
 
-`runStream()` delegates to `RuntimeAdapter.stream()` when available. Otherwise, it converts a completed `AgentResult` into tool, token, and completion events.
+| Registered | Behavior |
+| --- | --- |
+| `ModelAdapter` | Runs the built-in `AgentExecutor` loop. Takes precedence when both are registered. |
+| `RuntimeAdapter` only | Delegates the whole turn to that adapter, as in earlier releases. |
+| Neither | Throws `RuntimeNotConfiguredError`. |
+
+`runStream()` follows the same routing. With a `RuntimeAdapter` that has no `stream()`, it converts a completed `AgentResult` into tool, token, and completion events.
 
 ## Approval API
 
@@ -284,6 +419,10 @@ class ApprovalService {
 interface AgenticModuleOptions {
   defaultModel: ModelConfig;
   stateStore?: StateStore;
+  /** Activates the built-in runtime. Equivalent to providing MODEL_ADAPTER. */
+  modelAdapter?: ModelAdapter;
+  /** Default execution budgets for every run. */
+  limits?: ExecutionLimits;
 }
 
 interface ForFeatureOptions {
@@ -303,6 +442,8 @@ Call `forRoot()` once to register core services and defaults. Call `forFeature()
 ```typescript
 AgenticModule.forRoot({
   defaultModel: { provider: 'mock', model: 'deterministic' },
+  modelAdapter: myModelAdapter,
+  limits: { maxIterations: 6 },
 });
 
 AgenticModule.forFeature({
@@ -312,7 +453,9 @@ AgenticModule.forFeature({
 });
 ```
 
-A `RUNTIME_ADAPTER` provider is required by `AgentRunner` and must be registered by the application.
+The application must register either a `ModelAdapter` or a `RuntimeAdapter`. Passing `modelAdapter` to `forRoot()` is the recommended path, because `AgentExecutor` is instantiated inside `AgenticModule` and resolves the token from that context.
+
+`forFeature()` also registers agents, tool sets, and policies in the `AgenticModule` context. Any application services those classes inject must therefore be exported from a `@Global()` module.
 
 ## Session and State Stores
 
@@ -390,6 +533,32 @@ new LoggingPolicy({
 
 This policy logs the attempted invocation and always returns `allow`. It is not a persistent audit store.
 
+## `MockModelAdapter`
+
+Deterministic `ModelAdapter` for testing the full loop without a provider.
+
+```typescript
+const model = new MockModelAdapter();
+
+model
+  .whenAsked('Refund $600 for order #42')
+  .callTool('lookupOrder', { orderId: '42' })
+  .callTool('refundOrder', { orderId: '42', amount: 600 })
+  .reply('Refund submitted.');
+
+// Multiple tools in a single round
+model.whenAsked('Check both orders').callTools([
+  { name: 'lookupOrder', args: { orderId: '1' } },
+  { name: 'lookupOrder', args: { orderId: '2' } },
+]);
+
+model.reset();
+```
+
+Each `callTool` or `callTools` entry describes one model round, and `reply()` ends the script with a final answer. Rounds are selected by counting assistant messages in the request, so scripts remain stable across concurrent runs. Unscripted messages return a deterministic mock response.
+
+Pass `new MockModelAdapter({ usagePerRound })` to exercise token budgets.
+
 ## `MockRuntimeAdapter`
 
 ```typescript
@@ -422,7 +591,8 @@ interface AgentObserver {
 
 | Token | Purpose | Current behavior |
 | --- | --- | --- |
-| `RUNTIME_ADAPTER` | Selected runtime implementation | Required application provider. |
+| `MODEL_ADAPTER` | Model provider used by the built-in runtime | Optional; activates `AgentExecutor` when registered. |
+| `RUNTIME_ADAPTER` | External runtime that owns the whole turn | Optional; used when no `ModelAdapter` is registered. |
 | `APPROVAL_STORE` | `ApprovalStore` implementation | Defaults to `InMemoryApprovalStore`. |
 | `SESSION_STORE` | `SessionStore` implementation | Defaults to `InMemorySessionStore`. |
 | `STATE_STORE` | `StateStore` implementation | Defaults to `InMemoryStateStore`. |

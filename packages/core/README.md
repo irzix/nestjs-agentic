@@ -22,9 +22,10 @@
 
 - **Decorator Suite**: `@Agent()`, `@ToolSet()`, `@Tool()`, `@Param()`, `@Context()`, `@UsePolicies()`
 - **Policy Engine**: 3-state evaluation (`allow`, `deny`, `require_approval`)
+- **Built-in Agent Runtime**: `AgentExecutor` runs the governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming, driven by a provider-neutral `ModelAdapter`
 - **HITL Lifecycle (Experimental)**: `ApprovalService` and in-memory/custom `ApprovalStore` protect one process-local pending invocation; approval is not a durable workflow pause and does not resume the original model turn.
 - **Session Management**: `SessionStore` and context pre-binding
-- **Mock Runtime**: `MockRuntimeAdapter` for LLM-free unit testing
+- **Mock Runtime**: `MockRuntimeAdapter` and `MockModelAdapter` for LLM-free unit testing, including multi-round tool-calling scenarios
 
 ## Installation
 
