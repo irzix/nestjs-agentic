@@ -1,7 +1,13 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
-import { AGENT_METADATA, AGENT_PROVIDERS, AGENTIC_OPTIONS, RUNTIME_ADAPTER } from '../constants';
+import {
+  AGENT_METADATA,
+  AGENT_PROVIDERS,
+  AGENTIC_OPTIONS,
+  RUNTIME_ADAPTER,
+  SESSION_STORE,
+} from '../constants';
 import { RuntimeNotConfiguredError } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
 import type {
@@ -18,6 +24,15 @@ import type {
   ExecutionLimits,
   ToolErrorHandling,
 } from '../interfaces/execution.interface';
+import type { ModelMessage } from '../interfaces/model.interface';
+import {
+  DEFAULT_SESSION_MAX_MESSAGES,
+  isSessionRecord,
+  type SessionOptions,
+  type SessionRecord,
+  type SessionStore,
+} from '../interfaces/session.interface';
+import { trimHistory, withoutSystemMessages } from '../utils/session-history';
 import type { ModelAdapter } from '../interfaces/model.interface';
 
 import type { StateStore } from '../interfaces/state-store.interface';
@@ -39,6 +54,10 @@ export interface AgenticModuleOptions {
    * which hands the error to the model instead of ending the run.
    */
   toolErrorHandling?: ToolErrorHandling;
+  /** Custom SessionStore used for conversation history. */
+  sessionStore?: SessionStore;
+  /** Conversation history behavior for the built-in runtime. */
+  session?: SessionOptions;
 }
 
 export interface RunInput {
@@ -55,6 +74,11 @@ export interface RunInput {
   limits?: ExecutionLimits;
   /** Overrides the agent and module tool error strategy for this run. */
   toolErrorHandling?: ToolErrorHandling;
+  /**
+   * Set false to run this turn without replaying or saving conversation history.
+   * Defaults to the module session setting.
+   */
+  history?: boolean;
   /** Cancels the run when aborted. Honored by the built-in runtime. */
   signal?: AbortSignal;
 }
@@ -78,7 +102,60 @@ export class AgentRunner {
     private readonly localToolProvider: LocalToolProvider,
     private readonly moduleRef: ModuleRef,
     @Optional() private readonly executor?: AgentExecutor,
+    @Optional() @Inject(SESSION_STORE) private readonly sessionStore?: SessionStore,
   ) {}
+
+  /**
+   * Conversation history is scoped by tenant as well as session, so the same
+   * session identifier used by two tenants can never share a transcript.
+   */
+  private sessionKey(context: AgentContext): string {
+    const tenantId = context.security.tenantId;
+    return tenantId ? `${tenantId}:${context.sessionId}` : context.sessionId;
+  }
+
+  private resolveSessionStore(): SessionStore | undefined {
+    return this.options.sessionStore ?? this.sessionStore;
+  }
+
+  private historyEnabled(input: RunInput): boolean {
+    const configured = this.options.session?.enabled ?? true;
+    return (input.history ?? configured) && Boolean(this.resolveSessionStore());
+  }
+
+  private async loadHistory(context: AgentContext): Promise<ModelMessage[]> {
+    const store = this.resolveSessionStore();
+    if (!store) return [];
+
+    try {
+      const stored = await store.get(this.sessionKey(context));
+      if (!isSessionRecord(stored)) return [];
+
+      return trimHistory(
+        withoutSystemMessages(stored.messages),
+        this.options.session?.maxMessages ?? DEFAULT_SESSION_MAX_MESSAGES,
+      );
+    } catch {
+      // A history read must never fail the turn; the agent continues stateless.
+      return [];
+    }
+  }
+
+  private async saveHistory(context: AgentContext, messages: ModelMessage[]): Promise<void> {
+    const store = this.resolveSessionStore();
+    if (!store) return;
+
+    const record: SessionRecord = {
+      sessionId: context.sessionId,
+      messages: trimHistory(
+        withoutSystemMessages(messages),
+        this.options.session?.maxMessages ?? DEFAULT_SESSION_MAX_MESSAGES,
+      ),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await store.set(this.sessionKey(context), record);
+  }
 
   private getAgentMap(): Map<string, AgentProvider> {
     let providers = Array.isArray(this.agentProviders) ? this.agentProviders : [];
@@ -161,6 +238,8 @@ export class AgentRunner {
     const prepared = this.prepare(agentName, input);
 
     if (this.useBuiltInRuntime()) {
+      const withHistory = this.historyEnabled(input);
+
       return this.executor!.execute({
         sessionId: input.sessionId,
         message: input.message,
@@ -171,6 +250,10 @@ export class AgentRunner {
         limits: prepared.limits,
         toolErrorHandling: prepared.toolErrorHandling,
         signal: input.signal,
+        history: withHistory ? await this.loadHistory(prepared.context) : undefined,
+        onTranscript: withHistory
+          ? (messages) => this.saveHistory(prepared.context, messages)
+          : undefined,
       });
     }
 
@@ -187,6 +270,8 @@ export class AgentRunner {
     const prepared = this.prepare(agentName, input);
 
     if (this.useBuiltInRuntime()) {
+      const withHistory = this.historyEnabled(input);
+
       yield* this.executor!.stream({
         sessionId: input.sessionId,
         message: input.message,
@@ -197,6 +282,10 @@ export class AgentRunner {
         limits: prepared.limits,
         toolErrorHandling: prepared.toolErrorHandling,
         signal: input.signal,
+        history: withHistory ? await this.loadHistory(prepared.context) : undefined,
+        onTranscript: withHistory
+          ? (messages) => this.saveHistory(prepared.context, messages)
+          : undefined,
       });
       return;
     }

@@ -115,7 +115,7 @@ export class MockModelAdapter implements ModelAdapter {
 
   private resolveRound(request: ModelRequest): ModelResponse {
     const turns = this.scripts.get(this.currentUserMessage(request)) ?? [];
-    const turnIndex = request.messages.filter((m) => m.role === 'assistant').length;
+    const turnIndex = this.roundIndex(request);
     const turn = turns[turnIndex];
 
     if (!turn) {
@@ -159,6 +159,22 @@ export class MockModelAdapter implements ModelAdapter {
       if (message.role === 'user') return message.content;
     }
     return '';
+  }
+
+  /**
+   * Which round of the current turn this call represents.
+   *
+   * Only assistant messages after the latest user message are counted, so
+   * replayed conversation history does not shift the script.
+   */
+  private roundIndex(request: ModelRequest): number {
+    let index = 0;
+    for (let i = request.messages.length - 1; i >= 0; i--) {
+      const message = request.messages[i];
+      if (message.role === 'user') break;
+      if (message.role === 'assistant') index++;
+    }
+    return index;
   }
 
   private tokenize(content: string): string[] {

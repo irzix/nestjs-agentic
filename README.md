@@ -45,6 +45,7 @@ The current release line is `0.4.x`. Core primitives are available; runtime, per
 | Other model providers | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same contract. |
 | Human approval | Experimental | The runtime suspends a turn on `require_approval`; pause/resume is not durable across process restarts. |
 | ADK prototype and LangGraph adapter | Experimental | `@nestjs-agentic/adk` is currently a synthetic runtime prototype; `@nestjs-agentic/langgraph` provides limited compatibility with adapter-specific behavior. Full graph execution is not part of the current LangGraph adapter. |
+| Conversation history | Available | Replayed and persisted per session through `SessionStore`, scoped by tenant. Durable in-flight execution state is still planned. |
 | Streaming and state | Experimental | Shared abstractions exist, but execution recovery and adapter semantics are not yet unified. |
 | Memory, RAG, experience, orchestration, evaluation | Experimental | Opt-in packages available for evaluation and feedback. |
 | Durable execution and observability | Planned | Checkpoint recovery, resumable HITL, standardized tracing, and audit events are roadmap work. |

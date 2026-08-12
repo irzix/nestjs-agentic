@@ -53,6 +53,10 @@ export class AgenticModule {
       ? { provide: STATE_STORE, useValue: options.stateStore }
       : { provide: STATE_STORE, useClass: InMemoryStateStore };
 
+    const sessionStoreProvider: Provider = options.sessionStore
+      ? { provide: SESSION_STORE, useValue: options.sessionStore }
+      : { provide: SESSION_STORE, useClass: InMemorySessionStore };
+
     // Registering the adapter here keeps it resolvable by AgentExecutor, which is
     // instantiated inside this module rather than in the consuming module.
     const modelAdapterProviders: Provider[] = options.modelAdapter
@@ -65,6 +69,7 @@ export class AgenticModule {
       providers: [
         { provide: AGENTIC_OPTIONS, useValue: options },
         stateStoreProvider,
+        sessionStoreProvider,
         ...modelAdapterProviders,
         ...CORE_PROVIDERS,
       ],

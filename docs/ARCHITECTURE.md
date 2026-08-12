@@ -199,12 +199,12 @@ These concepts exist today but do not yet form one execution lifecycle:
 
 | Concept | Current role |
 | --- | --- |
-| `SessionStore` | Session data contract with an in-memory default. |
+| `SessionStore` | Conversation history for the built-in runtime, keyed by tenant and session, with an in-memory default. |
 | `StateStore` | General state abstraction with in-memory and Redis implementations. It can be registered through `AgenticModule`. |
 | Runtime checkpointer | Adapter-specific checkpoint facility, currently separate from core stores. |
 | Memory packages | Explicitly constructed short-term, semantic, episodic, and scratchpad memory primitives. |
 
-`AgentRunner` does not currently persist or recover an execution through these stores automatically. The durable execution milestone will define clear ownership for sessions, checkpoints, memory, and audit events.
+`AgentRunner` persists conversation history through `SessionStore` so turns on the same session continue each other. It does not yet persist or recover an in-flight execution, so a process restart still loses a suspended turn. The durable execution milestone covers checkpoints, resumable approval, and audit events.
 
 ## Orchestration: Current Behavior
 

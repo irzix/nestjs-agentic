@@ -484,6 +484,39 @@ Two `forFeature()` rules follow from it registering providers in the `AgenticMod
 1. Register an agent together with its tool sets and policies in a **single** `forFeature()` call. Separate calls create separate module contexts, so an agent cannot inject a tool set registered by another call.
 2. Application services injected by agents or tool sets must be exported from a `@Global()` module.
 
+## Conversation History
+
+The built-in runtime replays and persists conversation per session, so a second `run()` on the same `sessionId` continues the conversation.
+
+```typescript
+interface SessionOptions {
+  enabled?: boolean; // default true
+  maxMessages?: number; // default 40
+}
+
+interface SessionRecord {
+  sessionId: string;
+  messages: ModelMessage[];
+  updatedAt: string;
+}
+```
+
+Behavior:
+
+- History is stored through `SessionStore`, defaulting to the process-local `InMemorySessionStore`. Provide `sessionStore` to `forRoot()` for anything durable.
+- The storage key is `tenantId:sessionId` when a tenant is present, so the same session identifier used by two tenants can never share a transcript.
+- System messages are not stored, because agent instructions are applied again on every turn.
+- Retention keeps the most recent `maxMessages`. Trimming never leaves a tool result without the assistant message that requested it, which providers reject.
+- History is written when a turn ends, including when it suspends for approval. A turn that throws does not persist a partial transcript.
+- A failing history read never fails the turn; the agent continues without history.
+- Set `RunInput.history` to `false` for a stateless turn, or `session.enabled` to `false` to disable it globally.
+- Applies to the built-in runtime only. A `RuntimeAdapter` receives a single message and owns its own state.
+
+```typescript
+await runner.run('assistant', { sessionId: 's1', message: 'My name is Sara' });
+await runner.run('assistant', { sessionId: 's1', message: 'What is my name?' });
+```
+
 ## Session and State Stores
 
 ```typescript
@@ -492,6 +525,9 @@ interface SessionStore {
   set(sessionId: string, data: unknown): Promise<void>;
   delete(sessionId: string): Promise<void>;
 }
+
+// Values written by the runtime can be narrowed with:
+function isSessionRecord(value: unknown): value is SessionRecord;
 
 interface StateStore {
   get<T = unknown>(key: string): Promise<T | null>;
