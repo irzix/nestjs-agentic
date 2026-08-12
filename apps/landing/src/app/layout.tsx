@@ -17,29 +17,29 @@ const mono = JetBrains_Mono({
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://agentic.alireza.work/';
 
+const productTitle = 'nestjs-agentic — NestJS-native runtime for governed AI agents';
+const productDescription =
+  'Define agents and tools with NestJS, enforce policy before side effects, and keep model integrations replaceable. Core primitives are available; adapters and optional capabilities are experimental.';
+
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: 'nestjs-agentic — Agentic Infrastructure & Governance Layer for NestJS',
+    default: productTitle,
     template: '%s | nestjs-agentic',
   },
-  description:
-    'The official Agentic Integration & Governance Layer for NestJS. Build, govern, and orchestrate autonomous AI agents inside NestJS services with native DI, 3-state policy guards, and Human-in-the-Loop approvals.',
+  description: productDescription,
   keywords: [
     'NestJS',
-    'NestJS Agentic',
-    'Agentic Framework',
     'NestJS AI Agents',
-    'Agentic Infrastructure',
-    'Multi-Agent Orchestration',
-    'Sub-Agents NestJS',
-    'Governance Layer',
+    'Governed AI Agents',
+    'NestJS Runtime',
+    'NestJS Dependency Injection',
+    'AI Tool Governance',
     'Human in the Loop',
     'HITL NestJS',
-    'Google ADK NestJS',
-    'Vercel AI SDK',
-    'LangGraph NestJS',
-    'MCP Protocol NestJS',
+    'Google ADK Adapter Prototype',
+    'LangGraph Compatibility',
+    'Agent Testing',
     'irzix',
   ],
   authors: [{ name: 'irzix', url: 'https://github.com/irzix' }],
@@ -51,9 +51,8 @@ export const metadata: Metadata = {
     telephone: false,
   },
   openGraph: {
-    title: 'nestjs-agentic — Agentic Infrastructure & Governance Layer for NestJS',
-    description:
-      'Build, govern, and orchestrate autonomous AI agents inside NestJS backend services with native DI, 3-state policy guards, and Human-in-the-Loop approvals.',
+    title: productTitle,
+    description: productDescription,
     url: siteUrl,
     siteName: 'nestjs-agentic',
     images: [
@@ -69,9 +68,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'nestjs-agentic — Agentic Infrastructure & Governance Layer for NestJS',
-    description:
-      'Build, govern, and orchestrate autonomous AI agents inside NestJS backend services with native DI, 3-state policy guards, and Human-in-the-Loop approvals.',
+    title: productTitle,
+    description: productDescription,
     images: ['https://raw.githubusercontent.com/irzix/nestjs-agentic/main/docs/assets/banner.jpeg'],
     creator: '@irzix',
   },
@@ -98,8 +96,7 @@ const jsonLd = {
       '@type': 'SoftwareApplication',
       '@id': `${siteUrl}/#software`,
       name: 'nestjs-agentic',
-      description:
-        'Agentic Infrastructure & Governance Layer for NestJS Applications. Build, govern, and orchestrate autonomous AI agents with full Dependency Injection, 3-state policies, and Human-in-the-Loop approvals.',
+      description: productDescription,
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Node.js, NestJS',
       programmingLanguage: 'TypeScript',
@@ -121,7 +118,7 @@ const jsonLd = {
       '@id': `${siteUrl}/#website`,
       url: siteUrl,
       name: 'nestjs-agentic',
-      description: 'Agentic Infrastructure & Governance Layer for NestJS',
+      description: 'The NestJS-native runtime for governed AI agents',
       publisher: {
         '@type': 'Person',
         name: 'irzix',

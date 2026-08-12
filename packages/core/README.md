@@ -5,7 +5,7 @@
 <h1 align="center">@nestjs-agentic/core</h1>
 
 <p align="center">
-  <b>Core Primitives, Policy Engine & Execution Layer for nestjs-agentic</b>
+  <b>Available NestJS primitives and governance boundary for the NestJS-native runtime for governed AI agents</b>
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 - **Decorator Suite**: `@Agent()`, `@ToolSet()`, `@Tool()`, `@Param()`, `@Context()`, `@UsePolicies()`
 - **Policy Engine**: 3-state evaluation (`allow`, `deny`, `require_approval`)
-- **HITL Lifecycle**: `ApprovalService` and in-memory/custom `ApprovalStore`
+- **HITL Lifecycle (Experimental)**: `ApprovalService` and in-memory/custom `ApprovalStore` protect one process-local pending invocation; approval is not a durable workflow pause and does not resume the original model turn.
 - **Session Management**: `SessionStore` and context pre-binding
 - **Mock Runtime**: `MockRuntimeAdapter` for LLM-free unit testing
 

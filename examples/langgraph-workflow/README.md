@@ -1,81 +1,55 @@
-# LangGraph Stateful Workflow Example (`example-langgraph-workflow`)
+# LangGraph Compatibility Example (`example-langgraph-workflow`)
 
-A production-ready NestJS example demonstrating **LangGraph agent orchestration** integrated with **nestjs-agentic enterprise governance**, multi-tenant policy enforcement, and parameter context binding.
+A deterministic evaluation example for the experimental `@nestjs-agentic/langgraph` compatibility adapter and NestJS-governed tool closures. It is not a production workflow or a complete LangGraph agent.
 
----
+## Current Scope
 
-## 🌟 Key Architecture Features
+- `LangGraphRuntimeAdapter` wraps `ResolvedTool` closures so policy evaluation and bound `@Context()` values remain at the tool boundary.
+- The example registers the adapter without a model, selecting its synthetic fallback path.
+- The fallback directly invokes tools with generated test arguments and can record a synthetic checkpoint.
+- The adapter does not build or compile a `StateGraph`.
+- Its configured-model path is a single model invocation without a tool-call loop.
+- Its stream events are synthetic and are not model or graph token streaming.
 
-1. **`LangGraphRuntimeAdapter`**: Uses `@nestjs-agentic/langgraph` to map NestJS policy-guarded tool closures (`ResolvedTool`) directly into LangGraph state nodes.
-2. **`InventoryAccessPolicy`**: Enforces strict tenant boundaries and blocks suspended accounts at the policy layer before tools execute.
-3. **`InventoryTools`**: `@ToolSet({ name: 'inventory-tools' })` providing warehouse tools (`checkStock`, `reserveStock`) with `@Context()` pre-binding.
-4. **`InventoryAgent`**: `@Agent({ name: 'inventory-agent' })` bound via `AgenticModule.forFeature()`.
+Because fallback and stream paths can invoke tools with generated arguments, do not use this example with production side effects.
 
----
-
-## 📁 Directory Structure
+## Structure
 
 ```text
 examples/langgraph-workflow/
 ├── src/
-│   ├── agent/
-│   │   └── inventory.agent.ts       # @Agent provider definition
-│   ├── policies/
-│   │   └── inventory-access.policy.ts # Tenant isolation & security policy
-│   ├── tools/
-│   │   └── inventory.tools.ts       # @ToolSet providing warehouse tools
-│   ├── app.module.ts                # AgenticModule.forRoot() & forFeature()
-│   └── test-langgraph.ts            # Integration test suite (8 assertions)
+│   ├── agent/inventory.agent.ts
+│   ├── policies/inventory-access.policy.ts
+│   ├── tools/inventory.tools.ts
+│   ├── app.module.ts
+│   └── test-langgraph.ts
 ├── package.json
 ├── tsconfig.json
 └── README.md
 ```
 
----
-
-## 🚀 Running the Example & Tests
-
-### 1. Execute Integration Tests
-
-Run the dedicated 8-assertion integration test suite:
+## Run the Evaluation Tests
 
 ```bash
 npm test
 ```
 
-### Expected Output:
+The tests exercise the current no-model fallback behavior, policy decisions, and context binding. They do not validate `StateGraph` execution, a model/tool loop, durable recovery, or production isolation.
 
-```text
-🌐 Starting LangGraph Workflow Integration Tests...
-✅ App Context Created Successfully
-  ✅ PASS: Test 1a: Returned correct sessionId
-  ✅ PASS: Test 1b: LangGraph executed inventory tools
-  ✅ PASS: Test 1c: checkStock tool executed via LangGraph closure
-  ✅ PASS: Test 1d: Inventory quantity 150 returned successfully
-  ✅ PASS: Test 1e: AgentContext tenantId pre-bound into @Context() parameter
-  ✅ PASS: Test 2a: Policy decision "deny" returns success: false
-  ✅ PASS: Test 2b: Execution status is "denied"
-  ✅ PASS: Test 2c: Policy evaluation reason contains suspension details
-
-  📊 Summary: 8 passed, 0 failed.
-```
-
----
-
-## 💡 Code Snippet: Registering LangGraph Adapter in NestJS
+## Adapter Registration Used by the Example
 
 ```typescript
 import { Module } from '@nestjs/common';
 import { AgenticModule, RUNTIME_ADAPTER } from '@nestjs-agentic/core';
 import { LangGraphRuntimeAdapter } from '@nestjs-agentic/langgraph';
 import { InventoryAgent } from './agent/inventory.agent';
-import { InventoryTools } from './tools/inventory.tools';
 import { InventoryAccessPolicy } from './policies/inventory-access.policy';
+import { InventoryTools } from './tools/inventory.tools';
 
 @Module({
   imports: [
     AgenticModule.forRoot({
-      defaultModel: { provider: 'google', model: 'gemini-2.0-flash' },
+      defaultModel: { provider: 'mock', model: 'compatibility-evaluation' },
     }),
     AgenticModule.forFeature({
       agents: [InventoryAgent],
@@ -84,10 +58,7 @@ import { InventoryAccessPolicy } from './policies/inventory-access.policy';
     }),
   ],
   providers: [
-    {
-      provide: RUNTIME_ADAPTER,
-      useClass: LangGraphRuntimeAdapter,
-    },
+    { provide: RUNTIME_ADAPTER, useClass: LangGraphRuntimeAdapter },
   ],
 })
 export class AppModule {}

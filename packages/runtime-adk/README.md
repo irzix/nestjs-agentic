@@ -5,20 +5,23 @@
 <h1 align="center">@nestjs-agentic/adk</h1>
 
 <p align="center">
-  <b>Google ADK & Gemini Runtime Adapter for nestjs-agentic</b>
+  <b>Experimental synthetic runtime prototype published under the @nestjs-agentic/adk package name</b>
 </p>
 
-<p align="center">
-  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%2B-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS Compatible" /></a>
-  <a href="https://www.npmjs.com/package/@nestjs-agentic/adk"><img src="https://img.shields.io/npm/v/@nestjs-agentic/adk.svg?color=E0234E" alt="NPM Version" /></a>
-  <a href="https://github.com/irzix/nestjs-agentic/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@nestjs-agentic/adk.svg?color=blue" alt="License" /></a>
-</p>
+## Status and Current Scope
 
----
+**Experimental:** this package is available for evaluation of the runtime boundary and governed `ResolvedTool` closures. Despite its package name, it does not currently integrate with provider-native Google ADK APIs and is not a production model adapter.
 
-## Overview
+The current implementation:
 
-`@nestjs-agentic/adk` connects `nestjs-agentic` tool definitions and policy guardrails to Google's **Agent Development Kit (ADK)** and Gemini LLM models.
+- does not create or run a provider-native Google ADK agent;
+- does not make a Gemini or other model call;
+- does not derive tool calls or arguments from the prompt;
+- invokes resolved tools in registration order with an empty argument object, stopping early only when a tool returns `pending_approval`;
+- returns a synthetic completion string; and
+- relies on the core fallback for `runStream()` because it has no native stream implementation.
+
+Because empty arguments can reach application methods after policy evaluation, do not use this adapter with tools that perform side effects. Use `MockRuntimeAdapter` for deterministic governance tests while the independent runtime and provider contracts are developed.
 
 ## Installation
 
@@ -26,9 +29,7 @@
 npm install nestjs-agentic @nestjs-agentic/adk
 ```
 
-## Quick Start
-
-Register `AdkRuntimeAdapter` as the `RUNTIME_ADAPTER` provider in your root application module:
+## Evaluation Registration
 
 ```typescript
 import { Module } from '@nestjs/common';
@@ -48,13 +49,9 @@ import { AdkRuntimeAdapter } from '@nestjs-agentic/adk';
 export class AppModule {}
 ```
 
-## Environment Variables
+Setting `GEMINI_API_KEY` does not cause the current adapter to make a provider request. The option exists in the package surface but is not consumed by a native model call today.
 
-Configure your Gemini API key in your environment:
-
-```bash
-export GEMINI_API_KEY="your-gemini-api-key"
-```
+See the [product roadmap](https://github.com/irzix/nestjs-agentic/blob/main/docs/ROADMAP.md) for the planned independent runtime and adapter contract work.
 
 ## License
 

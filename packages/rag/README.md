@@ -1,189 +1,120 @@
 # @nestjs-agentic/rag
 
-Production-grade, modular, and domain-agnostic **RAG (Retrieval-Augmented Generation)** engine for **nestjs-agentic**. Built with advanced retrieval strategies, multi-tenant hybrid vector search, knowledge graph traversal, and zero-latency contextual compression.
+Experimental, opt-in retrieval primitives for the NestJS-native runtime for governed AI agents. The package provides a modular `KnowledgeBase`, an in-memory `HybridVectorStore`, retrieval strategies, and knowledge-graph abstractions for evaluation and application-directed integration.
 
----
+It is not automatically attached to `AgentRunner`. Applications own ingestion, retrieval, authorization, persistence, embedding providers, and prompt assembly.
 
-## 🌟 Key Features
+## Status
 
-- 🧩 **Pluggable Strategy Pipeline**: Easily chain Query Expansion, Hierarchical Tree RAG, Late Chunking, Parent-Child Hydration, Re-ranking, and Contextual Compression.
-- ⚡ **Hybrid Vector Store**: Combines sparse keyword matching (BM25 with Min-Max score normalization) with dense vector cosine similarity.
-- 🧠 **Late Chunking**: Blends document-wide global vector embeddings into local chunk vectors to preserve global context.
-- 👨‍👦 **Parent-Child Chunking & Hydration**: High-precision vector search on small child chunks hydrated back to high-context parent sections.
-- 🌐 **Knowledge Graph RAG**: Multi-hop entity relationship graph traversal for complex domain reasoning.
-- 🚀 **Direct Memory Integration**: Implements `SemanticStoreProvider` for direct plug-and-play integration with `@nestjs-agentic/memory`.
+**Experimental:** APIs are published for evaluation and feedback but do not yet carry production guarantees for durability, isolation, retries, or observability.
 
----
-
-## 🏗️ Architecture Pipeline
-
-```mermaid
-flowchart TD
-    UserQuery[User Input Query] --> QE[QueryExpansionStrategy]
-    QE --> KB[KnowledgeBase / HybridVectorStore]
-    KB -->|Top-K Chunks| Hierarchical[HierarchicalRAGStrategy]
-    Hierarchical --> ParentHydrate[ParentChildHydrationStrategy]
-    ParentHydrate --> Rerank[RerankerStrategy]
-    Rerank --> Compress[ContextualCompressionStrategy]
-    Compress --> FinalContext[High-Density LLM Prompt Context]
-```
-
----
-
-## 📦 Installation
+## Installation
 
 ```bash
 npm install @nestjs-agentic/rag @nestjs-agentic/memory nestjs-agentic
 ```
 
----
+## Included Primitives
 
-## 🚀 Quick Start
+- `KnowledgeBase` for splitting, indexing, and querying documents.
+- `HybridVectorStore` for in-memory sparse keyword and optional dense-vector scoring.
+- `RAGPipeline` for pre- and post-retrieval strategies.
+- Query expansion, parent-child hydration, reranking, late chunking, contextual compression, and graph strategies.
+- `VectorStoreAdapter` and `VectorStoreFactory` hooks for application-provided storage integrations.
+- `SemanticStoreProvider` compatibility for explicit use with `@nestjs-agentic/memory`.
+
+The package does not include a built-in Prisma or production pgvector persistence layer. Custom factory adapters delegate storage behavior to application callbacks.
+
+## Quick Start
 
 ```typescript
 import {
-  KnowledgeBase,
-  RAGPipeline,
-  QueryExpansionStrategy,
-  ParentChildHydrationStrategy,
   ContextualCompressionStrategy,
   HybridVectorStore,
+  KnowledgeBase,
+  QueryExpansionStrategy,
+  RAGPipeline,
 } from '@nestjs-agentic/rag';
 
-// 1. Initialize KnowledgeBase
-const kb = new KnowledgeBase();
+const store = new HybridVectorStore({ embeddingProvider });
+const knowledgeBase = new KnowledgeBase({ vectorStore: store });
 
-// 2. Ingest Enterprise Document
-await kb.ingestDocument({
+await knowledgeBase.ingestDocument({
   title: 'Financial Transfer Policy',
-  rawContent: `
-# Section 1: Limits & Roles
-Standard transfers under $1,000 are automatically processed. Wire transfers exceeding $10,000 require finance_officer role authorization.
-
-# Section 2: Auditing
-All high-value ledger operations undergo real-time compliance checks.
-  `,
+  rawContent: 'Transfers above $10,000 require finance officer approval.',
+  metadata: { tenantId: 'acme' },
 });
 
-// 3. Configure RAG Pipeline
 const pipeline = new RAGPipeline({
-  knowledgeBase: kb,
+  knowledgeBase,
   strategies: [
     new QueryExpansionStrategy({
       synonymsMap: { wire: ['transfer', 'payment'] },
     }),
-    new ParentChildHydrationStrategy(),
     new ContextualCompressionStrategy({ maxCharacters: 1500 }),
   ],
 });
 
-// 4. Execute Pipeline
-const result = await pipeline.executePipeline('wire transfer limits');
-console.log(result.compressedContext);
+const context = await pipeline.executePipeline(
+  'wire transfer limits',
+  5,
+  { tenantId: 'acme' },
+);
 ```
 
----
+`ContextualCompressionStrategy` performs local extractive filtering; it does not imply a latency guarantee.
 
-## 📚 KnowledgeBase Ingestion Best Practices
-
-To achieve high-accuracy retrieval with `@nestjs-agentic/rag`, follow these document structuring best practices:
-
-### 1. Use Markdown Headers for Semantic Sectioning
-The `SemanticDocumentSplitter` relies on Markdown structural headers (`#`, `##`, `###`) to extract section titles into `chunk.metadata.sectionTitle`.
-
-```markdown
-# [Main Category Title]
-
-## [Sub-topic / Policy Section]
-Write clear, self-contained paragraphs under each heading.
-
-## [Another Policy Section]
-Include specific rules, serial numbers, and entities.
-```
-
-### 2. Multi-Tenant Isolation
-Always pass tenant or session metadata when ingesting documents to enforce multi-tenant data boundary isolation:
+## Metadata Filters and Isolation
 
 ```typescript
-await kb.ingestDocument({
-  title: 'Acme Corp Policy',
-  rawContent: '...',
-  metadata: { tenantId: 'acme_corp', department: 'finance' },
-});
-
-// Query with tenant isolation filter
-const chunks = await kb.getVectorStore().searchHybrid('wire transfer', 5, { tenantId: 'acme_corp' });
+const chunks = await knowledgeBase.queryChunks(
+  'wire transfer',
+  5,
+  { tenantId: 'acme' },
+);
 ```
 
----
+Metadata filtering scopes retrieval only when the selected store adapter honors those filters. Applications and databases must still enforce authorization and hard tenant isolation.
 
-## 🛠️ Built-in Advanced RAG Strategies
+## Custom Stores
 
-### 1. `QueryExpansionStrategy`
-Expands input queries using custom synonym maps or LLM sub-query generation to improve recall.
+`VectorStoreFactory` exposes adapter hooks; it does not provide or configure your database:
 
 ```typescript
-const queryExpansion = new QueryExpansionStrategy({
-  synonymsMap: { 'remittance': ['transfer', 'wire'] },
-  useLLM: true,
-  llmProvider: async (prompt) => await myLLM.generate(prompt),
+import { VectorStoreFactory } from '@nestjs-agentic/rag';
+
+const vectorStore = VectorStoreFactory.createCustom({
+  addChunksFn: (chunks) => vectorStoreService.upsert(chunks),
+  searchFn: async (query, limit, filter) => {
+    const vector = await embeddingProvider.embedQuery(query);
+    return vectorStoreService.search(vector, limit, filter);
+  },
 });
 ```
 
-### 2. `LateChunkingStrategy`
-Computes document-level global embeddings and blends them into individual chunk vectors ($\alpha \cdot \vec{V}_{chunk} + (1-\alpha) \cdot \vec{V}_{global}$).
-
-```typescript
-const lateChunking = new LateChunkingStrategy({ blendAlpha: 0.7 });
-```
-
-### 3. `ParentChildHydrationStrategy`
-Retrieves small high-precision child chunks during vector search and hydrates them back to large parent context sections before LLM prompt insertion.
-
-```typescript
-const hydration = new ParentChildHydrationStrategy({ replaceChunkContent: true });
-```
-
-### 4. `HierarchicalRAGStrategy`
-Organizes candidate chunks into structured hierarchical trees (`Document` $\rightarrow$ `Section` $\rightarrow$ `Chunk`) and rolls up sibling chunks under section headers.
-
-```typescript
-const hierarchical = new HierarchicalRAGStrategy({ groupByHeader: true, rollupSiblings: true });
-```
-
-### 5. `ContextualCompressionStrategy`
-Extractive zero-latency sentence pruning that removes irrelevant sentences and truncates cleanly at sentence boundaries.
-
-```typescript
-const compression = new ContextualCompressionStrategy({ maxCharacters: 2000, filterIrrelevantSentences: true });
-```
-
----
-
-## 🧠 Integration with `@nestjs-agentic/memory`
-
-`HybridVectorStore` implements `SemanticStoreProvider`, allowing it to back an agent's `SemanticMemory`:
+## Optional Memory Integration
 
 ```typescript
 import { SemanticMemory } from '@nestjs-agentic/memory';
 import { HybridVectorStore } from '@nestjs-agentic/rag';
 
-const vectorStore = new HybridVectorStore({ vectorWeight: 0.7 });
+const vectorStore = new HybridVectorStore({ embeddingProvider });
 const semanticMemory = new SemanticMemory({ provider: vectorStore });
 
-// Save & Recall facts
 await semanticMemory.save({
   id: 'fact_1',
   sessionId: 'sess_101',
   type: 'semantic',
-  content: 'Tenant acme_corp allows wire transfers up to $25,000',
+  content: 'Acme requires approval for high-value transfers.',
 });
 
-const facts = await semanticMemory.recall('wire transfer limit', { sessionId: 'sess_101' });
+const facts = await semanticMemory.recall('transfer approval', {
+  sessionId: 'sess_101',
+});
 ```
 
----
+This integration is application-managed and is not automatically connected to `AgentRunner`.
 
-## 📄 License
+## License
 
-[MIT](LICENSE) © [irzix](https://github.com/irzix)
+[MIT](https://github.com/irzix/nestjs-agentic/blob/main/LICENSE) © [irzix](https://github.com/irzix)

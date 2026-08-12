@@ -1,8 +1,12 @@
 # @nestjs-agentic/memory
 
-Multi-tier cognitive memory module for **nestjs-agentic**. Provides Short-Term Sliding-Window Memory, Working Scratchpad Memory, and Composite Memory Stores across all LLM runtime adapters.
+Experimental, opt-in memory primitives for the NestJS-native runtime for governed AI agents.
 
----
+This package provides explicitly constructed memory stores. It is not automatically attached to `AgentRunner`, and the framework does not automatically save, recall, or recover agent execution through these stores. Applications choose when to write records and when to add recalled context to a run.
+
+## Status
+
+**Experimental:** available for evaluation and feedback, but not yet part of a unified durable execution lifecycle.
 
 ## Installation
 
@@ -10,40 +14,43 @@ Multi-tier cognitive memory module for **nestjs-agentic**. Provides Short-Term S
 npm install @nestjs-agentic/memory nestjs-agentic
 ```
 
----
+## Memory Stores
 
-## Features & Memory Stores
+- `ShortTermMemory`: sliding-window records per `sessionId`.
+- `ScratchpadMemory`: working records for an application-managed task.
+- `SemanticMemory`: semantic recall backed by the default basic store or a supplied `SemanticStoreProvider`.
+- `EpisodicMemory`: application-managed episodic records.
+- `CompositeMemory`: combines explicitly supplied stores behind `AgentMemoryStore`.
 
-1. **`ShortTermMemory`**: Sliding-window conversation history per `sessionId` with configurable message caps (`maxMessages`).
-2. **`ScratchpadMemory`**: Active working task and active file memory buffer for agent execution.
-3. **`CompositeMemory`**: Unified memory store combining multiple memory tiers under a single `AgentMemoryStore` interface.
-
----
-
-## Usage Example
+## Usage
 
 ```typescript
-import { ShortTermMemory, ScratchpadMemory, CompositeMemory } from '@nestjs-agentic/memory';
+import {
+  CompositeMemory,
+  ScratchpadMemory,
+  ShortTermMemory,
+} from '@nestjs-agentic/memory';
 
-const shortTerm = new ShortTermMemory({ maxMessages: 10 });
-const scratchpad = new ScratchpadMemory();
+const memory = new CompositeMemory([
+  new ShortTermMemory({ maxMessages: 10 }),
+  new ScratchpadMemory(),
+]);
 
-const memory = new CompositeMemory([shortTerm, scratchpad]);
-
-// Save record
 await memory.save({
   id: 'rec_1',
   sessionId: 'sess_1001',
   type: 'short_term',
-  content: 'User prefers dark mode UI theme',
+  content: 'User prefers dark mode.',
 });
 
-// Recall query across all memory tiers
-const results = await memory.recall('dark mode', { sessionId: 'sess_1001' });
+const results = await memory.recall('dark mode', {
+  sessionId: 'sess_1001',
+  limit: 5,
+});
 ```
 
----
+Integrate `results` into your application or agent input explicitly. Do not treat these process-level primitives as durable execution checkpoints.
 
 ## License
 
-[MIT](LICENSE) © [irzix](https://github.com/irzix)
+[MIT](https://github.com/irzix/nestjs-agentic/blob/main/LICENSE) © [irzix](https://github.com/irzix)
