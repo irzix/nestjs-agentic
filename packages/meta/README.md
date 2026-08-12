@@ -37,8 +37,9 @@ The current release line is `0.4.x`. Published does not mean production-ready, a
 | --- | --- | --- |
 | Agents, tools, NestJS DI, policies, mock runtime | Available | Core decorators, discovery, context-bound execution, governance decisions, and deterministic tests. |
 | Built-in agent runtime | Available | Governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming. Requires a `ModelAdapter`. |
-| Model provider adapters | Planned | The `ModelAdapter` contract and `MockModelAdapter` ship with core; no production provider adapter is published yet. |
+| Other model providers | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same `ModelAdapter` contract. |
 | Human approval | Experimental | Approve/reject an individual process-local tool invocation; durable pause/resume is not available. |
+| OpenAI model adapter | Available | `@nestjs-agentic/openai` for OpenAI and Chat Completions compatible endpoints. |
 | ADK prototype and LangGraph adapter | Experimental | The ADK-named package is a synthetic runtime prototype; the LangGraph package offers limited compatibility with adapter-specific limitations. |
 | Memory, RAG, experience, orchestration, evaluation | Experimental | Optional packages that applications must integrate explicitly. |
 | Durable execution and observability | Planned | Recovery, resumable approval, standardized tracing, and audit events. |

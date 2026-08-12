@@ -32,7 +32,8 @@ The current release line is `0.4.x`.
 | Tool policies | Available | `allow`, `deny`, and `require_approval` decisions before framework-managed tool execution. |
 | Mock runtime | Available | Deterministic agent and governance testing without external model calls. |
 | Built-in agent runtime | Available | `AgentExecutor` runs the governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming. Requires an application-supplied `ModelAdapter`. |
-| Model adapters | Planned | The `ModelAdapter` contract and a deterministic `MockModelAdapter` ship with core; no production provider adapter is published yet. |
+| OpenAI model adapter | Available | `@nestjs-agentic/openai` covers OpenAI and Chat Completions compatible endpoints, including Azure, Ollama, vLLM, Groq, and OpenRouter. |
+| Additional model adapters | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same `ModelAdapter` contract. |
 | Human approval | Experimental | Approval and rejection APIs are available and the runtime suspends a turn on `require_approval`; durable pause and resume across process restarts is not yet supported. |
 | Legacy runtime adapters | Experimental | The ADK-named package is currently a synthetic runtime prototype. The LangGraph package provides limited LangChain and checkpointer compatibility, but full graph execution is not currently part of the adapter. |
 | Streaming and state | Experimental | Shared event and state abstractions exist, but adapter behavior and execution recovery are not yet unified. |
@@ -69,7 +70,7 @@ Goal: run a complete, governed agent turn without requiring LangGraph or another
 - [x] Stream model tokens and governed tool lifecycle events through the shared event union.
 - [x] Add cancellation, deadlines, and configurable execution budgets (`ExecutionLimits`, `AbortSignal`).
 - [x] Validate tool arguments against declared parameters before invoking application methods.
-- [ ] Ship at least one production-intent direct model adapter.
+- [x] Ship at least one production-intent direct model adapter (`@nestjs-agentic/openai`).
 - [ ] Publish a reusable behavioral contract-test suite for third-party adapters.
 - [ ] Evolve the ADK-named prototype and LangGraph compatibility package onto the common adapter contracts.
 
@@ -116,7 +117,7 @@ Integrations should follow the common contracts rather than define them. Work ma
 
 - Vercel AI SDK adapter
 - MCP tool provider and client transport
-- additional direct model-provider adapters
+- Anthropic and Google model adapters
 - OpenTelemetry and Langfuse integrations
 - additional memory, vector, checkpoint, and audit stores
 - examples for HTTP, SSE, WebSocket, queues, and scheduled jobs
