@@ -3,6 +3,7 @@ import { runAgentRunnerTests } from './agent-runner.spec';
 import { runAgenticModuleTests } from './agentic-module.spec';
 import { runApprovalServiceTests } from './approval-service.spec';
 import { runLocalToolProviderTests } from './local-tool-provider.spec';
+import { runModelAdapterContractTests } from './model-adapter-contract.spec';
 import { runPolicyTests } from './policies.spec';
 import { runStreamingTests } from './streaming.spec';
 import { runToolDiscoveryTests } from './tool-discovery.spec';
@@ -21,9 +22,10 @@ async function runAllCoreTests() {
     await runStreamingTests();
     await runAgentExecutorTests();
     await runAgenticModuleTests();
+    await runModelAdapterContractTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 8 CORE UNIT TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 9 CORE UNIT TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: any) {
     console.error('\n❌ TEST SUITE FAILURE:', err.message);

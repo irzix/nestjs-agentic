@@ -14,7 +14,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "tsc -p test/tsconfig.json && node dist/test/test/openai-adapter.spec.js"
+    "test": "tsc -p test/tsconfig.json && node dist/test/test/openai-adapter.spec.js && node dist/test/test/contract.spec.js"
   },
   "peerDependencies": {
     "@nestjs-agentic/core": "*",

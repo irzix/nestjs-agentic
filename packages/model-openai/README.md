@@ -144,6 +144,24 @@ const embeddings = await adapter.getClient().embeddings.create({
 });
 ```
 
+## Contract Compliance
+
+This adapter passes the framework contract suite. The same check runs in this package's test script:
+
+```typescript
+import { runModelAdapterContract } from 'nestjs-agentic';
+import { OpenAiModelAdapter } from '@nestjs-agentic/openai';
+
+const result = await runModelAdapterContract({
+  name: 'OpenAiModelAdapter',
+  createAdapter: (scenario) =>
+    new OpenAiModelAdapter({
+      apiKey: 'sk-test',
+      clientOptions: { fetch: stubFor(scenario) },
+    }),
+});
+```
+
 ## Testing
 
 Inject a `fetch` implementation through `clientOptions` to run deterministic tests without network access:

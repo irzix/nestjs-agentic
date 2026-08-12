@@ -72,7 +72,7 @@ Goal: run a complete, governed agent turn without requiring LangGraph or another
 - [x] Validate tool arguments against declared parameters before invoking application methods.
 - [x] Recover from tool exceptions by reporting them to the model, while keeping framework errors fatal.
 - [x] Ship at least one production-intent direct model adapter (`@nestjs-agentic/openai`).
-- [ ] Publish a reusable behavioral contract-test suite for third-party adapters.
+- [x] Publish a reusable behavioral contract-test suite for third-party adapters (`runModelAdapterContract`).
 - [ ] Evolve the ADK-named prototype and LangGraph compatibility package onto the common adapter contracts.
 
 **Exit criteria:** a NestJS application can run, stream, cancel, and test a governed tool-calling agent without adopting a graph framework.

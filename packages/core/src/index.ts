@@ -8,5 +8,6 @@ export * from './services';
 export * from './stores';
 export * from './adapters';
 export * from './policies';
+export * from './testing';
 export * from './utils';
 export * from './agentic.module';
