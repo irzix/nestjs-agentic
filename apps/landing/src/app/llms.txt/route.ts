@@ -3,37 +3,44 @@ import { NextResponse } from 'next/server';
 export async function GET() {
   const content = `# nestjs-agentic
 
-> Agentic Integration & Governance Layer for NestJS Applications.
-> Build, govern, and orchestrate autonomous AI agents inside NestJS backend services with full Dependency Injection, 3-state policy guards, and Human-in-the-Loop (HITL) approvals.
+> The NestJS-native runtime for governed AI agents.
+> Define agents and tools with NestJS, enforce policy before side effects, and keep model integrations replaceable.
 
-## What is nestjs-agentic?
+## Product Position
 
-nestjs-agentic is the enterprise Agentic infrastructure layer for NestJS. It brings together native NestJS primitives, ecosystem runtime adapters, multi-agent orchestration, and enterprise governance — making AI agents a first-class citizen in NestJS applications without architecture drift.
+nestjs-agentic keeps agents, context-bound tools, policy evaluation, and deterministic testing inside the NestJS module and dependency-injection system. It focuses on bounded model decisions and application-owned security context rather than unconstrained autonomy.
 
-## The 4 Core Pillars
+## Current Status: 0.4.x
 
-1. NestJS Primitives & DI Binding: Decorator-driven agent primitives (@Agent, @ToolSet, @Tool, @Param, @Context) using existing services and native NestJS Dependency Injection.
-2. Governance & HITL Safety: 3-state evaluation pipeline (allow, deny, require_approval) before any agent tool call executes. Pause sensitive actions and resume via ApprovalService.
-3. Pluggable Ecosystem Adapters: Official Google ADK runtime adapter (@nestjs-agentic/adk), Vercel AI SDK, LangGraph, or custom runtimes with zero framework lock-in.
-4. Multi-Agent Orchestration: Sub-agent delegation via AgentConfig.subAgents with isolated sub-context governance.
+- Available: agent and tool decorators, NestJS discovery and dependency injection, allow/deny/require_approval policies, context-bound tools, and MockRuntimeAdapter.
+- Experimental: human approval, the synthetic ADK-named runtime prototype, limited LangGraph compatibility, streaming and state abstractions, memory, RAG, experience, orchestration, and evaluation.
+- Planned: durable execution, standardized observability, resumable approval, and common provider/runtime contracts.
 
-## Quick Installation
+Published experimental packages are intended for evaluation and feedback. They do not imply production readiness.
+
+## Important Runtime Limits
+
+- Current approval continuation is process-local. Approval executes one pending tool invocation but does not resume the original model turn or survive restart.
+- The current ADK-named prototype does not perform a provider-native ADK or model call. On every run it invokes resolved tools in registration order with empty arguments and stops early only when a tool returns pending_approval. Do not use it for side effects.
+- The current LangGraph adapter does not compile a StateGraph. Its model path is a single invoke without a tool-call loop, and its fallback and stream behavior are synthetic. Do not use it for production side effects.
+- Memory and RAG are experimental opt-in primitives and are not automatically attached to AgentRunner.
+
+## Roadmap
+
+- 0.5 Independent Agent Runtime: vendor-neutral model and message contracts, a complete governed model-to-tool loop, canonical streaming, cancellation, deadlines, budgets, argument validation, and shared adapter contract tests.
+- 0.6 Durable and Observable Execution: versioned checkpoints, restart-safe approval, idempotency and retries, persistence adapters, traces and metrics, audit events, and hardened tenant and identity isolation.
+- 0.7 Reliable Orchestration: cancellation-aware bounded fan-out, correct fallback and aggregation, resumable refinement, durable delegation, and workflow inspection APIs.
+
+## Installation
 
 npm install nestjs-agentic
-npm install @nestjs-agentic/adk
 
-## Product Roadmap & Release Phases
+Use MockRuntimeAdapter for deterministic agent, tool, and policy tests without a model API.
 
-- Phase 0.1 (Current Released): Core Primitives, 3-State Policies, Google ADK Adapter, MockRuntimeAdapter for unit testing.
-- Phase 0.2 (In Progress): Enterprise Governance Matrix (Composite Policies, Role-Aware HITL), Sub-Agent Delegation, Vercel AI SDK & LangGraph Adapters, MCP Transport.
-- Phase 0.3 (Upcoming): Immutable Audit Trail (AuditEventStore), OpenTelemetry, Langfuse & Arize Phoenix integrations.
-- Phase 1.0 (Planned): Durable HITL Workflows (Temporal.io & BullMQ), Distributed Redis Session & Approval Stores.
-
-## Links & Documentation
+## Links
 
 - GitHub Repository: https://github.com/irzix/nestjs-agentic
 - NPM Core Package: https://www.npmjs.com/package/nestjs-agentic
-- NPM ADK Package: https://www.npmjs.com/package/@nestjs-agentic/adk
 - Architecture Guide: https://github.com/irzix/nestjs-agentic/blob/main/docs/ARCHITECTURE.md
 - Product Roadmap: https://github.com/irzix/nestjs-agentic/blob/main/docs/ROADMAP.md
 - API Reference: https://github.com/irzix/nestjs-agentic/blob/main/docs/API_REFERENCE.md

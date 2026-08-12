@@ -16,13 +16,10 @@ export function Header() {
   return (
     <header className="sticky top-4 sm:top-6 z-50 max-w-4xl mx-auto w-full px-2 sm:px-4">
       <nav className="nest-nav px-4 sm:px-8 py-2.5 sm:py-3 flex items-center justify-between shadow-2xl gap-2">
-        
-        {/* Brand Title */}
         <span className="font-bold text-xs sm:text-sm tracking-tight text-white font-sans whitespace-nowrap">
           nestjs-agentic
         </span>
 
-        {/* Desktop Nav Items */}
         <div className="hidden md:flex items-center gap-8 text-[13px] font-medium text-zinc-300">
           <a href="#syntax" className="hover:text-white transition-colors">Syntax</a>
           <a href="#pillars" className="hover:text-white transition-colors">Overview</a>
@@ -30,7 +27,6 @@ export function Header() {
           <a href="https://github.com/irzix/nestjs-agentic#readme" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Docs</a>
         </div>
 
-        {/* Actions: GitHub Icon + Responsive Copy Button */}
         <div className="flex items-center gap-2.5 sm:gap-4">
           <a
             href="https://github.com/irzix/nestjs-agentic"
@@ -87,18 +83,13 @@ export function HeroSection() {
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
       >
-        {/* Mouse-follow red glow */}
         <div ref={glowRef} className="nest-cursor-glow" style={{ opacity: 0 }}></div>
-
-        {/* Wandering ambient orbs */}
         <div className="nest-orb nest-orb-1"></div>
         <div className="nest-orb nest-orb-2"></div>
         <div className="nest-orb nest-orb-3"></div>
 
-        {/* Header */}
         <Header />
 
-        {/* Hero Content with Motion Animations */}
         <div className="my-auto text-center max-w-5xl mx-auto w-full py-12 relative z-10">
           <motion.h1
             initial={{ opacity: 0, y: 30 }}
@@ -106,7 +97,7 @@ export function HeroSection() {
             transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
             className="text-[clamp(2.5rem,7.5vw,7rem)] font-semibold tracking-[-0.035em] text-white leading-[0.98] mb-6 sm:mb-8 font-sans"
           >
-            Agentic Infrastructure<br />
+            Governed AI Agents<br />
             for NestJS
           </motion.h1>
 
@@ -116,8 +107,8 @@ export function HeroSection() {
             transition={{ duration: 0.8, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
             className="font-mono text-xs sm:text-[13px] text-zinc-400 max-w-2xl mx-auto leading-relaxed mb-10 sm:mb-14 px-4"
           >
-            Build, govern, and orchestrate production AI agents inside your NestJS services.<br className="hidden sm:inline" />
-            Native DI tools, 3-state policy guards, Multi-Tier Memory, Enterprise RAG (pgvector/Prisma), and Self-Learning.
+            The NestJS-native runtime for governed AI agents.<br className="hidden sm:inline" />
+            Core agents, tools, policies, and mock runtime are available. Adapters, memory, RAG, orchestration, and evaluation are experimental.
           </motion.p>
 
           <motion.div
@@ -138,12 +129,11 @@ export function HeroSection() {
               rel="noreferrer"
               className="text-white font-semibold text-xs sm:text-sm hover:text-rose-400 transition-colors"
             >
-              Github
+              GitHub
             </a>
           </motion.div>
         </div>
 
-        {/* Bottom-right stats */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -152,16 +142,15 @@ export function HeroSection() {
         >
           <div className="text-right space-y-1">
             <div>
-              <span className="mr-3 sm:mr-4">Github stars</span>
+              <span className="mr-3 sm:mr-4">License</span>
               <span className="text-white font-semibold">Open Source</span>
             </div>
             <div>
-              <span className="mr-3 sm:mr-4">Latest release</span>
-              <span className="text-white font-semibold">v0.4.1</span>
+              <span className="mr-3 sm:mr-4">Current release line</span>
+              <span className="text-white font-semibold">0.4.x</span>
             </div>
           </div>
         </motion.div>
-
       </div>
     </section>
   );

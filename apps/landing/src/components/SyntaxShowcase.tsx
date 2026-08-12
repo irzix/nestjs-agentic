@@ -9,17 +9,13 @@ export function SyntaxShowcase() {
   return (
     <section id="syntax" className="nest-hero-frame w-full">
       <div className="nest-hero-inner min-h-screen w-full flex items-start relative overflow-hidden pt-28 pb-12">
-
-        {/* Red ambient glow */}
         <div className="absolute left-[10%] top-[40%] -translate-y-1/2 w-[550px] h-[550px] rounded-full bg-[radial-gradient(circle,rgba(224,35,78,0.28)_0%,transparent_70%)] blur-[100px] pointer-events-none z-0"></div>
 
         <div className="w-full pl-8 sm:pl-20 lg:pl-28 pr-0 grid grid-cols-1 lg:grid-cols-12 gap-20 items-start relative z-10">
-
-          {/* Left: Title + Button — Top Aligned */}
           <motion.div
             initial={{ opacity: 0, x: -30 }}
             whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true, margin: "-80px" }}
+            viewport={{ once: true, margin: '-80px' }}
             transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
             className="lg:col-span-4 space-y-12 text-left self-start pt-4"
           >
@@ -28,11 +24,11 @@ export function SyntaxShowcase() {
             </div>
 
             <h2 className="text-4xl sm:text-5xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-[1.15] font-sans">
-              Agents, tools, RAG, and memory in pure NestJS.
+              Governed tools and deterministic tests in NestJS.
             </h2>
 
             <p className="text-sm text-zinc-500 leading-relaxed font-sans">
-              No new framework. No wrappers. Define your agents with the decorator patterns you already know — with governance, vector store bridging, and multi-tier memory built in.
+              Core decorators, policy enforcement, and the mock runtime are available. RAG and memory are experimental, opt-in primitives that applications integrate explicitly.
             </p>
 
             <div className="pt-4">
@@ -42,23 +38,20 @@ export function SyntaxShowcase() {
                 rel="noreferrer"
                 className="inline-flex items-center px-7 py-3 rounded-full bg-[#18181b] hover:bg-[#27272a] text-white font-medium text-sm tracking-tight transition-all border border-zinc-700/40 shadow-lg"
               >
-                Official documentation
+                Read documentation
               </a>
             </div>
           </motion.div>
 
-          {/* Right: Code Monitor */}
           <motion.div
             initial={{ opacity: 0, scale: 0.96, x: 40 }}
             whileInView={{ opacity: 1, scale: 1, x: 0 }}
-            viewport={{ once: true, margin: "-80px" }}
+            viewport={{ once: true, margin: '-80px' }}
             transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
             className="lg:col-span-8 w-full self-start"
           >
             <div className="nest-glass-frame nest-fade-bottom w-full lg:w-[62vw] h-[720px]">
               <div className="bg-[#09090b] rounded-tl-[18px] rounded-bl-[18px] border-t border-l border-b border-white/5 overflow-hidden h-full flex flex-col">
-
-                {/* Tab Bar */}
                 <div className="flex items-center gap-6 sm:gap-8 px-6 sm:px-10 py-5 border-b border-zinc-800/50 bg-[#0f0f12] text-[13px] font-sans overflow-x-auto">
                   {(['toolset', 'policy', 'rag', 'memory', 'module', 'test'] as const).map((tab) => (
                     <button
@@ -75,15 +68,12 @@ export function SyntaxShowcase() {
                   ))}
                 </div>
 
-                {/* Code */}
                 <div className="px-10 py-10 font-mono text-[13px] leading-[2.2] text-zinc-300 overflow-x-auto bg-[#08080a] flex-1">
                   <CodeBlock tab={activeTab} />
                 </div>
-
               </div>
             </div>
           </motion.div>
-
         </div>
       </div>
     </section>
@@ -96,15 +86,15 @@ function CodeBlock({ tab }: { tab: string }) {
       `<k>import</k> { ToolSet, Tool, Param, Context, UsePolicies } <k>from</k> <s>'nestjs-agentic'</s>;`,
       `<k>import</k> <k>type</k> { AgentContext } <k>from</k> <s>'nestjs-agentic'</s>;`,
       ``,
-      `<w>@ToolSet</w>({ name: <s>'order'</s>, tags: [<s>'order'</s>, <s>'sales'</s>] })`,
+      `<w>@ToolSet</w>({ name: <s>'order'</s> })`,
       `<k>export class</k> <w>OrderTools</w> {`,
       `  <k>constructor</k>(<k>private readonly</k> orderService: <w>OrderService</w>) {}`,
       ``,
-      `  <w>@Tool</w>({ description: <s>'Refund an order by ID and amount'</s> })`,
+      `  <w>@Tool</w>({ name: <s>'refundOrder'</s>, description: <s>'Refund an order'</s> })`,
       `  <w>@UsePolicies</w>(RefundLimitPolicy)`,
       `  <k>async</k> <f>refundOrder</f>(`,
       `    <w>@Param</w>(<s>'orderId'</s>) orderId: <t>string</t>,`,
-      `    <w>@Param</w>(<s>'amount'</s>) amount: <t>number</t>,`,
+      `    <w>@Param</w>(<s>'amount'</s>, { type: <s>'number'</s> }) amount: <t>number</t>,`,
       `    <w>@Context</w>() ctx: <t>AgentContext</t>,`,
       `  ) {`,
       `    <k>return this</k>.orderService.refund(orderId, amount, ctx.security.userId);`,
@@ -113,99 +103,109 @@ function CodeBlock({ tab }: { tab: string }) {
     ],
     policy: [
       `<k>import</k> { Injectable } <k>from</k> <s>'@nestjs/common'</s>;`,
-      `<k>import</k> <k>type</k> { ToolPolicy, AgentContext, PolicyResult } <k>from</k> <s>'@nestjs-agentic/core'</s>;`,
+      `<k>import</k> <k>type</k> { ToolPolicy, AgentContext, PolicyResult } <k>from</k> <s>'nestjs-agentic'</s>;`,
       ``,
       `<w>@Injectable</w>()`,
       `<k>export class</k> <w>RefundLimitPolicy</w> <k>implements</k> ToolPolicy {`,
       `  <k>async</k> <f>evaluate</f>(`,
-      `    ctx: <t>AgentContext</t>,`,
-      `    toolName: <t>string</t>,`,
+      `    _ctx: <t>AgentContext</t>,`,
+      `    _toolName: <t>string</t>,`,
       `    args: <t>Record&lt;string, unknown&gt;</t>,`,
       `  ): <t>Promise&lt;PolicyResult&gt;</t> {`,
       `    <k>return</k> Number(args.amount) > <n>500</n>`,
-      `      ? { decision: <s>'require_approval'</s>, reason: <s>'Refund exceeds $500 threshold.'</s> }`,
+      `      ? { decision: <s>'require_approval'</s>, reason: <s>'Refund exceeds $500.'</s> }`,
       `      : { decision: <s>'allow'</s> };`,
       `  }`,
       `}`,
     ],
     rag: [
-      `<k>import</k> { KnowledgeBase, VectorStoreFactory, RAGPipeline } <k>from</k> <s>'@nestjs-agentic/rag'</s>;`,
-      `<k>import</k> { GraphRAGStrategy, RerankerStrategy } <k>from</k> <s>'@nestjs-agentic/rag'</s>;`,
+      `<k>import</k> { HybridVectorStore, KnowledgeBase, RAGPipeline, RerankerStrategy }`,
+      `  <k>from</k> <s>'@nestjs-agentic/rag'</s>;`,
       ``,
-      `// Bridge Prisma + pgvector or any database using VectorStoreFactory`,
-      `<k>const</k> vectorStore = <w>VectorStoreFactory</w>.<f>createCustom</f>({`,
-      `  searchFn: <k>async</k> (query, limit, filter, vector) => {`,
-      `    <k>return await</k> vectorStoreService.<f>search</f>(vector, limit, filter);`,
-      `  },`,
+      `// Experimental, opt-in retrieval primitives`,
+      `<k>const</k> store = <k>new</k> <w>HybridVectorStore</w>({ embeddingProvider });`,
+      `<k>const</k> kb = <k>new</k> <w>KnowledgeBase</w>({ vectorStore: store });`,
+      ``,
+      `<k>await</k> kb.<f>ingestDocument</f>({`,
+      `  title: <s>'Governance Guide'</s>,`,
+      `  rawContent: <s>'Refunds above $500 require approval.'</s>,`,
+      `  metadata: { tenantId: <s>'acme'</s> },`,
       `});`,
-      ``,
-      `<k>const</k> kb = <k>new</k> <w>KnowledgeBase</w>({ vectorStore });`,
-      `<k>await</k> kb.<f>ingestDocument</f>({ title: <s>'Governance Guide'</s>, rawContent: <s>'...'</s> });`,
       ``,
       `<k>const</k> pipeline = <k>new</k> <w>RAGPipeline</w>({`,
       `  knowledgeBase: kb,`,
-      `  strategies: [<k>new</k> <w>GraphRAGStrategy</w>({ graphProvider }), <k>new</k> <w>RerankerStrategy</w>({ topK: <n>5</n> })],`,
+      `  strategies: [<k>new</k> <w>RerankerStrategy</w>({ topK: <n>5</n> })],`,
       `});`,
+      ``,
+      `<k>const</k> context = <k>await</k> pipeline.<f>executePipeline</f>(`,
+      `  <s>'refund approval'</s>, <n>5</n>, { tenantId: <s>'acme'</s> },`,
+      `);`,
     ],
     memory: [
       `<k>import</k> { CompositeMemory, ShortTermMemory, SemanticMemory } <k>from</k> <s>'@nestjs-agentic/memory'</s>;`,
       `<k>import</k> { HybridVectorStore } <k>from</k> <s>'@nestjs-agentic/rag'</s>;`,
       ``,
-      `<k>const</k> vectorStore = <k>new</k> <w>HybridVectorStore</w>();`,
-      `<k>const</k> memory = <k>new</k> <w>CompositeMemory</w>({`,
-      `  stores: [`,
-      `    <k>new</k> <w>ShortTermMemory</w>({ maxMessages: <n>20</n> }),`,
-      `    <k>new</k> <w>SemanticMemory</w>({ provider: vectorStore }),`,
-      `  ],`,
-      `});`,
+      `// Experimental and explicitly integrated by the application`,
+      `<k>const</k> memory = <k>new</k> <w>CompositeMemory</w>([`,
+      `  <k>new</k> <w>ShortTermMemory</w>({ maxMessages: <n>20</n> }),`,
+      `  <k>new</k> <w>SemanticMemory</w>({ provider: <k>new</k> <w>HybridVectorStore</w>() }),`,
+      `]);`,
       ``,
-      `<k>await</k> memory.<f>save</f>({ sessionId: <s>'s1'</s>, type: <s>'semantic'</s>, content: <s>'User prefers dark mode'</s> });`,
-      `<k>const</k> context = <k>await</k> memory.<f>recall</f>(<s>'s1'</s>, <s>'user preferences'</s>);`,
+      `<k>await</k> memory.<f>save</f>({`,
+      `  id: <s>'pref-1'</s>, sessionId: <s>'s1'</s>, type: <s>'semantic'</s>,`,
+      `  content: <s>'User prefers dark mode'</s>,`,
+      `});`,
+      `<k>const</k> context = <k>await</k> memory.<f>recall</f>(`,
+      `  <s>'user preferences'</s>, { sessionId: <s>'s1'</s>, limit: <n>5</n> },`,
+      `);`,
     ],
     module: [
       `<k>import</k> { Module } <k>from</k> <s>'@nestjs/common'</s>;`,
-      `<k>import</k> { AgenticModule, RUNTIME_ADAPTER, Agent } <k>from</k> <s>'nestjs-agentic'</s>;`,
-      `<k>import</k> <k>type</k> { AgentProvider, AgentConfig } <k>from</k> <s>'nestjs-agentic'</s>;`,
-      `<k>import</k> { AdkRuntimeAdapter } <k>from</k> <s>'@nestjs-agentic/adk'</s>;`,
+      `<k>import</k> { AgenticModule, MockRuntimeAdapter, RUNTIME_ADAPTER } <k>from</k> <s>'nestjs-agentic'</s>;`,
       ``,
-      `<w>@Agent</w>({ name: <s>'support'</s>, description: <s>'Handles refund inquiries'</s> })`,
-      `<k>export class</k> <w>SupportAgent</w> <k>implements</k> AgentProvider {`,
-      `  <k>constructor</k>(<k>private readonly</k> orderTools: <w>OrderTools</w>) {}`,
-      `  <f>define</f>(): <t>AgentConfig</t> {`,
-      `    <k>return</k> { instructions: <s>'You are a helpful support agent.'</s>, tools: [<k>this</k>.orderTools] };`,
-      `  }`,
-      `}`,
+      `<k>const</k> message = <s>'Refund $600 for order #42'</s>;`,
+      `<k>const</k> mockRuntime = <k>new</k> <w>MockRuntimeAdapter</w>();`,
+      `mockRuntime.<f>whenAsked</f>(message).<f>thenCallTool</f>(<s>'refundOrder'</s>, {`,
+      `  orderId: <s>'42'</s>, amount: <n>600</n>,`,
+      `});`,
       ``,
       `<w>@Module</w>({`,
       `  imports: [`,
-      `    <w>AgenticModule</w>.forRoot({ defaultModel: { provider: <s>'google'</s>, model: <s>'gemini-2.0-flash'</s> } }),`,
-      `    <w>AgenticModule</w>.forFeature({ agents: [SupportAgent], toolSets: [OrderTools], policies: [RefundLimitPolicy] }),`,
+      `    <w>AgenticModule</w>.forRoot({`,
+      `      defaultModel: { provider: <s>'mock'</s>, model: <s>'deterministic'</s> },`,
+      `    }),`,
+      `    <w>AgenticModule</w>.forFeature({`,
+      `      agents: [SupportAgent], toolSets: [OrderTools], policies: [RefundLimitPolicy],`,
+      `    }),`,
       `  ],`,
-      `  providers: [{ provide: RUNTIME_ADAPTER, useClass: AdkRuntimeAdapter }],`,
+      `  providers: [{ provide: RUNTIME_ADAPTER, useValue: mockRuntime }],`,
       `})`,
       `<k>export class</k> <w>SupportModule</w> {}`,
     ],
     test: [
       `<k>import</k> { Test } <k>from</k> <s>'@nestjs/testing'</s>;`,
-      `<k>import</k> { AgenticModule, AgentRunner, MockRuntimeAdapter, RUNTIME_ADAPTER } <k>from</k> <s>'nestjs-agentic'</s>;`,
+      `<k>import</k> { AgentRunner, MockRuntimeAdapter, RUNTIME_ADAPTER } <k>from</k> <s>'nestjs-agentic'</s>;`,
       ``,
-      `describe(<s>'SupportAgent — Refund Policy'</s>, () => {`,
-      `  <k>let</k> runner: <t>AgentRunner</t>;`,
-      ``,
-      `  beforeEach(<k>async</k> () => {`,
-      `    <k>const</k> module = <k>await</k> Test.createTestingModule({`,
-      `      imports: [`,
-      `        AgenticModule.forRoot({ defaultModel: { provider: <s>'google'</s>, model: <s>'gemini-2.0-flash'</s> } }),`,
-      `        AgenticModule.forFeature({ agents: [SupportAgent], toolSets: [OrderTools], policies: [RefundLimitPolicy] }),`,
-      `      ],`,
-      `      providers: [{ provide: RUNTIME_ADAPTER, useClass: MockRuntimeAdapter }],`,
-      `    }).compile();`,
-      `    runner = module.get(AgentRunner);`,
+      `it(<s>'requires approval above $500'</s>, <k>async</k> () => {`,
+      `  <k>const</k> message = <s>'Refund $600 for order #42'</s>;`,
+      `  <k>const</k> mockRuntime = <k>new</k> <w>MockRuntimeAdapter</w>();`,
+      `  mockRuntime.<f>whenAsked</f>(message).<f>thenCallTool</f>(<s>'refundOrder'</s>, {`,
+      `    orderId: <s>'42'</s>, amount: <n>600</n>,`,
       `  });`,
       ``,
-      `  it(<s>'should require approval on refund > $500'</s>, <k>async</k> () => {`,
-      `    <k>const</k> result = <k>await</k> runner.run(<s>'support'</s>, { sessionId: <s>'s1'</s>, message: <s>'Refund $600 order #42'</s> });`,
-      `    expect(result.toolCalls[<n>0</n>].result.status).toBe(<s>'pending_approval'</s>);`,
+      `  <k>const</k> moduleRef = <k>await</k> Test.<f>createTestingModule</f>({`,
+      `    imports: [SupportModule],`,
+      `  })`,
+      `    .<f>overrideProvider</f>(RUNTIME_ADAPTER)`,
+      `    .<f>useValue</f>(mockRuntime)`,
+      `    .<f>compile</f>();`,
+      ``,
+      `  <k>const</k> runner = moduleRef.<f>get</f>(AgentRunner);`,
+      `  <k>const</k> result = <k>await</k> runner.<f>run</f>(<s>'support'</s>, {`,
+      `    sessionId: <s>'s1'</s>, message,`,
+      `  });`,
+      `  expect(result.toolCalls[<n>0</n>]?.result).toMatchObject({`,
+      `    success: <k>false</k>, status: <s>'pending_approval'</s>,`,
       `  });`,
       `});`,
     ],

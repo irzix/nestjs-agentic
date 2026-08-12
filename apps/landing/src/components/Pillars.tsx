@@ -8,66 +8,66 @@ const cards = [
   {
     icon: Layers,
     title: 'NestJS Primitives & DI',
-    badge: '@ToolSet & @Tool',
-    tagline: 'Zero Architecture Drift',
+    badge: '@Agent, @ToolSet, @Tool',
+    tagline: 'Available · 0.4.x',
     description: (
       <>
-        Define agent tools directly on existing NestJS services. <code className="text-rose-300 font-mono">@ToolSet</code>, <code className="text-rose-300 font-mono">@Tool</code>, <code className="text-rose-300 font-mono">@Param</code>, and <code className="text-rose-300 font-mono">@Context</code> work with full Dependency Injection — no rewrites or microservice overhead.
+        Define agents and context-bound tools with NestJS decorators and dependency injection. Application services remain ordinary providers while runtimes receive governed tool closures.
       </>
     ),
   },
   {
     icon: ShieldCheck,
-    title: 'Governance & HITL Safety',
+    title: 'Tool Governance',
     badge: '@UsePolicies & ApprovalService',
-    tagline: 'Enterprise Guardrails',
+    tagline: 'Core available · HITL experimental',
     description: (
       <>
-        Every agent tool call passes through a 3-state policy engine — <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code>. Sensitive operations pause execution until human supervisor approval.
+        Every framework-managed tool call crosses an <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code> policy boundary. Current approval continuation is process-local and does not resume the model turn.
       </>
     ),
   },
   {
     icon: Database,
-    title: 'Enterprise RAG & Vector Stores',
-    badge: 'VectorStoreFactory & GraphRAG',
-    tagline: 'Available in v0.4.1',
+    title: 'RAG Primitives',
+    badge: 'KnowledgeBase & RAGPipeline',
+    tagline: 'Experimental · opt-in',
     description: (
       <>
-        Bridge any database using <code className="text-rose-300 font-mono">VectorStoreFactory.createCustom()</code> (Prisma + pgvector, PostgreSQL) or in-memory <code className="text-rose-300 font-mono">HybridVectorStore</code>. Features GraphRAG, Reranking, and Late Chunking.
+        Compose an in-memory <code className="text-rose-300 font-mono">HybridVectorStore</code>, retrieval strategies, and application-provided store callbacks. Persistence, embeddings, authorization, and prompt assembly remain application-owned.
       </>
     ),
   },
   {
     icon: Brain,
-    title: 'Multi-Tier Memory & Experience',
-    badge: 'CompositeMemory & Learner',
-    tagline: 'Self-Learning Agents',
+    title: 'Memory & Experience',
+    badge: 'CompositeMemory & ExperienceLearner',
+    tagline: 'Experimental · opt-in',
     description: (
       <>
-        Combine Short-Term, Long-Term Semantic, Episodic, and Scratchpad memory via <code className="text-rose-300 font-mono">CompositeMemory</code>. Auto-extract lessons from agent errors using <code className="text-rose-300 font-mono">ExperienceLearner</code>.
+        Explicitly construct short-term, semantic, episodic, and scratchpad stores plus reflection primitives. They are not automatically attached to <code className="text-rose-300 font-mono">AgentRunner</code> or durable execution state.
       </>
     ),
   },
   {
     icon: GitFork,
     title: 'Multi-Agent Orchestration',
-    badge: 'Parallel & Refinement Loop',
-    tagline: 'Available in v0.4.1',
+    badge: 'Delegation & Refinement',
+    tagline: 'Experimental · process-local',
     description: (
       <>
-        Delegate sub-tasks via <code className="text-rose-300 font-mono">SubAgentDelegator</code>, execute parallel consensus agents with <code className="text-rose-300 font-mono">ParallelSubAgentRunner</code>, and run self-correcting refinement loops.
+        Evaluate delegation, parallel execution, fallback, and refinement APIs built on <code className="text-rose-300 font-mono">AgentRunner</code>. Durable scheduling, bounded concurrency, and retry-safe fan-out remain roadmap work.
       </>
     ),
   },
   {
     icon: BarChart3,
-    title: 'Agent Evaluation & Benchmarking',
-    badge: 'BenchmarkRunner & LLM-Judge',
-    tagline: 'Available in v0.4.1',
+    title: 'Evaluation',
+    badge: 'Metrics & BenchmarkRunner',
+    tagline: 'Experimental · opt-in',
     description: (
       <>
-        Quantify agent reliability using <code className="text-rose-300 font-mono">BenchmarkRunner</code>, trajectory inspection, and multi-metric evaluators (<code className="text-rose-300 font-mono">SafetyPolicyMetric</code>, <code className="text-rose-300 font-mono">LLMAsAJudgeMetric</code>).
+        Run metrics, benchmarks, and reports against agent behavior. Runtime trace integration and CI quality gates are not yet standardized.
       </>
     ),
   },
@@ -107,15 +107,15 @@ export function Pillars() {
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
+          viewport={{ once: true, margin: '-80px' }}
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
           className="max-w-4xl text-left mb-20 relative z-10 space-y-4"
         >
           <div className="font-mono text-[11px] text-zinc-500 tracking-[0.2em]">
-            &#123; THE 4 CORE PILLARS &#125;
+            &#123; PRODUCT CAPABILITIES &#125;
           </div>
           <h2 className="text-4xl sm:text-5xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-[1.15] font-sans">
-            Agentic infrastructure built<br />on NestJS, not around it.
+            Available core primitives.<br />Experimental capabilities, clearly marked.
           </h2>
         </motion.div>
 
@@ -127,7 +127,7 @@ export function Pillars() {
                 key={card.title}
                 initial={{ opacity: 0, y: 35 }}
                 whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-60px" }}
+                viewport={{ once: true, margin: '-60px' }}
                 transition={{ duration: 0.7, delay: idx * 0.1, ease: [0.16, 1, 0.3, 1] }}
                 className="nest-glass-card p-8 sm:p-10 flex flex-col justify-between min-h-[300px] sm:min-h-[320px] relative overflow-hidden group"
               >
@@ -156,7 +156,6 @@ export function Pillars() {
             );
           })}
         </div>
-
       </div>
     </section>
   );
