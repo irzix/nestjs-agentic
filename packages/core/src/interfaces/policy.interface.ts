@@ -9,7 +9,16 @@ import type { AgentContext } from './agent-context.interface';
 export type PolicyResult =
   | { decision: 'allow' }
   | { decision: 'deny'; reason: string }
-  | { decision: 'require_approval'; reason: string };
+  | {
+      decision: 'require_approval';
+      reason: string;
+      /**
+       * Seconds the resulting approval stays valid before it expires. Overrides
+       * the module-level `approvalTtlSeconds`. Omit to fall back to the module
+       * default, or leave both unset for an approval that never expires.
+       */
+      ttlSeconds?: number;
+    };
 
 /**
  * Interface defining a governance policy executed before every tool call.

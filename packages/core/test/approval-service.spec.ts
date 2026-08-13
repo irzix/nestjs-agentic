@@ -19,6 +19,7 @@ import type {
   PolicyResult,
   ToolPolicy,
 } from '../src';
+import { ApprovalExpiredError, ApprovalNotFoundError } from '../src';
 import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
 import { InMemorySessionStore } from '../src/stores/in-memory-session.store';
 
@@ -287,6 +288,120 @@ export async function runApprovalServiceTests() {
     assert(rejectThrew, 'Test 3b: reject() with unknown ID throws error');
   } catch (err: any) {
     assert(false, 'Test 3: Error Handling', err.message);
+  }
+
+  // TEST 4: Approval expiry
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Transfer $8000 to vendor')
+      .callTool('transferMoney', { amount: 8000 })
+      .reply('Transfer of $8000 completed.');
+
+    const { LocalToolProvider, ToolDiscoveryService } = await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [new ApprovalNeededPolicy()],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const tools = new LedgerTools();
+    const runner = new AgentRunner(
+      [new BankerAgent(tools)],
+      undefined,
+      // Module-level default TTL is threaded through to the pending approval.
+      { defaultModel: { provider: 'mock', model: 'deterministic' }, approvalTtlSeconds: 3600 },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(model),
+      new InMemorySessionStore(),
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    const suspended = await runner.run('banker', {
+      sessionId: 'sess_hitl_expiry',
+      message: 'Transfer $8000 to vendor',
+    });
+    const pending = suspended.toolCalls[0]?.result as any;
+
+    const stored = await approvalStore.get(pending.approvalId);
+    assert(
+      stored?.expiresAt instanceof Date,
+      'Test 4a: approvalTtlSeconds sets expiresAt on the pending approval',
+    );
+
+    // Force the approval past its expiry deterministically instead of waiting.
+    await approvalStore.save({ ...stored!, expiresAt: new Date(Date.now() - 1000) });
+
+    let expiredErr: unknown;
+    try {
+      await approvals.approve(pending.approvalId);
+    } catch (err) {
+      expiredErr = err;
+    }
+    assert(
+      expiredErr instanceof ApprovalExpiredError,
+      'Test 4b: Approving an expired approval throws ApprovalExpiredError',
+    );
+    assert(tools.transfers.length === 0, 'Test 4c: Expired approval never runs the side effect');
+
+    // The expired approval was claimed (consumed), so it is gone afterwards.
+    let secondErr: unknown;
+    try {
+      await approvals.approve(pending.approvalId);
+    } catch (err) {
+      secondErr = err;
+    }
+    assert(
+      secondErr instanceof ApprovalNotFoundError,
+      'Test 4d: Expired approval is consumed, not left for retry',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 4: Approval expiry', err.message);
+  }
+
+  // TEST 5: A policy ttlSeconds still in the future does not block settlement
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Transfer $6000 to vendor')
+      .callTool('transferMoney', { amount: 6000 })
+      .reply('Transfer of $6000 completed.');
+
+    const { LocalToolProvider, ToolDiscoveryService } = await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [new ApprovalNeededPolicy()],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const tools = new LedgerTools();
+    const runner = new AgentRunner(
+      [new BankerAgent(tools)],
+      undefined,
+      { defaultModel: { provider: 'mock', model: 'deterministic' }, approvalTtlSeconds: 3600 },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(model),
+      new InMemorySessionStore(),
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    const suspended = await runner.run('banker', {
+      sessionId: 'sess_hitl_valid_ttl',
+      message: 'Transfer $6000 to vendor',
+    });
+    const pending = suspended.toolCalls[0]?.result as any;
+
+    const resumed = (await approvals.approve(pending.approvalId)) as any;
+    assert(
+      tools.transfers.length === 1 && resumed.output === 'Transfer of $6000 completed.',
+      'Test 5a: An unexpired approval with a TTL settles normally',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 5: Unexpired TTL settles normally', err.message);
   }
 
   console.log(`\n  📊 Step 3 Results: ${passed} passed, ${failed} failed.\n`);

@@ -456,6 +456,7 @@ interface PendingApproval {
   context: AgentContext;
   reason: string;
   createdAt: Date;
+  expiresAt?: Date; // when set, resolving past this instant throws ApprovalExpiredError
   toolCallId?: string;
 }
 
@@ -491,6 +492,8 @@ Behavior of `approve()` and `reject()`:
 - Resuming requires the session's conversation history to still be present in `SessionStore`; if it was cleared or trimmed past the suspension point, resuming throws `ApprovalTranscriptMissingError`.
 
 **Exactly-once settlement.** `approve()` and `reject()` claim the approval through `ApprovalStore.claim()` — an atomic remove-and-return — before running the withheld tool. This makes settlement at most once: two concurrent `approve()` calls for the same id, or a retry triggered by a restart, result in exactly one that runs the side effect while the others throw `ApprovalNotFoundError`. Because the claim happens first, a tool that fails after being claimed will not be retried; making the underlying side effect idempotent remains the tool's responsibility. `InMemoryApprovalStore` claims atomically within a process; `RedisApprovalStore` uses `GETDEL` for cross-instance atomicity when the client supports it.
+
+**Expiry.** An approval can carry an `expiresAt`. It is set from the `require_approval` policy's own `ttlSeconds`, or failing that the module's `approvalTtlSeconds` (`AgenticModule.forRoot({ approvalTtlSeconds })`); when neither is set the approval never expires. Resolving an approval after its `expiresAt` throws `ApprovalExpiredError` rather than executing a decision against stale context, and the expired approval is consumed (the claim removes it) so it is not left behind for a retry. `RedisApprovalStore` derives the key's Redis TTL from `expiresAt` plus an `expiryGraceSeconds` window (default 300s) so abandoned approvals are garbage-collected while a just-expired one can still be claimed to report the precise error.
 
 ```typescript
 const outcome = await approvalService.approve(approvalId);
