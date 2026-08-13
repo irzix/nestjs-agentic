@@ -10,6 +10,7 @@ import {
   LocalToolProvider,
   MockModelAdapter,
   Param,
+  PolicyNotRegisteredError,
   Tool,
   ToolDiscoveryService,
   ToolSet,
@@ -44,11 +45,18 @@ class BlockExportPolicy implements ToolPolicy {
   }
 }
 
+class UnregisteredPolicy implements ToolPolicy {
+  async evaluate(): Promise<PolicyResult> {
+    return { decision: 'allow' };
+  }
+}
+
 @ToolSet({ name: 'orders' })
 class OrderTools {
   readonly refunded: Array<{ orderId: string; amount: number; userId?: string }> = [];
   lookupCalls = 0;
   exportCalls = 0;
+  flakyCalls = 0;
 
   @Tool({ name: 'lookupOrder', description: 'Look up an order' })
   async lookupOrder(@Param('orderId') orderId: string) {
@@ -72,6 +80,20 @@ class OrderTools {
   async exportOrders() {
     this.exportCalls++;
     return { exported: true };
+  }
+
+  @Tool({ name: 'flakyLookup', description: 'Look up an order in a flaky system' })
+  async flakyLookup(@Param('orderId') orderId: string) {
+    this.flakyCalls++;
+    const error = new Error(`Order ${orderId} not found in ledger`);
+    error.stack = 'Error: secret internal stack trace\n    at Ledger.query';
+    throw error;
+  }
+
+  @Tool({ name: 'misconfigured', description: 'Tool with an unregistered policy' })
+  @UsePolicies(UnregisteredPolicy)
+  async misconfigured() {
+    return { ok: true };
   }
 }
 
@@ -419,6 +441,131 @@ export async function runAgentExecutorTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 10: Argument validator', err.message);
+  }
+
+  // TEST 11: A throwing tool is reported to the model instead of ending the turn
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Look up order 99')
+      .callTool('flakyLookup', { orderId: '99' })
+      .reply('That order is not in the ledger.');
+
+    const { runner, tools } = createHarness(model);
+    const result = await runner.run('support', {
+      sessionId: 'sess_11',
+      message: 'Look up order 99',
+    });
+
+    assert(tools.flakyCalls === 1, 'Test 11a: Tool was invoked');
+    assert(
+      result.output === 'That order is not in the ledger.',
+      'Test 11b: Turn continues after a tool throws',
+    );
+
+    const failure = result.toolCalls[0]?.result as any;
+    assert(failure?.status === 'error', 'Test 11c: Failure recorded on the tool call');
+    assert(
+      String(failure?.error).includes('not found in ledger'),
+      'Test 11d: Error message preserved for the model',
+    );
+    assert(
+      !String(failure?.error).includes('secret internal stack trace'),
+      'Test 11e: Stack trace never forwarded',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 11: Tool error reported', err.message);
+  }
+
+  // TEST 12: Tool errors can be made fatal
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Look up order 99')
+      .callTool('flakyLookup', { orderId: '99' })
+      .reply('unreachable');
+
+    const { runner } = createHarness(model);
+    let caught: any;
+    try {
+      await runner.run('support', {
+        sessionId: 'sess_12',
+        message: 'Look up order 99',
+        toolErrorHandling: 'throw',
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    assert(
+      caught instanceof Error && String(caught.message).includes('not found in ledger'),
+      'Test 12a: throw mode propagates the original tool error',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 12: Fatal tool errors', err.message);
+  }
+
+  // TEST 13: Framework configuration errors are never reported to the model
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Run misconfigured tool')
+      .callTool('misconfigured', {})
+      .reply('unreachable');
+
+    const { runner } = createHarness(model);
+    let caught: any;
+    try {
+      await runner.run('support', {
+        sessionId: 'sess_13',
+        message: 'Run misconfigured tool',
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    assert(
+      caught instanceof PolicyNotRegisteredError,
+      'Test 13a: Missing policy registration surfaces to the caller',
+    );
+    assert(
+      String(caught?.message).includes('UnregisteredPolicy'),
+      'Test 13b: Error names the unregistered policy',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 13: Framework errors stay fatal', err.message);
+  }
+
+  // TEST 14: Streaming emits a terminal event for a failed tool
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Look up order 99')
+      .callTool('flakyLookup', { orderId: '99' })
+      .reply('That order is not in the ledger.');
+
+    const { runner } = createHarness(model);
+    const events: AgentStreamEvent[] = [];
+    for await (const event of runner.runStream('support', {
+      sessionId: 'sess_14',
+      message: 'Look up order 99',
+    })) {
+      events.push(event);
+    }
+
+    const types = events.map((e) => e.type);
+    assert(types.includes('tool_error'), 'Test 14a: tool_error event emitted');
+    assert(
+      types.indexOf('tool_start') < types.indexOf('tool_error'),
+      'Test 14b: Failure follows the tool start event',
+    );
+    assert(!types.includes('tool_result'), 'Test 14c: No success event for a failed tool');
+    assert(
+      events[events.length - 1].type === 'complete',
+      'Test 14d: Stream still completes normally',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 14: Streaming tool errors', err.message);
   }
 
   console.log(`\n  📊 Step 7 Results: ${passed} passed, ${failed} failed.\n`);
