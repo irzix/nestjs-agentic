@@ -1,4 +1,4 @@
-import type { ExecutionLimits } from './execution.interface';
+import type { ExecutionLimits, ToolErrorHandling } from './execution.interface';
 import type { ModelConfig } from './runtime.interface';
 
 export interface AgentConfig {
@@ -18,6 +18,11 @@ export interface AgentConfig {
    * Overrides module-level limits and can be overridden per run.
    */
   limits?: ExecutionLimits;
+  /**
+   * How exceptions thrown by this agent's tools are treated.
+   * Overrides the module setting and can be overridden per run.
+   */
+  toolErrorHandling?: ToolErrorHandling;
 }
 
 export interface AgentProvider {

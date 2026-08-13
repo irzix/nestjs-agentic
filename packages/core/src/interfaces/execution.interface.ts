@@ -23,6 +23,20 @@ export const DEFAULT_EXECUTION_LIMITS: Required<
   maxToolCalls: 32,
 };
 
+/**
+ * How the runtime treats an exception thrown by an application tool.
+ *
+ * - `report` feeds the error back to the model so it can adapt within the same
+ *   turn, matching how invalid tool arguments are handled.
+ * - `throw` propagates the error and ends the run.
+ *
+ * Framework errors such as a missing policy registration always propagate.
+ */
+export type ToolErrorHandling = 'report' | 'throw';
+
+/** Default applied when no tool error strategy is configured. */
+export const DEFAULT_TOOL_ERROR_HANDLING: ToolErrorHandling = 'report';
+
 /** Reason an execution stopped before the model produced a final answer. */
 export type ExecutionLimitKind =
   | 'max_iterations'
