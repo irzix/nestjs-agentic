@@ -6,6 +6,12 @@ export interface GenericRedisClient {
   set(key: string, value: string, mode?: string, duration?: number): Promise<unknown>;
   del(key: string): Promise<number>;
   keys(pattern: string): Promise<string[]>;
+  /**
+   * Atomically get and delete a key (Redis 6.2+ `GETDEL`). Optional because
+   * not every client exposes it; `RedisApprovalStore` uses it for atomic
+   * claiming when present and falls back to a non-atomic get+del otherwise.
+   */
+  getdel?(key: string): Promise<string | null>;
 }
 
 export interface RedisStateStoreOptions {

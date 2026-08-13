@@ -30,6 +30,17 @@ export interface ApprovalStore {
   save(approval: PendingApproval): Promise<void>;
   get(id: string): Promise<PendingApproval | null>;
   delete(id: string): Promise<void>;
+  /**
+   * Atomically remove and return the approval, or return `null` if it is
+   * absent — including because a concurrent caller already claimed it.
+   *
+   * This is the primitive that makes settlement exactly-once: `approve()` and
+   * `reject()` claim an approval before executing its withheld tool, so a
+   * given approval can be settled at most once even under concurrent calls or
+   * a restart-triggered retry. Implementations MUST perform the read and
+   * removal as a single atomic step (e.g. Redis `GETDEL`).
+   */
+  claim(id: string): Promise<PendingApproval | null>;
 }
 
 /** A human reviewer's decision on a `PendingApproval`. */
