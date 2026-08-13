@@ -5,10 +5,15 @@ import {
   AGENT_METADATA,
   AGENT_PROVIDERS,
   AGENTIC_OPTIONS,
+  APPROVAL_STORE,
   RUNTIME_ADAPTER,
   SESSION_STORE,
 } from '../constants';
-import { ApprovalTranscriptMissingError, RuntimeNotConfiguredError } from '../errors';
+import {
+  ApprovalCheckpointVersionError,
+  ApprovalTranscriptMissingError,
+  RuntimeNotConfiguredError,
+} from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
 import type {
   AgentConfig,
@@ -17,12 +22,14 @@ import type {
   AgentResult,
   AgentStreamEvent,
   ApprovalDecision,
+  ApprovalStore,
   ModelConfig,
   PendingApproval,
   ResolvedTool,
   RuntimeAdapter,
   ToolExecutionResult,
 } from '../interfaces';
+import { APPROVAL_CHECKPOINT_VERSION } from '../interfaces';
 import type {
   ExecutionLimits,
   ToolErrorHandling,
@@ -113,6 +120,7 @@ export class AgentRunner {
     private readonly moduleRef: ModuleRef,
     @Optional() private readonly executor?: AgentExecutor,
     @Optional() @Inject(SESSION_STORE) private readonly sessionStore?: SessionStore,
+    @Optional() @Inject(APPROVAL_STORE) private readonly approvalStore?: ApprovalStore,
   ) {}
 
   /**
@@ -210,11 +218,7 @@ export class AgentRunner {
       return outcome;
     }
 
-    const history = await this.loadRawHistory(pending.context);
-    if (!history) {
-      throw new ApprovalTranscriptMissingError(pending.toolCallId);
-    }
-
+    const history = await this.resolveResumeHistory(pending);
     const store = this.resolveSessionStore();
 
     return this.executor.resume({
@@ -239,7 +243,69 @@ export class AgentRunner {
       onTranscript: store
         ? (messages) => this.saveHistory(pending.context, messages)
         : undefined,
+      // A resumed turn can suspend again on a further approval, which needs its
+      // own checkpoint.
+      onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
     });
+  }
+
+  /**
+   * Records the suspension point on the approval itself, so resuming does not
+   * depend on `SessionStore` still holding the withheld tool message.
+   *
+   * The approval was already saved by the tool's policy chain; this attaches
+   * the checkpoint to it. Runs before the suspended turn returns, so no caller
+   * can hold the `approvalId` yet and there is nothing to race with.
+   */
+  private async saveCheckpoint(approvalId: string, messages: ModelMessage[]): Promise<void> {
+    if (!this.approvalStore) return;
+
+    try {
+      const pending = await this.approvalStore.get(approvalId);
+      if (!pending) return;
+
+      await this.approvalStore.save({
+        ...pending,
+        checkpoint: {
+          version: APPROVAL_CHECKPOINT_VERSION,
+          // Untrimmed: resume must still find the withheld tool call. System
+          // messages are dropped because instructions are re-derived from the
+          // agent's config on resume.
+          messages: withoutSystemMessages(messages),
+        },
+      });
+    } catch {
+      // Checkpointing is an optimization over reading session history; failing
+      // to write it must not fail the turn that is already suspended.
+    }
+  }
+
+  /**
+   * Transcript used to resume a suspended turn.
+   *
+   * The approval's own checkpoint is authoritative. Session history is only a
+   * fallback for approvals created before checkpointing existed, and it can be
+   * trimmed past the suspension point.
+   */
+  private async resolveResumeHistory(pending: PendingApproval): Promise<ModelMessage[]> {
+    const checkpoint = pending.checkpoint;
+
+    if (checkpoint) {
+      if (checkpoint.version !== APPROVAL_CHECKPOINT_VERSION) {
+        throw new ApprovalCheckpointVersionError(
+          pending.id,
+          checkpoint.version,
+          APPROVAL_CHECKPOINT_VERSION,
+        );
+      }
+      return checkpoint.messages;
+    }
+
+    const history = await this.loadRawHistory(pending.context);
+    if (!history) {
+      throw new ApprovalTranscriptMissingError(pending.toolCallId!);
+    }
+    return history;
   }
 
   private async saveHistory(context: AgentContext, messages: ModelMessage[]): Promise<void> {
@@ -360,6 +426,9 @@ export class AgentRunner {
         onTranscript: withHistory
           ? (messages) => this.saveHistory(prepared.context, messages)
           : undefined,
+        // Independent of history being enabled: an approval must stay resumable
+        // even for a stateless turn.
+        onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
       });
     }
 
@@ -392,6 +461,7 @@ export class AgentRunner {
         onTranscript: withHistory
           ? (messages) => this.saveHistory(prepared.context, messages)
           : undefined,
+        onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
       });
       return;
     }

@@ -106,14 +106,36 @@ export class ApprovalToolNotFoundError extends AgenticError {
 
 /**
  * Raised when resuming a suspended turn cannot locate the tool message it
- * withheld — for example the session history was cleared or trimmed past the
- * suspension point before the approval was resolved.
+ * withheld.
+ *
+ * Approvals created by the built-in runtime carry their own checkpoint, so
+ * this normally indicates the approval predates checkpointing (or came from a
+ * `RuntimeAdapter`) and the session history it fell back to was cleared or
+ * trimmed past the suspension point.
  */
 export class ApprovalTranscriptMissingError extends AgenticError {
   constructor(readonly toolCallId: string) {
     super(
       `Could not resume: no suspended tool call "${toolCallId}" was found in the ` +
-        `conversation history. The session may have been cleared or trimmed.`,
+        `approval checkpoint or the conversation history. The session may have ` +
+        `been cleared or trimmed.`,
+    );
+  }
+}
+
+/**
+ * Raised when a pending approval carries a checkpoint written in a schema
+ * version this release does not understand, rather than misreading it.
+ */
+export class ApprovalCheckpointVersionError extends AgenticError {
+  constructor(
+    readonly approvalId: string,
+    readonly found: number,
+    readonly supported: number,
+  ) {
+    super(
+      `Approval "${approvalId}" has a checkpoint of version ${found}, but this ` +
+        `release supports version ${supported}. The approval cannot be resumed safely.`,
     );
   }
 }
