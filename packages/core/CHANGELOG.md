@@ -1,5 +1,112 @@
 # @nestjs-agentic/core
 
+## 0.6.0
+
+### Minor Changes
+
+- fa2db68: Checkpoint suspended turns on the approval, so resuming no longer depends on session history.
+
+  Resuming an approval previously read the transcript back from `SessionStore` and located the withheld tool message by `toolCallId`. That transcript is trimmed for replay and can be cleared independently of the approval, so a pending approval could become unresumable through no fault of its own — `ApprovalTranscriptMissingError`. Session retention effectively had to outlive every approval.
+
+  The runtime now snapshots the suspension point onto the approval itself.
+
+  - `PendingApproval` gains an optional `checkpoint`: a versioned `ApprovalCheckpoint` holding the conversation up to and including the withheld tool message, untrimmed and without system messages (instructions are re-derived from `AgentConfig` on resume)
+  - `AgentRunner.settleApproval()` treats the checkpoint as authoritative and only falls back to session history for approvals created before checkpointing existed, or by a `RuntimeAdapter`
+  - `AgentExecutor` reports the suspension through a new `onSuspend` callback rather than writing to a store itself, mirroring how `onTranscript` already works; `AgentRunner` owns persistence. Resumed turns that suspend again are checkpointed too.
+  - the checkpoint is written before the suspended turn returns, and the `approvalId` only becomes observable when it does, so there is no window where an approval can be settled without a durable checkpoint
+  - a checkpoint whose `version` this release does not support is refused with the new `ApprovalCheckpointVersionError` instead of being misread
+  - `AgentRunner` accepts an optional `ApprovalStore` (injected via `APPROVAL_STORE`) to write checkpoints with
+
+  Checkpoints are deliberately untrimmed, so an approval record is proportionally larger than the trimmed session transcript for the same turn.
+
+  No breaking changes: `checkpoint` and `onSuspend` are optional, the new `AgentRunner` constructor parameter is optional and last, and approvals without a checkpoint keep resuming from session history exactly as before.
+
+- c8c0392: Let human approvals expire instead of lingering forever.
+
+  An approval that is never resolved previously stayed valid indefinitely, so a decision could eventually be applied against stale context (an order, price, or balance that has since changed). Approvals can now carry a lifetime.
+
+  - `PendingApproval` gains an optional `expiresAt`. Resolving an approval after it throws the new `ApprovalExpiredError` rather than executing the decision, and the expired approval is consumed (the claim removes it) so it is not left behind for a retry.
+  - the TTL comes from the `require_approval` policy result's new optional `ttlSeconds`, or failing that the module-level `approvalTtlSeconds` on `AgenticModule.forRoot()`; when neither is set the approval never expires, matching prior behavior
+  - `RedisApprovalStore` derives the key's Redis TTL from `expiresAt` plus a configurable `expiryGraceSeconds` window (default 300s), so abandoned approvals are garbage-collected while a just-expired one can still be claimed to report the precise error. Approvals without `expiresAt` still fall back to the store's `ttlSeconds` option.
+
+  No breaking changes: `expiresAt`, `ttlSeconds`, and `approvalTtlSeconds` are all optional and default to the previous never-expire behavior.
+
+- c0ea462: Make multi-turn conversation work.
+
+  `AgentRunner` never loaded or saved conversation state, so every `run()` started from scratch and an agent could not remember the previous message. The built-in runtime now replays and persists history per session.
+
+  - history is stored through `SessionStore`, keyed by `tenantId:sessionId` so two tenants cannot share a transcript
+  - retention keeps the most recent messages, and trimming never leaves a tool result without the assistant message that requested it
+  - system messages are not stored, since agent instructions are reapplied each turn
+  - history is written when a turn ends or suspends for approval, never on failure
+  - a failing history read does not fail the turn
+  - `RunInput.history: false` runs a single turn statelessly, and `session.enabled: false` disables the feature
+  - `forRoot()` accepts `sessionStore` and `session` options
+  - `AgentExecutionInput` gains `onTranscript`, the hook the runner uses to persist a completed turn
+
+  Also fixes `MockModelAdapter`, which selected its scripted round by counting every assistant message. Replayed history shifted the script, so rounds are now counted from the latest user message.
+
+  History applies to the built-in runtime. Applications that delegate turns to a `RuntimeAdapter` continue to own their own state.
+
+- 7d29d5b: Settle human approvals exactly once, even under concurrent calls or restart-triggered retries.
+
+  Previously `ApprovalService.approve()`/`reject()` read the pending approval, ran its withheld tool, and only then deleted the record. Two concurrent calls for the same approval — or a retry after a restart — could both observe the record and run the side effect twice, which is unsafe for the sensitive operations approvals typically guard (refunds, payments, outbound messages).
+
+  Settlement is now claim-first: the approval is removed atomically before its tool runs, so a given approval resolves at most once.
+
+  - adds `ApprovalStore.claim(id)`, an atomic remove-and-return primitive; `approve()`/`reject()` call it before executing, and callers that lose the race throw `ApprovalNotFoundError`
+  - `InMemoryApprovalStore.claim()` is atomic within a process; `RedisApprovalStore.claim()` uses Redis `GETDEL` for cross-instance atomicity when the client exposes it, falling back to a non-atomic get+del otherwise
+  - extends the optional `GenericRedisClient` contract with `getdel?(key)`
+
+  Because the claim happens before execution, a tool that fails after being claimed is not retried; end-to-end exactly-once for a side effect still depends on the tool being idempotent, tracked as follow-up idempotency-key work.
+
+  Breaking change:
+
+  - `ApprovalStore` now requires a `claim(id): Promise<PendingApproval | null>` method. Custom `ApprovalStore` implementations must add it; the built-in `InMemoryApprovalStore` and `RedisApprovalStore` already do.
+
+- 0754d1f: Publish a reusable behavioral contract suite for model adapters.
+
+  `runModelAdapterContract()` checks that a `ModelAdapter` implementation behaves the way the runtime expects, so third-party adapters can verify compliance instead of discovering differences at runtime.
+
+  - exercises text rounds, tool-calling rounds, full conversations with prior tool results, usage mapping, request immutability, finish reasons, cancellation, and streaming
+  - each scenario describes one provider round, matching the unit a `ModelAdapter` is responsible for
+  - `CONTRACT_SYSTEM_MESSAGE`, `CONTRACT_USER_MESSAGE`, and `CONTRACT_TOOLS` are exported so a factory can key its stub transport on them
+  - capabilities an adapter intentionally omits can be skipped, and skips are counted separately rather than passing silently
+  - returns a structured result with failure descriptions rather than depending on a test framework
+
+  `MockModelAdapter` now honors `request.signal` and rejects when it is already aborted, which the contract requires of every adapter.
+
+- adc6ba9: Make human approval durable and resumable instead of a process-local closure.
+
+  `PendingApproval` previously stored a JavaScript closure over the live tool instance and arguments, so it could not be persisted to an external store or resolved from a different process. Resolving it also never continued the model turn — it only returned the bare tool result, so the conversation had to be restarted separately to react to it.
+
+  - `PendingApproval` is now a plain serializable record (`agentName`, `toolName`, `args`, `context`, `reason`, `createdAt`, `toolCallId`) with no closure, so any `ApprovalStore` can persist it across a restart or resolve it from a different instance
+  - adds `RedisApprovalStore`, a production-intent, JSON-serializing `ApprovalStore` with optional TTL-based expiry
+  - `ApprovalService.approve()` and `.reject()` now resume the suspended model turn when the approval originated from the built-in runtime: the tool outcome is spliced into the withheld tool message and the model reacts to it, exactly as it would to any other tool result
+  - adds `AgentExecutor.resume()` and `.resumeStream()` to continue a turn from a persisted transcript and a resolved tool outcome
+  - adds `AgentRunner.settleApproval()`, which resolves the pending record by re-resolving the agent and its tools through DI (using `agentName`/`toolName`) rather than a captured reference, and used internally by `ApprovalService`
+  - `reject()` now accepts an optional `{ reason }`, and both `approve()`/`reject()` accept `{ signal }` for cancelling the resumed turn
+
+  Breaking changes:
+
+  - `ApprovalService.approve()` and `.reject()` now return `AgentResult | ToolExecutionResult` instead of `ToolExecutionResult | void`. The result is the full `AgentResult` when resuming a built-in-runtime turn (has a `toolCallId`), or the bare `ToolExecutionResult` for approvals created by an agent driven entirely by a `RuntimeAdapter` (no `toolCallId`), matching prior behavior for that path.
+  - `PendingApproval.execute` (the closure) is removed. `ApprovalStore` implementations and any code constructing `PendingApproval` directly (for example in tests) must switch to the new serializable shape.
+  - `approve()`/`reject()` now throw `ApprovalNotFoundError` instead of a plain `Error` for an unknown or already-resolved ID.
+  - Resuming a turn requires the session's conversation history to still be present in `SessionStore`. If it was cleared or trimmed past the suspension point, resuming throws `ApprovalTranscriptMissingError`.
+
+- 6eabac1: Recover from tool exceptions instead of ending the agent turn.
+
+  A tool that threw previously rejected the whole run, so any database error or missing record ended the conversation. The runtime now reports the failure to the model as a tool message and continues, matching how invalid tool arguments are already handled.
+
+  - adds `ToolErrorHandling` with `report` as the default and `throw` to opt back into fatal behavior, resolved per run, per agent, then per module
+  - records the failure on `AgentResult.toolCalls` as `{ success: false, status: 'error', error }`
+  - adds a `tool_error` stream event so a stream never leaves a `tool_start` without a terminal event
+  - forwards only the error message, truncated to 500 characters, and never a stack trace
+  - keeps framework errors fatal, and adds `PolicyNotRegisteredError` so an unregistered policy is reported to the caller rather than described to the model
+  - reports cancellation observed during a tool invocation as `ExecutionCancelledError`
+
+  `AgentStreamEvent` gains the `tool_error` variant. Consumers that exhaustively switch on the union without a default branch need to handle it.
+
 ## 0.5.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/memory",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Multi-tier cognitive memory module for nestjs-agentic enabling Short-Term, Scratchpad, and Composite memory stores.",
   "repository": {
     "type": "git",
