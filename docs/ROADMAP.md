@@ -34,7 +34,7 @@ The current release line is `0.4.x`.
 | Built-in agent runtime | Available | `AgentExecutor` runs the governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming. Requires an application-supplied `ModelAdapter`. |
 | OpenAI model adapter | Available | `@nestjs-agentic/openai` covers OpenAI and Chat Completions compatible endpoints, including Azure, Ollama, vLLM, Groq, and OpenRouter. |
 | Additional model adapters | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same `ModelAdapter` contract. |
-| Human approval | Experimental | Approval and rejection resume the original model turn and use a serializable `PendingApproval` record, so a durable `ApprovalStore` (e.g. `RedisApprovalStore`) can survive a process restart or resolve on a different instance. Settlement is atomic (at most once) via `ApprovalStore.claim()`, approvals can expire via a policy `ttlSeconds` or module `approvalTtlSeconds`, and each suspension carries a versioned `ApprovalCheckpoint` so resuming does not depend on `SessionStore` retention. Idempotency keys for retrying a claimed-but-failed tool, and checkpointing turns that are still in flight, remain open. |
+| Human approval | Experimental | Approval and rejection resume the original model turn and use a serializable `PendingApproval` record, so a durable `ApprovalStore` (e.g. `RedisApprovalStore`) can survive a process restart or resolve on a different instance. Settlement is atomic (at most once) via `ApprovalStore.claim()`, approvals can expire via a policy `ttlSeconds` or module `approvalTtlSeconds`, and each suspension carries a versioned `ApprovalCheckpoint` so resuming does not depend on `SessionStore` retention. Both approval stores are verified by the `runApprovalStoreContract` suite. Auditable approval events, idempotency keys for retrying a claimed-but-failed tool, and checkpointing turns that are still in flight remain open. |
 | Legacy runtime adapters | Experimental | The ADK-named package is currently a synthetic runtime prototype. The LangGraph package provides limited LangChain and checkpointer compatibility, but full graph execution is not currently part of the adapter. |
 | Conversation history | Available | The built-in runtime replays and persists per-session conversation through `SessionStore`, scoped by tenant, with retention that keeps tool exchanges intact. |
 | Streaming and state | Experimental | Shared event and state abstractions exist, but adapter behavior and execution recovery are not yet unified. |
@@ -91,7 +91,8 @@ Goal: make executions safe to pause, recover, inspect, and operate in production
 - [ ] Add idempotency support and safe retry behavior for side-effecting tools. (Approval settlement is now atomic and at-most-once via `ApprovalStore.claim()`; idempotency keys for safely retrying a claimed-but-failed tool remain.)
 - [ ] Propagate cancellation and deadlines through model, tool, and persistence operations.
 - [ ] Add bounded concurrency and failure-aware retries.
-- [ ] Provide production-intent Redis and/or PostgreSQL persistence adapters.
+- [ ] Provide production-intent Redis and/or PostgreSQL persistence adapters. (`RedisApprovalStore` and `RedisStateStore` exist; `RedisApprovalStore` is covered by the `runApprovalStoreContract` suite. A session store and PostgreSQL adapters remain.)
+- [x] Publish a reusable behavioral contract-test suite for approval stores (`runApprovalStoreContract`).
 - [ ] Wire runtime observers and OpenTelemetry-compatible traces and metrics.
 - [ ] Record auditable model, tool, policy, and approval events.
 - [ ] Harden tenant and identity isolation throughout runtime execution.

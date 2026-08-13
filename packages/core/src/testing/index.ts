@@ -9,3 +9,12 @@ export type {
   ModelAdapterContractResult,
   ModelAdapterContractScenario,
 } from './model-adapter-contract';
+export {
+  CONTRACT_AGENT_NAME,
+  CONTRACT_TOOL_NAME,
+  runApprovalStoreContract,
+} from './approval-store-contract';
+export type {
+  ApprovalStoreContractOptions,
+  ApprovalStoreContractResult,
+} from './approval-store-contract';
