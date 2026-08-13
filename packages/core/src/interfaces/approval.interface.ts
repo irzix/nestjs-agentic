@@ -1,4 +1,31 @@
 import type { AgentContext } from './agent-context.interface';
+import type { ModelMessage } from './model.interface';
+
+/** Checkpoint schema version written by this release. */
+export const APPROVAL_CHECKPOINT_VERSION = 1;
+
+/**
+ * A durable snapshot of the suspended turn, stored on the approval itself.
+ *
+ * Resuming needs the conversation up to and including the tool message that
+ * was withheld. Reading it back from `SessionStore` is unreliable — that
+ * transcript is trimmed for replay and may be cleared independently of the
+ * approval — so the executor checkpoints it here instead, making resume
+ * self-contained.
+ *
+ * `version` is explicit so a record written by an older release can be
+ * recognized and rejected (`ApprovalCheckpointVersionError`) rather than
+ * misread.
+ */
+export interface ApprovalCheckpoint {
+  version: number;
+  /**
+   * Conversation up to and including the withheld tool message, untrimmed and
+   * without system messages — instructions are re-derived from the agent's
+   * `AgentConfig` on resume.
+   */
+  messages: ModelMessage[];
+}
 
 /**
  * A tool call withheld pending human approval.
@@ -32,6 +59,13 @@ export interface PendingApproval {
    * conversation position that was suspended.
    */
   toolCallId?: string;
+  /**
+   * Snapshot of the suspended turn, written by the built-in runtime once the
+   * approval is created. When present, resuming uses it instead of reading
+   * `SessionStore`, so the turn survives history being trimmed or cleared.
+   * Absent for approvals created outside the built-in runtime.
+   */
+  checkpoint?: ApprovalCheckpoint;
 }
 
 export interface ApprovalStore {

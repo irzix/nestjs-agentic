@@ -54,6 +54,15 @@ export interface AgentExecutionInput {
    * transcript is never persisted.
    */
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
+  /**
+   * Receives the conversation at the moment a turn suspends for approval, so
+   * the caller can checkpoint it against the approval record.
+   *
+   * The executor stays free of persistence concerns, exactly as with
+   * `onTranscript`. This runs before the turn returns, so the checkpoint is
+   * durable before the caller can learn the `approvalId` and settle it.
+   */
+  onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
 }
 
 /** Fields shared by a fresh turn and a resumed one. */
@@ -84,6 +93,8 @@ export interface AgentResumeInput extends ExecutorRequestContext {
   limits?: ExecutionLimits;
   toolErrorHandling?: ToolErrorHandling;
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
+  /** Checkpoints a resumed turn that suspends again on a further approval. */
+  onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
 }
 
 /** Payload reported to the model, and recorded, when a tool throws. */
@@ -104,6 +115,8 @@ interface ExecutionState {
   toolCallCount: number;
   iteration: number;
   suspended: boolean;
+  /** Identifies the approval that suspended this turn, for checkpointing. */
+  suspendedApprovalId?: string;
 }
 
 /**
@@ -137,7 +150,15 @@ export class AgentExecutor {
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
 
-    return this.runToCompletion(adapter, input, state, limits, toolErrorHandling, input.onTranscript);
+    return this.runToCompletion(
+      adapter,
+      input,
+      state,
+      limits,
+      toolErrorHandling,
+      input.onTranscript,
+      input.onSuspend,
+    );
   }
 
   async *stream(input: AgentExecutionInput): AsyncIterable<AgentStreamEvent> {
@@ -146,7 +167,15 @@ export class AgentExecutor {
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
 
-    yield* this.streamToCompletion(adapter, input, state, limits, toolErrorHandling, input.onTranscript);
+    yield* this.streamToCompletion(
+      adapter,
+      input,
+      state,
+      limits,
+      toolErrorHandling,
+      input.onTranscript,
+      input.onSuspend,
+    );
   }
 
   /**
@@ -162,7 +191,15 @@ export class AgentExecutor {
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createResumedState(input);
 
-    return this.runToCompletion(adapter, input, state, limits, toolErrorHandling, input.onTranscript);
+    return this.runToCompletion(
+      adapter,
+      input,
+      state,
+      limits,
+      toolErrorHandling,
+      input.onTranscript,
+      input.onSuspend,
+    );
   }
 
   /** Streaming counterpart of {@link resume}. */
@@ -172,7 +209,15 @@ export class AgentExecutor {
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createResumedState(input);
 
-    yield* this.streamToCompletion(adapter, input, state, limits, toolErrorHandling, input.onTranscript);
+    yield* this.streamToCompletion(
+      adapter,
+      input,
+      state,
+      limits,
+      toolErrorHandling,
+      input.onTranscript,
+      input.onSuspend,
+    );
   }
 
   private async runToCompletion(
@@ -182,6 +227,7 @@ export class AgentExecutor {
     limits: ExecutionLimits,
     toolErrorHandling: ToolErrorHandling,
     onTranscript: AgentExecutionInput['onTranscript'],
+    onSuspend: AgentExecutionInput['onSuspend'],
   ): Promise<AgentResult> {
     const scope = this.createScope(requestCtx.signal, limits.timeoutMs);
 
@@ -201,6 +247,9 @@ export class AgentExecutor {
 
         if (finished) {
           const result = this.toResult(requestCtx.sessionId, state, response.content);
+          // Checkpointed first: once this returns, the caller holds the
+          // approvalId and could settle it immediately.
+          await this.publishCheckpoint(onSuspend, state);
           // The persisted transcript gets the model's actual content, never the
           // synthetic "requires approval" sentence resolveOutput() fabricates
           // for the caller — that text was never said by the model, and
@@ -221,6 +270,7 @@ export class AgentExecutor {
     limits: ExecutionLimits,
     toolErrorHandling: ToolErrorHandling,
     onTranscript: AgentExecutionInput['onTranscript'],
+    onSuspend: AgentExecutionInput['onSuspend'],
   ): AsyncIterable<AgentStreamEvent> {
     const scope = this.createScope(requestCtx.signal, limits.timeoutMs);
 
@@ -269,6 +319,7 @@ export class AgentExecutor {
 
         if (finished) {
           const output = this.resolveOutput(state, response.content);
+          await this.publishCheckpoint(onSuspend, state);
           await this.publishTranscript(onTranscript, state, output);
           yield { type: 'complete', sessionId: requestCtx.sessionId, output };
           return;
@@ -559,6 +610,7 @@ export class AgentExecutor {
           reason: result.reason,
         });
         state.suspended = true;
+        state.suspendedApprovalId = result.approvalId;
         return true;
       }
 
@@ -609,6 +661,23 @@ export class AgentExecutor {
       toolName: call.name,
       content: JSON.stringify(payload),
     });
+  }
+
+  /**
+   * Hands the suspension point to the caller so it can be checkpointed against
+   * the approval. No-op unless the turn actually suspended for approval.
+   *
+   * The snapshot ends at the withheld tool message, which is what resuming
+   * needs to locate — no final assistant text is appended, because the model
+   * never produced one.
+   */
+  private async publishCheckpoint(
+    onSuspend: AgentExecutionInput['onSuspend'],
+    state: ExecutionState,
+  ): Promise<void> {
+    if (!onSuspend || !state.suspended || !state.suspendedApprovalId) return;
+
+    await onSuspend(state.suspendedApprovalId, [...state.messages]);
   }
 
   /**

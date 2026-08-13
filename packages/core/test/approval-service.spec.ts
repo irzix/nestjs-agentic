@@ -19,7 +19,11 @@ import type {
   PolicyResult,
   ToolPolicy,
 } from '../src';
-import { ApprovalExpiredError, ApprovalNotFoundError } from '../src';
+import {
+  ApprovalCheckpointVersionError,
+  ApprovalExpiredError,
+  ApprovalNotFoundError,
+} from '../src';
 import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
 import { InMemorySessionStore } from '../src/stores/in-memory-session.store';
 
@@ -402,6 +406,121 @@ export async function runApprovalServiceTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 5: Unexpired TTL settles normally', err.message);
+  }
+
+  // TEST 6: A checkpoint on the approval makes resume independent of SessionStore
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Transfer $4000 to vendor')
+      .callTool('transferMoney', { amount: 4000 })
+      .reply('Transfer of $4000 completed.');
+
+    const { LocalToolProvider, ToolDiscoveryService } = await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const sessionStore = new InMemorySessionStore();
+    const localToolProvider = new LocalToolProvider(
+      [new ApprovalNeededPolicy()],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const tools = new LedgerTools();
+    const runner = new AgentRunner(
+      [new BankerAgent(tools)],
+      undefined,
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(model),
+      sessionStore,
+      approvalStore,
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    const suspended = await runner.run('banker', {
+      sessionId: 'sess_hitl_checkpoint',
+      message: 'Transfer $4000 to vendor',
+    });
+    const pending = suspended.toolCalls[0]?.result as any;
+
+    const stored = await approvalStore.get(pending.approvalId);
+    assert(
+      stored?.checkpoint?.version === 1,
+      'Test 6a: Suspending writes a versioned checkpoint onto the approval',
+    );
+    assert(
+      Boolean(
+        stored?.checkpoint?.messages.some(
+          (m: any) => m.role === 'tool' && m.toolCallId === stored?.toolCallId,
+        ),
+      ),
+      'Test 6b: Checkpoint contains the withheld tool message',
+    );
+    assert(
+      stored?.checkpoint?.messages.every((m: any) => m.role !== 'system') === true,
+      'Test 6c: Checkpoint excludes system messages',
+    );
+
+    // Wipe session history entirely: the old implementation resumed from it.
+    await sessionStore.delete('sess_hitl_checkpoint');
+
+    const resumed = (await approvals.approve(pending.approvalId)) as any;
+    assert(
+      tools.transfers.length === 1 && resumed.output === 'Transfer of $4000 completed.',
+      'Test 6d: Turn resumes from the checkpoint after session history is cleared',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 6: Checkpoint makes resume transcript-independent', err.message);
+  }
+
+  // TEST 7: A checkpoint from an unsupported schema version is refused
+  try {
+    const { LocalToolProvider, ToolDiscoveryService } = await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [new ApprovalNeededPolicy()],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const tools = new LedgerTools();
+    const runner = new AgentRunner(
+      [new BankerAgent(tools)],
+      undefined,
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(new MockModelAdapter()),
+      new InMemorySessionStore(),
+      approvalStore,
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    await approvalStore.save({
+      id: 'apr_future_version',
+      agentName: 'banker',
+      toolName: 'transferMoney',
+      args: { amount: 4000 },
+      context: { sessionId: 'sess_future', traceId: 't1', security: {} } as any,
+      reason: 'Requires manager approval.',
+      createdAt: new Date(),
+      toolCallId: 'call_1',
+      checkpoint: { version: 99, messages: [] },
+    });
+
+    let versionErr: unknown;
+    try {
+      await approvals.approve('apr_future_version');
+    } catch (err) {
+      versionErr = err;
+    }
+    assert(
+      versionErr instanceof ApprovalCheckpointVersionError,
+      'Test 7a: An unsupported checkpoint version throws ApprovalCheckpointVersionError',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 7: Unsupported checkpoint version is refused', err.message);
   }
 
   console.log(`\n  📊 Step 3 Results: ${passed} passed, ${failed} failed.\n`);

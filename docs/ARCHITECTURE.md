@@ -123,7 +123,7 @@ sequenceDiagram
 `PendingApproval` is a plain serializable record — `agentName`, `toolName`, `args`, `context`, and the originating `toolCallId` — rather than a JavaScript closure over live objects. This makes two things possible that were not before:
 
 - **Persistence across restarts and instances.** Because there is no closure to keep alive, `ApprovalStore` implementations like `RedisApprovalStore` can persist a pending approval and resolve it from a different process than the one that created it. Resolving an approval re-resolves the agent, its tool sets, and the target method through Nest DI using `agentName` and `toolName`, rather than reusing a captured reference.
-- **Resuming the original model turn.** When a `PendingApproval` carries a `toolCallId` (always true for turns run by the built-in `AgentExecutor`), `AgentRunner.settleApproval()` loads the persisted transcript, splices the resolved outcome into the exact tool message that was withheld, and calls `AgentExecutor.resume()`, which continues the model-to-tool loop from there. The model sees the approval or denial as an ordinary tool result and can react to it — answer, request another tool, or suspend again — instead of the conversation simply ending at the suspension point. `ApprovalService.approve()`/`reject()` therefore return the full `AgentResult` for built-in-runtime turns, not the bare `ToolExecutionResult`.
+- **Resuming the original model turn.** When a `PendingApproval` carries a `toolCallId` (always true for turns run by the built-in `AgentExecutor`), `AgentRunner.settleApproval()` loads the checkpointed transcript, splices the resolved outcome into the exact tool message that was withheld, and calls `AgentExecutor.resume()`, which continues the model-to-tool loop from there. The model sees the approval or denial as an ordinary tool result and can react to it — answer, request another tool, or suspend again — instead of the conversation simply ending at the suspension point. `ApprovalService.approve()`/`reject()` therefore return the full `AgentResult` for built-in-runtime turns, not the bare `ToolExecutionResult`.
 
 Approvals created outside the built-in runtime (an agent driven entirely by a `RuntimeAdapter`, which has no `toolCallId` to resume against) keep returning the bare `ToolExecutionResult`, matching prior behavior for that path.
 
@@ -131,12 +131,19 @@ Approvals created outside the built-in runtime (an agent driven entirely by a `R
 
 **Expiry.** An approval created with a TTL (a policy's `ttlSeconds` or the module's `approvalTtlSeconds`) carries an `expiresAt`. Resolving it past that instant throws `ApprovalExpiredError` instead of acting on stale context, and the claim consumes it so it is not left for a retry. `RedisApprovalStore` derives the key's Redis TTL from `expiresAt` plus a grace window, so abandoned approvals are garbage-collected rather than lingering forever.
 
+**Execution checkpoints.** Suspending no longer depends on `SessionStore` to stay resumable. When a turn suspends, `AgentExecutor` reports the suspension point through an `onSuspend` callback and `AgentRunner` writes it onto the approval as a versioned `ApprovalCheckpoint` — the conversation up to and including the withheld tool message, untrimmed and without system messages, since instructions are re-derived from `AgentConfig` on resume. `settleApproval()` treats that checkpoint as authoritative and only falls back to session history for approvals that predate it. Two properties follow:
+
+- **Ordering.** The checkpoint is written before the suspended turn returns, and the `approvalId` only becomes observable to a caller when it does. There is no window in which an approval can be settled without its checkpoint already durable.
+- **Layering.** `AgentExecutor` still performs no persistence of its own; it reports the checkpoint the same way it reports the finished transcript, and `AgentRunner` owns the writes.
+
+A checkpoint whose `version` this release does not recognize is refused with `ApprovalCheckpointVersionError` rather than misread. Checkpoints are deliberately untrimmed, so an approval record is proportionally larger than the trimmed session transcript for the same turn.
+
 What remains roadmap work:
 
 - idempotency keys so a claimed-but-failed tool can be safely retried without risking a duplicate side effect;
-- durable execution checkpoints for the in-flight turn itself, independent of the approval record (see [State, Sessions, and Memory](#state-sessions-and-memory)).
+- checkpointing turns that are still in flight, rather than only at an approval suspension point (see [State, Sessions, and Memory](#state-sessions-and-memory)).
 
-Applications that need durability today should provide a persistent `ApprovalStore` (such as `RedisApprovalStore`) and a persistent `SessionStore`, since resuming a turn depends on both.
+Applications that need durability today should provide a persistent `ApprovalStore`, such as `RedisApprovalStore`. A persistent `SessionStore` is still recommended so the conversation continues across turns, but resuming an approval no longer depends on it.
 
 ## Built-in Agent Runtime
 
@@ -219,7 +226,7 @@ These concepts exist today but do not yet form one execution lifecycle:
 | Runtime checkpointer | Adapter-specific checkpoint facility, currently separate from core stores. |
 | Memory packages | Explicitly constructed short-term, semantic, episodic, and scratchpad memory primitives. |
 
-`AgentRunner` persists conversation history through `SessionStore` so turns on the same session continue each other. Combined with a persistent `ApprovalStore`, a turn that suspends for approval can now be resumed from a different process, because both the transcript and the pending approval are durable, serializable records. What is not yet covered is a checkpoint of the execution loop's own in-flight state (iteration count, accumulated usage) independent of the transcript — a process crash mid-round, rather than at a suspension point, still loses that round. The durable execution milestone covers that remaining checkpoint gap and audit events.
+`AgentRunner` persists conversation history through `SessionStore` so turns on the same session continue each other. A turn that suspends for approval carries its own `ApprovalCheckpoint` on the pending approval, so with a persistent `ApprovalStore` it can be resumed from a different process without relying on the session transcript still being intact. What is not yet covered is checkpointing a turn that is still in flight: the loop's iteration count and accumulated usage are only snapshotted at a suspension point, so a process crash mid-round still loses that round. The durable execution milestone covers that remaining gap and audit events.
 
 ## Orchestration: Current Behavior
 

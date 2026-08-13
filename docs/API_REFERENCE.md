@@ -458,6 +458,14 @@ interface PendingApproval {
   createdAt: Date;
   expiresAt?: Date; // when set, resolving past this instant throws ApprovalExpiredError
   toolCallId?: string;
+  checkpoint?: ApprovalCheckpoint; // snapshot of the suspended turn
+}
+
+interface ApprovalCheckpoint {
+  version: number;
+  // Conversation up to and including the withheld tool message, untrimmed
+  // and without system messages.
+  messages: ModelMessage[];
 }
 
 interface ApprovalStore {
@@ -489,9 +497,11 @@ Behavior of `approve()` and `reject()`:
 - When the approval originated from the built-in runtime (it carries a `toolCallId`), the tool outcome is spliced into the exact suspended tool message in the persisted transcript and the model turn **resumes**: the model sees the outcome and can answer, request another tool, or suspend again. The return value is the full `AgentResult`.
 - When the approval did not originate from the built-in runtime (no `toolCallId`, for example an agent driven entirely by a `RuntimeAdapter`), only the tool is invoked or the denial is built, and the bare `ToolExecutionResult` is returned, matching `0.4.x` behavior.
 - Both methods throw `ApprovalNotFoundError` if the ID is unknown or was already resolved. Approvals are single-use.
-- Resuming requires the session's conversation history to still be present in `SessionStore`; if it was cleared or trimmed past the suspension point, resuming throws `ApprovalTranscriptMissingError`.
+- Resuming uses the approval's own `checkpoint`, so it does not depend on `SessionStore`. Approvals without one (created before checkpointing, or by a `RuntimeAdapter`) fall back to session history and throw `ApprovalTranscriptMissingError` if it was cleared or trimmed past the suspension point.
 
 **Exactly-once settlement.** `approve()` and `reject()` claim the approval through `ApprovalStore.claim()` — an atomic remove-and-return — before running the withheld tool. This makes settlement at most once: two concurrent `approve()` calls for the same id, or a retry triggered by a restart, result in exactly one that runs the side effect while the others throw `ApprovalNotFoundError`. Because the claim happens first, a tool that fails after being claimed will not be retried; making the underlying side effect idempotent remains the tool's responsibility. `InMemoryApprovalStore` claims atomically within a process; `RedisApprovalStore` uses `GETDEL` for cross-instance atomicity when the client supports it.
+
+**Execution checkpoints.** When the built-in runtime suspends a turn, it snapshots the conversation up to and including the withheld tool message onto the approval as a versioned `checkpoint`. Resuming reads that snapshot, so a turn survives session history being trimmed or cleared, and no longer depends on `SessionStore` retention outliving the approval. The checkpoint is written before the suspended turn returns, so it is durable before any caller can learn the `approvalId`. A record whose `checkpoint.version` this release does not support is refused with `ApprovalCheckpointVersionError` rather than misread. Checkpoints are untrimmed by design, so a long turn's approval record is proportionally larger than its trimmed session transcript.
 
 **Expiry.** An approval can carry an `expiresAt`. It is set from the `require_approval` policy's own `ttlSeconds`, or failing that the module's `approvalTtlSeconds` (`AgenticModule.forRoot({ approvalTtlSeconds })`); when neither is set the approval never expires. Resolving an approval after its `expiresAt` throws `ApprovalExpiredError` rather than executing a decision against stale context, and the expired approval is consumed (the claim removes it) so it is not left behind for a retry. `RedisApprovalStore` derives the key's Redis TTL from `expiresAt` plus an `expiryGraceSeconds` window (default 300s) so abandoned approvals are garbage-collected while a just-expired one can still be claimed to report the precise error.
 
