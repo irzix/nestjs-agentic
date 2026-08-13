@@ -1,6 +1,7 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
+  AgenticError,
   ExecutionCancelledError,
   ExecutionLimitExceededError,
   RuntimeNotConfiguredError,
@@ -8,8 +9,10 @@ import {
 } from '../errors';
 import {
   DEFAULT_EXECUTION_LIMITS,
+  DEFAULT_TOOL_ERROR_HANDLING,
   type ExecutionLimitKind,
   type ExecutionLimits,
+  type ToolErrorHandling,
 } from '../interfaces/execution.interface';
 import {
   MODEL_ADAPTER,
@@ -41,8 +44,20 @@ export interface AgentExecutionInput {
   /** Prior conversation messages to replay before the current user message. */
   history?: ModelMessage[];
   limits?: ExecutionLimits;
+  /** How exceptions thrown by tools are treated. Default: `report` */
+  toolErrorHandling?: ToolErrorHandling;
   signal?: AbortSignal;
 }
+
+/** Payload reported to the model, and recorded, when a tool throws. */
+interface ToolFailurePayload {
+  success: false;
+  status: 'error';
+  error: string;
+}
+
+/** Upper bound on a reported tool error message, which reaches the model. */
+const MAX_TOOL_ERROR_LENGTH = 500;
 
 interface ExecutionState {
   executionId: string;
@@ -82,6 +97,7 @@ export class AgentExecutor {
   async execute(input: AgentExecutionInput): Promise<AgentResult> {
     const adapter = this.requireAdapter();
     const limits = this.resolveLimits(input.limits);
+    const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
     const scope = this.createScope(input.signal, limits.timeoutMs);
 
@@ -90,7 +106,14 @@ export class AgentExecutor {
         this.assertWithinBudget(state, limits, scope);
 
         const response = await adapter.generate(this.buildRequest(input, state, scope));
-        const finished = await this.applyModelRound(state, response, input.tools, limits, scope);
+        const finished = await this.applyModelRound(
+          state,
+          response,
+          input.tools,
+          limits,
+          scope,
+          toolErrorHandling,
+        );
 
         if (finished) {
           return this.toResult(input.sessionId, state, response.content);
@@ -104,6 +127,7 @@ export class AgentExecutor {
   async *stream(input: AgentExecutionInput): AsyncIterable<AgentStreamEvent> {
     const adapter = this.requireAdapter();
     const limits = this.resolveLimits(input.limits);
+    const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
     const scope = this.createScope(input.signal, limits.timeoutMs);
 
@@ -142,6 +166,7 @@ export class AgentExecutor {
           input.tools,
           limits,
           scope,
+          toolErrorHandling,
           pendingEvents,
         );
 
@@ -309,6 +334,7 @@ export class AgentExecutor {
     tools: ResolvedTool[],
     limits: ExecutionLimits,
     scope: { signal: AbortSignal; timedOut: () => boolean },
+    toolErrorHandling: ToolErrorHandling,
     events?: AgentStreamEvent[],
   ): Promise<boolean> {
     state.iteration++;
@@ -357,7 +383,31 @@ export class AgentExecutor {
         args: validation.args,
       });
 
-      const result = await tool.execute({ args: validation.args });
+      let result: ToolExecutionResult;
+      try {
+        result = await tool.execute({ args: validation.args });
+      } catch (err) {
+        // Framework errors signal misconfiguration, so they must not be hidden
+        // from the caller by being described to the model.
+        if (err instanceof AgenticError) throw err;
+
+        // A tool that observed the abort should surface as cancellation.
+        this.assertNotAborted(scope, limits);
+
+        if (toolErrorHandling === 'throw') throw err;
+
+        const failure = this.toFailurePayload(err);
+        state.toolCalls.push({ toolName: tool.name, args: validation.args, result: failure });
+        this.pushToolMessage(state, call, failure);
+        events?.push({
+          type: 'tool_error',
+          id: call.id,
+          toolName: tool.name,
+          error: failure.error,
+        });
+        continue;
+      }
+
       state.toolCalls.push({ toolName: tool.name, args: validation.args, result });
       this.pushToolMessage(state, call, result);
 
@@ -395,10 +445,24 @@ export class AgentExecutor {
     };
   }
 
+  /**
+   * Normalizes a thrown value into a compact payload.
+   * Only the message is forwarded, never a stack trace, so internal details do
+   * not reach the model or the transcript.
+   */
+  private toFailurePayload(err: unknown): ToolFailurePayload {
+    const raw = err instanceof Error ? err.message : String(err);
+    const message = raw.length > MAX_TOOL_ERROR_LENGTH
+      ? `${raw.slice(0, MAX_TOOL_ERROR_LENGTH)}...`
+      : raw;
+
+    return { success: false, status: 'error', error: message || 'Tool execution failed.' };
+  }
+
   private pushToolMessage(
     state: ExecutionState,
     call: ModelToolCall,
-    payload: ToolExecutionResult | { error: string },
+    payload: ToolExecutionResult | ToolFailurePayload | { error: string },
   ): void {
     state.messages.push({
       role: 'tool',

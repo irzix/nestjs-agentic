@@ -14,7 +14,10 @@ import type {
   ResolvedTool,
   RuntimeAdapter,
 } from '../interfaces';
-import type { ExecutionLimits } from '../interfaces/execution.interface';
+import type {
+  ExecutionLimits,
+  ToolErrorHandling,
+} from '../interfaces/execution.interface';
 import type { ModelAdapter } from '../interfaces/model.interface';
 
 import type { StateStore } from '../interfaces/state-store.interface';
@@ -31,6 +34,11 @@ export interface AgenticModuleOptions {
   modelAdapter?: ModelAdapter;
   /** Default execution budgets applied to every agent run. */
   limits?: ExecutionLimits;
+  /**
+   * Default strategy for exceptions thrown by tools. Defaults to `report`,
+   * which hands the error to the model instead of ending the run.
+   */
+  toolErrorHandling?: ToolErrorHandling;
 }
 
 export interface RunInput {
@@ -45,6 +53,8 @@ export interface RunInput {
   };
   /** Overrides agent and module execution budgets for this run. */
   limits?: ExecutionLimits;
+  /** Overrides the agent and module tool error strategy for this run. */
+  toolErrorHandling?: ToolErrorHandling;
   /** Cancels the run when aborted. Honored by the built-in runtime. */
   signal?: AbortSignal;
 }
@@ -56,6 +66,7 @@ interface PreparedRun {
   context: AgentContext;
   tools: ResolvedTool[];
   limits?: ExecutionLimits;
+  toolErrorHandling?: ToolErrorHandling;
 }
 
 @Injectable()
@@ -126,6 +137,8 @@ export class AgentRunner {
       context,
       tools: this.localToolProvider.buildTools(config.tools, context),
       limits: input.limits ?? config.limits ?? this.options.limits,
+      toolErrorHandling:
+        input.toolErrorHandling ?? config.toolErrorHandling ?? this.options.toolErrorHandling,
     };
   }
 
@@ -156,6 +169,7 @@ export class AgentRunner {
         instructions: prepared.config.instructions,
         traceId: prepared.context.traceId,
         limits: prepared.limits,
+        toolErrorHandling: prepared.toolErrorHandling,
         signal: input.signal,
       });
     }
@@ -181,6 +195,7 @@ export class AgentRunner {
         instructions: prepared.config.instructions,
         traceId: prepared.context.traceId,
         limits: prepared.limits,
+        toolErrorHandling: prepared.toolErrorHandling,
         signal: input.signal,
       });
       return;
