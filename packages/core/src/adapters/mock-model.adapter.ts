@@ -89,10 +89,12 @@ export class MockModelAdapter implements ModelAdapter {
   }
 
   async generate(request: ModelRequest): Promise<ModelResponse> {
+    this.assertNotAborted(request);
     return this.resolveRound(request);
   }
 
   async *stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    this.assertNotAborted(request);
     const response = this.resolveRound(request);
 
     for (const token of this.tokenize(response.content)) {
@@ -100,6 +102,15 @@ export class MockModelAdapter implements ModelAdapter {
     }
 
     yield { type: 'response', response };
+  }
+
+  /** Real adapters must honor the signal, so the mock does too. */
+  private assertNotAborted(request: ModelRequest): void {
+    if (request.signal?.aborted) {
+      throw Object.assign(new Error('MockModelAdapter: request aborted.'), {
+        name: 'AbortError',
+      });
+    }
   }
 
   private resolveRound(request: ModelRequest): ModelResponse {
