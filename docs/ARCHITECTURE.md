@@ -143,6 +143,8 @@ What remains roadmap work:
 - idempotency keys so a claimed-but-failed tool can be safely retried without risking a duplicate side effect;
 - checkpointing turns that are still in flight, rather than only at an approval suspension point (see [State, Sessions, and Memory](#state-sessions-and-memory)).
 
+Both built-in stores are verified by `runApprovalStoreContract()`, the exported behavioral suite any `ApprovalStore` can run. Because the contract asserts that records behave as serializable data — `Date` fields revived as `Date`s, returned records isolated from stored state, `claim()` atomic under concurrent callers — `InMemoryApprovalStore` stores serialized snapshots rather than live references. A record that would not survive a real store therefore fails in development too, instead of appearing to work until it reaches Redis.
+
 Applications that need durability today should provide a persistent `ApprovalStore`, such as `RedisApprovalStore`. A persistent `SessionStore` is still recommended so the conversation continues across turns, but resuming an approval no longer depends on it.
 
 ## Built-in Agent Runtime

@@ -745,6 +745,60 @@ if (result.failed > 0) {
 
 Set `supportsStreaming: false` or `reportsUsage: false` to skip capabilities an adapter intentionally omits; skipped assertions are counted separately rather than silently passing.
 
+## Approval Store Contract Suite
+
+```typescript
+function runApprovalStoreContract(
+  options: ApprovalStoreContractOptions,
+): Promise<ApprovalStoreContractResult>;
+
+interface ApprovalStoreContractOptions {
+  name: string;
+  createStore(): ApprovalStore | Promise<ApprovalStore>;
+  supportsAtomicClaim?: boolean; // default true
+  log?: boolean; // default true
+}
+
+interface ApprovalStoreContractResult {
+  name: string;
+  passed: number;
+  failed: number;
+  skipped: number;
+  failures: string[];
+}
+```
+
+Runs the behavioral contract for an `ApprovalStore` so any implementation, including a third-party one, can prove it behaves the way the runtime expects. `createStore` is called once per assertion group, so each group starts from an empty store.
+
+The contract treats an approval as serializable data rather than a live object. That distinction matters: a store that works only because it shares object references within one process would pass a naive test and then fail behind Redis.
+
+Checked behavior:
+
+- a saved approval reads back with its id, names, reason, `toolCallId`, context, and nested argument values and types intact
+- `createdAt` and `expiresAt` round-trip as `Date` instances, not ISO strings
+- an approval saved without `expiresAt` or `checkpoint` reads back without them
+- the resume `checkpoint` survives storage, retaining every message including the withheld tool message and the assistant tool-call message
+- a returned record is isolated: mutating it does not change stored state
+- `save()` with an existing id replaces the record, which is how a checkpoint is attached after the fact
+- `get()` and `claim()` return `null` for an unknown id, and `delete()` of an unknown id resolves rather than throwing
+- `delete()` removes the record
+- `claim()` returns the record, removes it, and is single-use
+- `claim()` is atomic: of several concurrent callers, exactly one receives the record
+- claiming one approval leaves others untouched
+
+```typescript
+const result = await runApprovalStoreContract({
+  name: 'MyApprovalStore',
+  createStore: () => new MyApprovalStore({ client: redis }),
+});
+
+if (result.failed > 0) {
+  throw new Error(result.failures.join('\n'));
+}
+```
+
+Set `supportsAtomicClaim: false` for a store that cannot claim atomically across concurrent callers — for example `RedisApprovalStore` behind a client without `GETDEL`, which falls back to a non-atomic get+del. The concurrency assertions are then skipped and counted separately rather than reported as failures. Both built-in stores, and the `GETDEL` fallback path, are verified against this suite.
+
 ## `MockModelAdapter`
 
 Deterministic `ModelAdapter` for testing the full loop without a provider.
