@@ -8,7 +8,7 @@ import {
   RUNTIME_ADAPTER,
   SESSION_STORE,
 } from '../constants';
-import { RuntimeNotConfiguredError } from '../errors';
+import { ApprovalTranscriptMissingError, RuntimeNotConfiguredError } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
 import type {
   AgentConfig,
@@ -16,9 +16,12 @@ import type {
   AgentProvider,
   AgentResult,
   AgentStreamEvent,
+  ApprovalDecision,
   ModelConfig,
+  PendingApproval,
   ResolvedTool,
   RuntimeAdapter,
+  ToolExecutionResult,
 } from '../interfaces';
 import type {
   ExecutionLimits,
@@ -123,6 +126,26 @@ export class AgentRunner {
     return (input.history ?? configured) && Boolean(this.resolveSessionStore());
   }
 
+  /**
+   * Loads history untrimmed, preserving system messages.
+   *
+   * Resuming a suspended turn must locate the exact withheld tool message by
+   * `toolCallId`, so it cannot use `loadHistory()`'s trimming, which may drop
+   * older messages or strip the system instructions the trimmed replay
+   * re-derives from `AgentConfig` instead.
+   */
+  private async loadRawHistory(context: AgentContext): Promise<ModelMessage[] | undefined> {
+    const store = this.resolveSessionStore();
+    if (!store) return undefined;
+
+    try {
+      const stored = await store.get(this.sessionKey(context));
+      return isSessionRecord(stored) ? stored.messages : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async loadHistory(context: AgentContext): Promise<ModelMessage[]> {
     const store = this.resolveSessionStore();
     if (!store) return [];
@@ -139,6 +162,72 @@ export class AgentRunner {
       // A history read must never fail the turn; the agent continues stateless.
       return [];
     }
+  }
+
+  /**
+   * Resolves a human decision on a suspended tool call.
+   *
+   * Invokes the tool (on approval) or builds a denial (on rejection), then
+   * resumes the original model turn when it was suspended by the built-in
+   * runtime — the model sees the outcome and can react to it, exactly as it
+   * would to any other tool result. When the approval did not originate from
+   * the built-in runtime (no `toolCallId`, e.g. an agent driven by a
+   * `RuntimeAdapter`), only the tool outcome is returned, matching prior
+   * behavior for that path.
+   */
+  async settleApproval(
+    pending: PendingApproval,
+    decision: ApprovalDecision,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentResult | ToolExecutionResult> {
+    const agent = this.getAgentMap().get(pending.agentName);
+    if (!agent) {
+      throw new Error(
+        `Agent "${pending.agentName}" is not registered. ` +
+          `It may have been renamed or removed since this approval was created.`,
+      );
+    }
+
+    const config = agent.define();
+
+    const outcome: ToolExecutionResult = decision.approved
+      ? await this.localToolProvider.invokeApprovedTool(
+          config.tools,
+          pending.toolName,
+          pending.args,
+          pending.context,
+        )
+      : { success: false, status: 'denied', reason: decision.reason ?? pending.reason };
+
+    if (!pending.toolCallId || !this.executor?.isAvailable()) {
+      return outcome;
+    }
+
+    const history = await this.loadRawHistory(pending.context);
+    if (!history) {
+      throw new ApprovalTranscriptMissingError(pending.toolCallId);
+    }
+
+    const store = this.resolveSessionStore();
+
+    return this.executor.resume({
+      sessionId: pending.context.sessionId,
+      model: config.model ?? this.options.defaultModel,
+      tools: this.localToolProvider.buildTools(config.tools, pending.context, pending.agentName),
+      traceId: pending.context.traceId,
+      instructions: config.instructions,
+      history,
+      toolCallId: pending.toolCallId,
+      toolName: pending.toolName,
+      args: pending.args,
+      outcome,
+      limits: config.limits ?? this.options.limits,
+      toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
+      signal: options?.signal,
+      onTranscript: store
+        ? (messages) => this.saveHistory(pending.context, messages)
+        : undefined,
+    });
   }
 
   private async saveHistory(context: AgentContext, messages: ModelMessage[]): Promise<void> {
@@ -212,7 +301,7 @@ export class AgentRunner {
       config,
       model: config.model ?? this.options.defaultModel,
       context,
-      tools: this.localToolProvider.buildTools(config.tools, context),
+      tools: this.localToolProvider.buildTools(config.tools, context, agentName),
       limits: input.limits ?? config.limits ?? this.options.limits,
       toolErrorHandling:
         input.toolErrorHandling ?? config.toolErrorHandling ?? this.options.toolErrorHandling,

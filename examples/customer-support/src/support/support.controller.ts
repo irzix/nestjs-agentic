@@ -21,4 +21,9 @@ export class SupportController {
   async approve(@Param('approvalId') approvalId: string) {
     return this.approvalService.approve(approvalId);
   }
+
+  @Post('reject/:approvalId')
+  async reject(@Param('approvalId') approvalId: string) {
+    return this.approvalService.reject(approvalId);
+  }
 }

@@ -1,13 +1,72 @@
 import 'reflect-metadata';
-import { ApprovalService } from '../src';
-import type { AgentContext, ToolExecutionResult } from '../src';
+import { ModuleRef } from '@nestjs/core';
+import {
+  Agent,
+  AgentExecutor,
+  AgentRunner,
+  ApprovalService,
+  Context,
+  MockModelAdapter,
+  Param,
+  Tool,
+  ToolSet,
+  UsePolicies,
+} from '../src';
+import type {
+  AgentConfig,
+  AgentContext,
+  AgentProvider,
+  PolicyResult,
+  ToolPolicy,
+} from '../src';
 import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
+import { InMemorySessionStore } from '../src/stores/in-memory-session.store';
+
+class ApprovalNeededPolicy implements ToolPolicy {
+  async evaluate(
+    _ctx: AgentContext,
+    _toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<PolicyResult> {
+    return Number(args.amount) > 500
+      ? { decision: 'require_approval', reason: 'Requires manager approval.' }
+      : { decision: 'allow' };
+  }
+}
+
+@ToolSet({ name: 'ledger' })
+class LedgerTools {
+  readonly transfers: Array<{ amount: number }> = [];
+
+  @Tool({ name: 'transferMoney', description: 'Transfer funds' })
+  @UsePolicies(ApprovalNeededPolicy)
+  async transferMoney(
+    @Param('amount', { type: 'number', required: true }) amount: number,
+    @Context() _ctx: AgentContext,
+  ) {
+    this.transfers.push({ amount });
+    return { txId: 'tx_approved_111', amount };
+  }
+}
+
+@Agent({ name: 'banker', description: 'Handles transfers' })
+class BankerAgent implements AgentProvider {
+  constructor(private readonly tools: LedgerTools) {}
+
+  define(): AgentConfig {
+    return { instructions: 'Move money carefully.', tools: [this.tools] };
+  }
+}
+
+class MockModuleRef {
+  get(): any {
+    return undefined;
+  }
+}
 
 export async function runApprovalServiceTests() {
   console.log('👥 Running Step 3: ApprovalService (HITL Lifecycle) Unit Tests...\n');
 
-  const store = new InMemoryApprovalStore();
-  const service = new ApprovalService(store);
   let passed = 0;
   let failed = 0;
 
@@ -21,95 +80,157 @@ export async function runApprovalServiceTests() {
     }
   }
 
-  const dummyContext: AgentContext = {
-    sessionId: 'session_hitl',
-    traceId: 'trace_hitl',
-    security: { userId: 'usr_manager', tenantId: 'acme' },
-  };
+  const moduleRef = new MockModuleRef() as unknown as ModuleRef;
 
-  // Seed store with 2 pending requests
-  let executedToolA: boolean = false;
-  await store.save({
-    id: 'approval_111',
-    toolName: 'transferMoney',
-    args: { amount: 5000 },
-    context: dummyContext,
-    reason: 'Requires manager approval',
-    createdAt: new Date(),
-    execute: async () => {
-      executedToolA = true;
-      return { success: true, data: { txId: 'tx_approved_111' } };
-    },
-  });
-
-  await store.save({
-    id: 'approval_222',
-    toolName: 'deleteRecord',
-    args: { recordId: 'rec_999' },
-    context: dummyContext,
-    reason: 'Destructive action',
-    createdAt: new Date(),
-    execute: async () => {
-      return { success: true, data: { deleted: true } };
-    },
-  });
-
-  // TEST 1: Retrieve seeded requests from store
+  // TEST 1: Approval resumes the suspended turn and the model reacts to it
   try {
-    const record1 = await store.get('approval_111');
-    const record2 = await store.get('approval_222');
-    assert(record1 !== undefined && record2 !== undefined, 'Test 1a: Seeded 2 approval requests into store');
-    assert(record1?.toolName === 'transferMoney', 'Test 1b: Record toolName matches "transferMoney"');
-  } catch (err: any) {
-    assert(false, 'Test 1: Store Seed Retrieval', err.message);
-  }
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Transfer $5000 to vendor')
+      .callTool('transferMoney', { amount: 5000 })
+      .reply('Transfer of $5000 completed.');
 
-  // TEST 2: approve(approvalId) Execution
-  try {
-    const res = await service.approve('approval_111');
-    const isSuccess = (res as { success: boolean }).success === true;
-    assert(isSuccess, 'Test 2a: approve() returns success: true');
-    assert(Boolean(executedToolA), 'Test 2b: Stored tool execution closure executed');
+    const { LocalToolProvider, ToolDiscoveryService } = await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [new ApprovalNeededPolicy()],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const tools = new LedgerTools();
+    const runner = new AgentRunner(
+      [new BankerAgent(tools)],
+      undefined,
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(model),
+      new InMemorySessionStore(),
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    const suspended = await runner.run('banker', {
+      sessionId: 'sess_hitl_1',
+      message: 'Transfer $5000 to vendor',
+    });
+
+    const pending = suspended.toolCalls[0]?.result as any;
+    assert(pending?.status === 'pending_approval', 'Test 1a: Turn suspended for approval');
+    assert(tools.transfers.length === 0, 'Test 1b: Side effect withheld before approval');
+
+    const resumed = (await approvals.approve(pending.approvalId)) as any;
+    assert(tools.transfers.length === 1, 'Test 1c: Tool executed exactly once after approval');
     assert(
-      isSuccess && (res as any).data?.txId === 'tx_approved_111',
-      'Test 2c: Result data returned from executed tool closure',
+      resumed.output === 'Transfer of $5000 completed.',
+      'Test 1d: Model turn resumed and produced a final answer',
+    );
+    assert(
+      resumed.toolCalls?.[0]?.result?.success === true,
+      'Test 1e: Resumed result reflects the approved outcome',
     );
 
-    // Verify record removed from store
-    const remainingRecord = await store.get('approval_111');
-    assert(remainingRecord == null, 'Test 2d: Record removed from store post-approval');
-  } catch (err: any) {
-    assert(false, 'Test 2: approve() Execution', err.message);
-  }
-
-  // TEST 3: reject(approvalId) Removal
-  try {
-    await service.reject('approval_222');
-    const remainingRecord = await store.get('approval_222');
-    assert(remainingRecord == null, 'Test 3: reject() removes request from store without execution');
-  } catch (err: any) {
-    assert(false, 'Test 3: reject() Removal', err.message);
-  }
-
-  // TEST 4: Non-existent Approval ID Error Handling
-  try {
-    let approveThrew: boolean = false;
+    let secondApproval: unknown;
     try {
-      await service.approve('non_existent_id');
+      await approvals.approve(pending.approvalId);
+    } catch (err) {
+      secondApproval = err;
+    }
+    assert(secondApproval instanceof Error, 'Test 1f: Approval cannot be replayed');
+  } catch (err: any) {
+    assert(false, 'Test 1: Approval resumes the model turn', err.message);
+  }
+
+  // TEST 2: Rejection resumes the turn with a denied outcome instead of executing
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Transfer $9000 to vendor')
+      .callTool('transferMoney', { amount: 9000 })
+      .reply('The transfer was not approved.');
+
+    const { LocalToolProvider, ToolDiscoveryService } = await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [new ApprovalNeededPolicy()],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const tools = new LedgerTools();
+    const runner = new AgentRunner(
+      [new BankerAgent(tools)],
+      undefined,
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(model),
+      new InMemorySessionStore(),
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    const suspended = await runner.run('banker', {
+      sessionId: 'sess_hitl_2',
+      message: 'Transfer $9000 to vendor',
+    });
+
+    const pending = suspended.toolCalls[0]?.result as any;
+    const resumed = (await approvals.reject(pending.approvalId)) as any;
+
+    assert(tools.transfers.length === 0, 'Test 2a: Rejected transfer never executes');
+    assert(
+      resumed.output === 'The transfer was not approved.',
+      'Test 2b: Model turn resumed with the denial and recovered',
+    );
+
+    let secondRejection: unknown;
+    try {
+      await approvals.reject(pending.approvalId);
+    } catch (err) {
+      secondRejection = err;
+    }
+    assert(secondRejection instanceof Error, 'Test 2c: Rejection cannot be replayed');
+  } catch (err: any) {
+    assert(false, 'Test 2: Rejection resumes with a denial', err.message);
+  }
+
+  // TEST 3: Non-existent Approval ID Error Handling
+  try {
+    const { LocalToolProvider, ToolDiscoveryService } = await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const runner = new AgentRunner(
+      [new BankerAgent(new LedgerTools())],
+      undefined,
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(new MockModelAdapter()),
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    let approveThrew = false;
+    try {
+      await approvals.approve('non_existent_id');
     } catch {
       approveThrew = true;
     }
-    assert(Boolean(approveThrew), 'Test 4a: approve() with unknown ID throws error');
+    assert(approveThrew, 'Test 3a: approve() with unknown ID throws error');
 
-    let rejectThrew: boolean = false;
+    let rejectThrew = false;
     try {
-      await service.reject('non_existent_id');
+      await approvals.reject('non_existent_id');
     } catch {
       rejectThrew = true;
     }
-    assert(Boolean(rejectThrew), 'Test 4b: reject() with unknown ID throws error');
+    assert(rejectThrew, 'Test 3b: reject() with unknown ID throws error');
   } catch (err: any) {
-    assert(false, 'Test 4: Error Handling', err.message);
+    assert(false, 'Test 3: Error Handling', err.message);
   }
 
   console.log(`\n  📊 Step 3 Results: ${passed} passed, ${failed} failed.\n`);

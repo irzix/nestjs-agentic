@@ -158,7 +158,10 @@ async function runTests() {
     );
 
     if (approvalId) {
-      const approvalResult = await approvalService.approve(approvalId);
+      // This example delegates to a RuntimeAdapter (AdkRuntimeAdapter), so the
+      // approval never carries a toolCallId and settleApproval() returns the
+      // bare ToolExecutionResult rather than resuming a built-in-runtime turn.
+      const approvalResult = (await approvalService.approve(approvalId)) as ToolExecutionResult;
       assert(
         approvalResult.success === true,
         'Test 4b: Human Approval executing pending tool closure succeeds',

@@ -155,7 +155,7 @@ export async function runAgenticModuleTests() {
     model
       .whenAsked('Send $5000 to vendor')
       .callTool('transfer', { amount: 5000 })
-      .reply('unreachable');
+      .reply('Transfer of $5000 completed after approval.');
 
     const moduleRef = await bootstrap(model);
     const runner = moduleRef.get(AgentRunner, { strict: false });
@@ -176,7 +176,10 @@ export async function runAgenticModuleTests() {
     assert(ledger.transfers.length === 0, 'Test 2b: Side effect withheld before approval');
 
     const approved = (await approvals.approve(pending.approvalId)) as any;
-    assert(approved?.success === true, 'Test 2c: ApprovalService executed the pending tool');
+    assert(
+      approved?.toolCalls?.[0]?.result?.success === true,
+      'Test 2c: ApprovalService executed the pending tool and resumed the turn',
+    );
     assert(ledger.transfers.length === 1, 'Test 2d: Side effect applied exactly once after approval');
 
     await moduleRef.close();

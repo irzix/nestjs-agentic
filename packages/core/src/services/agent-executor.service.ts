@@ -2,6 +2,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
   AgenticError,
+  ApprovalTranscriptMissingError,
   ExecutionCancelledError,
   ExecutionLimitExceededError,
   RuntimeNotConfiguredError,
@@ -55,6 +56,36 @@ export interface AgentExecutionInput {
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
 }
 
+/** Fields shared by a fresh turn and a resumed one. */
+interface ExecutorRequestContext {
+  sessionId: string;
+  model: ModelConfig;
+  tools: ResolvedTool[];
+  traceId?: string;
+  signal?: AbortSignal;
+}
+
+/** Input for continuing a turn that suspended on `require_approval`. */
+export interface AgentResumeInput extends ExecutorRequestContext {
+  instructions?: string;
+  /**
+   * Full prior transcript, including the suspended tool message that carried
+   * the `pending_approval` payload. Typically loaded from `SessionStore`.
+   */
+  history: ModelMessage[];
+  /** Identifies which suspended tool message to resolve. */
+  toolCallId: string;
+  /** Name of the tool the suspended call targeted, recorded on the result. */
+  toolName: string;
+  /** Original arguments the model requested, recorded on the result. */
+  args: Record<string, unknown>;
+  /** The resolved outcome to splice in place of the `pending_approval` payload. */
+  outcome: ToolExecutionResult;
+  limits?: ExecutionLimits;
+  toolErrorHandling?: ToolErrorHandling;
+  onTranscript?(messages: ModelMessage[]): void | Promise<void>;
+}
+
 /** Payload reported to the model, and recorded, when a tool throws. */
 interface ToolFailurePayload {
   success: false;
@@ -105,25 +136,76 @@ export class AgentExecutor {
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
-    const scope = this.createScope(input.signal, limits.timeoutMs);
+
+    return this.runToCompletion(adapter, input, state, limits, toolErrorHandling, input.onTranscript);
+  }
+
+  async *stream(input: AgentExecutionInput): AsyncIterable<AgentStreamEvent> {
+    const adapter = this.requireAdapter();
+    const limits = this.resolveLimits(input.limits);
+    const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
+    const state = this.createState(input);
+
+    yield* this.streamToCompletion(adapter, input, state, limits, toolErrorHandling, input.onTranscript);
+  }
+
+  /**
+   * Continues a turn that suspended on `require_approval`.
+   *
+   * Splices the human decision into the exact tool message that was withheld,
+   * then lets the model react to it the same way it would to any other tool
+   * result, until it produces a final answer or suspends again.
+   */
+  async resume(input: AgentResumeInput): Promise<AgentResult> {
+    const adapter = this.requireAdapter();
+    const limits = this.resolveLimits(input.limits);
+    const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
+    const state = this.createResumedState(input);
+
+    return this.runToCompletion(adapter, input, state, limits, toolErrorHandling, input.onTranscript);
+  }
+
+  /** Streaming counterpart of {@link resume}. */
+  async *resumeStream(input: AgentResumeInput): AsyncIterable<AgentStreamEvent> {
+    const adapter = this.requireAdapter();
+    const limits = this.resolveLimits(input.limits);
+    const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
+    const state = this.createResumedState(input);
+
+    yield* this.streamToCompletion(adapter, input, state, limits, toolErrorHandling, input.onTranscript);
+  }
+
+  private async runToCompletion(
+    adapter: ModelAdapter,
+    requestCtx: ExecutorRequestContext,
+    state: ExecutionState,
+    limits: ExecutionLimits,
+    toolErrorHandling: ToolErrorHandling,
+    onTranscript: AgentExecutionInput['onTranscript'],
+  ): Promise<AgentResult> {
+    const scope = this.createScope(requestCtx.signal, limits.timeoutMs);
 
     try {
       while (true) {
         this.assertWithinBudget(state, limits, scope);
 
-        const response = await adapter.generate(this.buildRequest(input, state, scope));
+        const response = await adapter.generate(this.buildRequest(requestCtx, state, scope));
         const finished = await this.applyModelRound(
           state,
           response,
-          input.tools,
+          requestCtx.tools,
           limits,
           scope,
           toolErrorHandling,
         );
 
         if (finished) {
-          const result = this.toResult(input.sessionId, state, response.content);
-          await this.publishTranscript(input, state, result.output);
+          const result = this.toResult(requestCtx.sessionId, state, response.content);
+          // The persisted transcript gets the model's actual content, never the
+          // synthetic "requires approval" sentence resolveOutput() fabricates
+          // for the caller — that text was never said by the model, and
+          // storing it would misrepresent the conversation on resume.
+          await this.publishTranscript(onTranscript, state, response.content);
           return result;
         }
       }
@@ -132,18 +214,21 @@ export class AgentExecutor {
     }
   }
 
-  async *stream(input: AgentExecutionInput): AsyncIterable<AgentStreamEvent> {
-    const adapter = this.requireAdapter();
-    const limits = this.resolveLimits(input.limits);
-    const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
-    const state = this.createState(input);
-    const scope = this.createScope(input.signal, limits.timeoutMs);
+  private async *streamToCompletion(
+    adapter: ModelAdapter,
+    requestCtx: ExecutorRequestContext,
+    state: ExecutionState,
+    limits: ExecutionLimits,
+    toolErrorHandling: ToolErrorHandling,
+    onTranscript: AgentExecutionInput['onTranscript'],
+  ): AsyncIterable<AgentStreamEvent> {
+    const scope = this.createScope(requestCtx.signal, limits.timeoutMs);
 
     try {
       while (true) {
         this.assertWithinBudget(state, limits, scope);
 
-        const request = this.buildRequest(input, state, scope);
+        const request = this.buildRequest(requestCtx, state, scope);
         let response: ModelResponse | undefined;
 
         if (adapter.stream) {
@@ -171,7 +256,7 @@ export class AgentExecutor {
         const finished = await this.applyModelRound(
           state,
           response,
-          input.tools,
+          requestCtx.tools,
           limits,
           scope,
           toolErrorHandling,
@@ -184,8 +269,8 @@ export class AgentExecutor {
 
         if (finished) {
           const output = this.resolveOutput(state, response.content);
-          await this.publishTranscript(input, state, output);
-          yield { type: 'complete', sessionId: input.sessionId, output };
+          await this.publishTranscript(onTranscript, state, output);
+          yield { type: 'complete', sessionId: requestCtx.sessionId, output };
           return;
         }
       }
@@ -216,6 +301,54 @@ export class AgentExecutor {
       executionId: randomUUID(),
       messages,
       toolCalls: [],
+      usage: {},
+      toolCallCount: 0,
+      iteration: 0,
+      suspended: false,
+    };
+  }
+
+  /**
+   * Rebuilds execution state from a persisted transcript, replacing the
+   * withheld tool message with the resolved outcome so the model sees a
+   * conversation that never actually paused.
+   */
+  private createResumedState(input: AgentResumeInput): ExecutionState {
+    const messages: ModelMessage[] = [];
+    if (input.instructions) {
+      messages.push({ role: 'system', content: input.instructions });
+    }
+    messages.push(...input.history.map((message) => ({ ...message })));
+
+    const index = messages.findIndex(
+      (message) => message.role === 'tool' && message.toolCallId === input.toolCallId,
+    );
+
+    if (index === -1) {
+      throw new ApprovalTranscriptMissingError(input.toolCallId);
+    }
+
+    const withheld = messages[index] as Extract<ModelMessage, { role: 'tool' }>;
+    messages[index] = {
+      ...withheld,
+      content: JSON.stringify(input.outcome),
+    };
+
+    // Approval outcomes that were denied/rejected surface through the same
+    // "pending_approval last, no assistant text" path as a fresh suspension,
+    // so toolCalls is seeded with the resolved record for resolveOutput().
+    const toolCalls: ToolCallRecord[] = [
+      {
+        toolName: input.toolName,
+        args: input.args,
+        result: input.outcome,
+      },
+    ];
+
+    return {
+      executionId: randomUUID(),
+      messages,
+      toolCalls,
       usage: {},
       toolCallCount: 0,
       iteration: 0,
@@ -303,7 +436,7 @@ export class AgentExecutor {
   }
 
   private buildRequest(
-    input: AgentExecutionInput,
+    input: ExecutorRequestContext,
     state: ExecutionState,
     scope: { signal: AbortSignal },
   ): ModelRequest {
@@ -391,7 +524,7 @@ export class AgentExecutor {
 
       let result: ToolExecutionResult;
       try {
-        result = await tool.execute({ args: validation.args });
+        result = await tool.execute({ args: validation.args, toolCallId: call.id });
       } catch (err) {
         // Framework errors signal misconfiguration, so they must not be hidden
         // from the caller by being described to the model.
@@ -483,18 +616,18 @@ export class AgentExecutor {
    * the final answer so the next turn sees what the agent replied.
    */
   private async publishTranscript(
-    input: AgentExecutionInput,
+    onTranscript: AgentExecutionInput['onTranscript'],
     state: ExecutionState,
     output: string,
   ): Promise<void> {
-    if (!input.onTranscript) return;
+    if (!onTranscript) return;
 
     const messages = [...state.messages];
     if (output) {
       messages.push({ role: 'assistant', content: output });
     }
 
-    await input.onTranscript(messages);
+    await onTranscript(messages);
   }
 
   private toResult(
