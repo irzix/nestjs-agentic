@@ -52,6 +52,21 @@ The current release line is `0.4.x`. Core primitives are available; runtime, per
 
 See the [product roadmap](docs/ROADMAP.md) for milestones and production-readiness criteria.
 
+## Packages
+
+| Package | Purpose |
+| --- | --- |
+| [`nestjs-agentic`](packages/meta) | Meta package that re-exports the core framework |
+| [`@nestjs-agentic/core`](packages/core) | Agents, tools, policies, approvals, the built-in runtime, and the adapter contracts |
+| [`@nestjs-agentic/openai`](packages/model-openai) | OpenAI `ModelAdapter`, also covering Chat Completions compatible endpoints |
+| [`@nestjs-agentic/memory`](packages/memory) | Short-term, semantic, episodic, and scratchpad memory primitives |
+| [`@nestjs-agentic/rag`](packages/rag) | Retrieval strategies, vector stores, and knowledge-graph primitives |
+| [`@nestjs-agentic/experience`](packages/experience) | Reflection and experience learning over memory |
+| [`@nestjs-agentic/orchestration`](packages/orchestration) | Sub-agent delegation, parallel execution, and refinement loops |
+| [`@nestjs-agentic/evaluation`](packages/evaluation) | Metrics, benchmark execution, and reporting |
+| [`@nestjs-agentic/adk`](packages/runtime-adk) | Experimental runtime prototype, not a provider integration |
+| [`@nestjs-agentic/langgraph`](packages/runtime-langgraph) | Experimental LangChain and LangGraph compatibility adapter |
+
 ## Installation
 
 ```bash

@@ -1,7 +1,16 @@
 'use client';
 
 import React, { useRef, useCallback } from 'react';
-import { Layers, ShieldCheck, Database, Brain, GitFork, BarChart3, ArrowUpRight } from 'lucide-react';
+import {
+  Layers,
+  ShieldCheck,
+  Database,
+  Brain,
+  GitFork,
+  BarChart3,
+  ArrowUpRight,
+  Repeat,
+} from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const cards = [
@@ -9,10 +18,21 @@ const cards = [
     icon: Layers,
     title: 'NestJS Primitives & DI',
     badge: '@Agent, @ToolSet, @Tool',
-    tagline: 'Available · 0.4.x',
+    tagline: 'Available · 0.5.x',
     description: (
       <>
         Define agents and context-bound tools with NestJS decorators and dependency injection. Application services remain ordinary providers while runtimes receive governed tool closures.
+      </>
+    ),
+  },
+  {
+    icon: Repeat,
+    title: 'Built-in Agent Runtime',
+    badge: 'AgentExecutor & ModelAdapter',
+    tagline: 'Available · OpenAI adapter',
+    description: (
+      <>
+        The framework owns the model-to-tool loop, argument validation, execution budgets, cancellation, streaming, and per-session conversation history. <code className="text-rose-300 font-mono">@nestjs-agentic/openai</code> connects OpenAI and any Chat Completions compatible endpoint.
       </>
     ),
   },
