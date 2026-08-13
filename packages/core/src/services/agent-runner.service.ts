@@ -61,6 +61,13 @@ export interface AgenticModuleOptions {
   sessionStore?: SessionStore;
   /** Conversation history behavior for the built-in runtime. */
   session?: SessionOptions;
+  /**
+   * Default lifetime, in seconds, for approvals created when a policy returns
+   * `require_approval`. After this window the approval expires and can no
+   * longer be resolved (`ApprovalExpiredError`). A policy may override it per
+   * decision via its own `ttlSeconds`. Unset means approvals never expire.
+   */
+  approvalTtlSeconds?: number;
 }
 
 export interface RunInput {
@@ -213,7 +220,12 @@ export class AgentRunner {
     return this.executor.resume({
       sessionId: pending.context.sessionId,
       model: config.model ?? this.options.defaultModel,
-      tools: this.localToolProvider.buildTools(config.tools, pending.context, pending.agentName),
+      tools: this.localToolProvider.buildTools(
+        config.tools,
+        pending.context,
+        pending.agentName,
+        this.options.approvalTtlSeconds,
+      ),
       traceId: pending.context.traceId,
       instructions: config.instructions,
       history,
@@ -301,7 +313,12 @@ export class AgentRunner {
       config,
       model: config.model ?? this.options.defaultModel,
       context,
-      tools: this.localToolProvider.buildTools(config.tools, context, agentName),
+      tools: this.localToolProvider.buildTools(
+        config.tools,
+        context,
+        agentName,
+        this.options.approvalTtlSeconds,
+      ),
       limits: input.limits ?? config.limits ?? this.options.limits,
       toolErrorHandling:
         input.toolErrorHandling ?? config.toolErrorHandling ?? this.options.toolErrorHandling,

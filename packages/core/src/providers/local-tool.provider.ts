@@ -71,6 +71,7 @@ export class LocalToolProvider {
     toolSetTokensOrInstances: (object | Function)[],
     agentContext: AgentContext,
     agentName = '',
+    defaultApprovalTtlSeconds?: number,
   ): ResolvedTool[] {
     return toolSetTokensOrInstances.flatMap((tokenOrInstance) => {
       const instance = this.resolveInstance(tokenOrInstance);
@@ -80,7 +81,13 @@ export class LocalToolProvider {
       if (!discovered) return [];
 
       return discovered.tools.map((tool) =>
-        this.buildResolvedTool(tool, discovered.classPolicyConstructors, agentContext, agentName),
+        this.buildResolvedTool(
+          tool,
+          discovered.classPolicyConstructors,
+          agentContext,
+          agentName,
+          defaultApprovalTtlSeconds,
+        ),
       );
     });
   }
@@ -147,6 +154,7 @@ export class LocalToolProvider {
     classPolicyConstructors: PolicyConstructor[],
     agentContext: AgentContext,
     agentName: string,
+    defaultApprovalTtlSeconds?: number,
   ): ResolvedTool {
     const allPolicyConstructors = [...classPolicyConstructors, ...tool.policyConstructors];
 
@@ -185,6 +193,14 @@ export class LocalToolProvider {
 
           if (result.decision === 'require_approval') {
             const approvalId = randomUUID();
+            const createdAt = new Date();
+            // A policy's own ttlSeconds overrides the module default; when
+            // neither is set the approval never expires.
+            const ttlSeconds = result.ttlSeconds ?? defaultApprovalTtlSeconds;
+            const expiresAt =
+              ttlSeconds !== undefined
+                ? new Date(createdAt.getTime() + ttlSeconds * 1000)
+                : undefined;
             await this.approvalStore.save({
               id: approvalId,
               agentName,
@@ -192,7 +208,8 @@ export class LocalToolProvider {
               args,
               context: agentContext,
               reason: result.reason,
-              createdAt: new Date(),
+              createdAt,
+              expiresAt,
               toolCallId,
             });
             return {

@@ -129,10 +129,11 @@ Approvals created outside the built-in runtime (an agent driven entirely by a `R
 
 **At-most-once settlement.** `ApprovalService.approve()`/`reject()` claim the approval through `ApprovalStore.claim()`, an atomic remove-and-return, before running the withheld tool. Concurrent settlements of the same approval, or a retry after a restart, therefore resolve exactly one caller and reject the rest with `ApprovalNotFoundError` — the side effect runs at most once. The claim happens before execution, so a tool that fails after being claimed is not retried; end-to-end exactly-once for a side effect still depends on the tool itself being idempotent, which is tracked as follow-up idempotency-key work.
 
+**Expiry.** An approval created with a TTL (a policy's `ttlSeconds` or the module's `approvalTtlSeconds`) carries an `expiresAt`. Resolving it past that instant throws `ApprovalExpiredError` instead of acting on stale context, and the claim consumes it so it is not left for a retry. `RedisApprovalStore` derives the key's Redis TTL from `expiresAt` plus a grace window, so abandoned approvals are garbage-collected rather than lingering forever.
+
 What remains roadmap work:
 
 - idempotency keys so a claimed-but-failed tool can be safely retried without risking a duplicate side effect;
-- expiring an approval that is never resolved;
 - durable execution checkpoints for the in-flight turn itself, independent of the approval record (see [State, Sessions, and Memory](#state-sessions-and-memory)).
 
 Applications that need durability today should provide a persistent `ApprovalStore` (such as `RedisApprovalStore`) and a persistent `SessionStore`, since resuming a turn depends on both.

@@ -19,6 +19,14 @@ export interface PendingApproval {
   reason: string;
   createdAt: Date;
   /**
+   * When set, the approval is no longer valid after this instant. Attempting
+   * to resolve it past this point fails with `ApprovalExpiredError` rather
+   * than executing a decision against stale context. Unset means the approval
+   * never expires. Derived from a policy's `ttlSeconds` or the module's
+   * `approvalTtlSeconds` when the approval is created.
+   */
+  expiresAt?: Date;
+  /**
    * Identifier of the model tool call this approval corresponds to, when
    * known. Used to splice the eventual outcome back into the exact
    * conversation position that was suspended.

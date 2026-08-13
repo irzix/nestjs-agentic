@@ -78,6 +78,22 @@ export class ApprovalNotFoundError extends AgenticError {
 }
 
 /**
+ * Raised when `ApprovalService.approve()` or `.reject()` is called for an
+ * approval whose `expiresAt` has already passed. The approval is consumed
+ * (removed from the store) rather than executed against stale context.
+ */
+export class ApprovalExpiredError extends AgenticError {
+  constructor(
+    readonly approvalId: string,
+    readonly expiredAt: Date,
+  ) {
+    super(
+      `Approval "${approvalId}" expired at ${expiredAt.toISOString()} and can no longer be resolved.`,
+    );
+  }
+}
+
+/**
  * Raised when a pending approval is resumed but its tool can no longer be
  * found among the agent's current tool sets — for example the tool was
  * renamed or removed after the approval was created.

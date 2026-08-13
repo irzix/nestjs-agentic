@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { APPROVAL_STORE } from '../constants';
-import { ApprovalNotFoundError } from '../errors';
-import type { ApprovalStore } from '../interfaces';
+import { ApprovalExpiredError, ApprovalNotFoundError } from '../errors';
+import type { ApprovalStore, PendingApproval } from '../interfaces';
 import type { AgentResult } from '../interfaces';
 import type { ToolExecutionResult } from '../interfaces';
 import { AgentRunner } from './agent-runner.service';
@@ -28,17 +28,14 @@ export class ApprovalService {
    * underlying side effect idempotent is the tool's responsibility.
    *
    * Throws `ApprovalNotFoundError` if the ID is unknown, already resolved, or
-   * claimed by a concurrent caller.
+   * claimed by a concurrent caller, and `ApprovalExpiredError` if it was
+   * claimed after its `expiresAt`.
    */
   async approve(
     approvalId: string,
     options?: { signal?: AbortSignal },
   ): Promise<AgentResult | ToolExecutionResult> {
-    const pending = await this.store.claim(approvalId);
-
-    if (!pending) {
-      throw new ApprovalNotFoundError(approvalId);
-    }
+    const pending = this.claimActive(await this.store.claim(approvalId), approvalId);
 
     return this.runner.settleApproval(pending, { approved: true }, options);
   }
@@ -53,22 +50,36 @@ export class ApprovalService {
    * once even under concurrent calls.
    *
    * Throws `ApprovalNotFoundError` if the ID is unknown, already resolved, or
-   * claimed by a concurrent caller.
+   * claimed by a concurrent caller, and `ApprovalExpiredError` if it was
+   * claimed after its `expiresAt`.
    */
   async reject(
     approvalId: string,
     options?: { reason?: string; signal?: AbortSignal },
   ): Promise<AgentResult | ToolExecutionResult> {
-    const pending = await this.store.claim(approvalId);
-
-    if (!pending) {
-      throw new ApprovalNotFoundError(approvalId);
-    }
+    const pending = this.claimActive(await this.store.claim(approvalId), approvalId);
 
     return this.runner.settleApproval(
       pending,
       { approved: false, reason: options?.reason },
       options,
     );
+  }
+
+  /**
+   * Validates a just-claimed approval. Because the claim already removed it
+   * from the store, an expired approval is consumed rather than left behind —
+   * settling it late is refused, but it does not linger for a retry.
+   */
+  private claimActive(pending: PendingApproval | null, approvalId: string): PendingApproval {
+    if (!pending) {
+      throw new ApprovalNotFoundError(approvalId);
+    }
+
+    if (pending.expiresAt && Date.now() > new Date(pending.expiresAt).getTime()) {
+      throw new ApprovalExpiredError(approvalId, new Date(pending.expiresAt));
+    }
+
+    return pending;
   }
 }
