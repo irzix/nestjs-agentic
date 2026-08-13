@@ -164,6 +164,8 @@ interface ModelAdapter {
 
 `MockModelAdapter` ships with core so agents, policies, and the loop can be tested deterministically without a provider. `@nestjs-agentic/openai` implements the contract for OpenAI and Chat Completions compatible endpoints.
 
+Both are verified by `runModelAdapterContract()`, the exported behavioral suite that any adapter, including a third-party one, can run to prove it satisfies the same guarantees.
+
 ## Runtime Adapter Boundary
 
 The original delegation contract remains supported for applications that bring an entire external runtime:

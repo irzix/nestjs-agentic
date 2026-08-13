@@ -560,6 +560,71 @@ new LoggingPolicy({
 
 This policy logs the attempted invocation and always returns `allow`. It is not a persistent audit store.
 
+## Adapter Contract Suite
+
+```typescript
+function runModelAdapterContract(
+  options: ModelAdapterContractOptions,
+): Promise<ModelAdapterContractResult>;
+
+interface ModelAdapterContractOptions {
+  name: string;
+  createAdapter(
+    scenario: ModelAdapterContractScenario,
+  ): ModelAdapter | Promise<ModelAdapter>;
+  supportsStreaming?: boolean; // default true
+  reportsUsage?: boolean; // default true
+  model?: ModelConfig;
+  log?: boolean; // default true
+}
+
+interface ModelAdapterContractScenario {
+  content?: string;
+  toolCalls?: ModelToolCall[];
+  usage?: ModelUsage;
+}
+
+interface ModelAdapterContractResult {
+  name: string;
+  passed: number;
+  failed: number;
+  skipped: number;
+  failures: string[];
+}
+```
+
+Runs the behavioral contract for a `ModelAdapter` so any implementation, including a third-party one, can prove it behaves the way the runtime expects.
+
+Each scenario describes a single provider round, because that is the unit a `ModelAdapter` is responsible for. Multi-round behavior belongs to `AgentExecutor`.
+
+You supply `createAdapter`, which returns an adapter whose provider deterministically produces the scenario. For a real provider that usually means injecting a stub transport. The harness always sends `CONTRACT_SYSTEM_MESSAGE` and `CONTRACT_USER_MESSAGE` with `CONTRACT_TOOLS`, all exported, so a factory can key its stub on them.
+
+Checked behavior:
+
+- content resolves as a string, for both text and tool rounds
+- a text round reports no tool calls
+- tool calls carry an id and name, with arguments parsed into an object rather than left as JSON text
+- argument values and types survive translation
+- assistant and tool messages in the conversation are accepted
+- usage maps onto framework token fields when the provider reports it
+- the request messages array is not mutated
+- `finishReason` is a known value when present
+- `generate()` rejects when the request signal is already aborted
+- `stream()` emits exactly one `response` chunk, last, whose content matches the round and whose tool calls are parsed
+
+```typescript
+const result = await runModelAdapterContract({
+  name: 'MyModelAdapter',
+  createAdapter: (scenario) => new MyModelAdapter({ fetch: stubFor(scenario) }),
+});
+
+if (result.failed > 0) {
+  throw new Error(result.failures.join('\n'));
+}
+```
+
+Set `supportsStreaming: false` or `reportsUsage: false` to skip capabilities an adapter intentionally omits; skipped assertions are counted separately rather than silently passing.
+
 ## `MockModelAdapter`
 
 Deterministic `ModelAdapter` for testing the full loop without a provider.
