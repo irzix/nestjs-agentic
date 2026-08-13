@@ -5,6 +5,7 @@ import { APPROVAL_STORE, POLICY_INSTANCES } from '../constants';
 import { ApprovalToolNotFoundError, PolicyNotRegisteredError } from '../errors';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
+import { auditEnvelope } from '../interfaces';
 import type {
   AgentContext,
   ApprovalStore,
@@ -13,6 +14,7 @@ import type {
   ToolParamSchema,
   ToolPolicy,
 } from '../interfaces';
+import { AuditTrail } from '../services/audit-trail.service';
 
 type PolicyConstructor = new (...args: unknown[]) => ToolPolicy;
 
@@ -23,6 +25,7 @@ export class LocalToolProvider {
     @Inject(APPROVAL_STORE) private readonly approvalStore: ApprovalStore,
     private readonly discovery: ToolDiscoveryService,
     private readonly moduleRef: ModuleRef,
+    @Optional() private readonly audit?: AuditTrail,
   ) {}
 
   private getPolicyMap(): Map<Function | string, ToolPolicy> {
@@ -188,6 +191,17 @@ export class LocalToolProvider {
           const result = await policy.evaluate(agentContext, tool.toolName, args);
 
           if (result.decision === 'deny') {
+            await this.audit?.record({
+              ...auditEnvelope(agentContext),
+              type: 'tool_policy_decision',
+              agentName,
+              toolName: tool.toolName,
+              policyName: Constructor.name,
+              decision: 'deny',
+              reason: result.reason,
+              args,
+            });
+
             return { success: false, status: 'denied', reason: result.reason };
           }
 
@@ -212,6 +226,36 @@ export class LocalToolProvider {
               expiresAt,
               toolCallId,
             });
+
+            if (this.audit?.isEnabled()) {
+              const envelope = auditEnvelope(agentContext);
+
+              // Both the boundary decision and the resulting request are
+              // recorded: the first proves the call was gated, the second is
+              // what a reviewer correlates their eventual decision against.
+              await this.audit.record({
+                ...envelope,
+                type: 'tool_policy_decision',
+                agentName,
+                toolName: tool.toolName,
+                policyName: Constructor.name,
+                decision: 'require_approval',
+                reason: result.reason,
+                approvalId,
+                args,
+              });
+              await this.audit.record({
+                ...envelope,
+                type: 'approval_requested',
+                approvalId,
+                agentName,
+                toolName: tool.toolName,
+                reason: result.reason,
+                expiresAt,
+                args,
+              });
+            }
+
             return {
               success: false,
               status: 'pending_approval',
@@ -219,6 +263,16 @@ export class LocalToolProvider {
               approvalId,
             };
           }
+
+          await this.audit?.record({
+            ...auditEnvelope(agentContext),
+            type: 'tool_policy_decision',
+            agentName,
+            toolName: tool.toolName,
+            policyName: Constructor.name,
+            decision: 'allow',
+            args,
+          });
         }
 
         return this.invokeMethod(tool, args, agentContext);

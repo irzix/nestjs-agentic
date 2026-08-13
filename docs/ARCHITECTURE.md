@@ -138,10 +138,17 @@ Approvals created outside the built-in runtime (an agent driven entirely by a `R
 
 A checkpoint whose `version` this release does not recognize is refused with `ApprovalCheckpointVersionError` rather than misread. Checkpoints are deliberately untrimmed, so an approval record is proportionally larger than the trimmed session transcript for the same turn.
 
+**Audit trail.** The policy boundary and the approval lifecycle are recordable. `LocalToolProvider` reports each gating decision, and `ApprovalService` reports every terminal state of an approval — settled, expired, or failed after being claimed — to any registered `AuditSink` through the `AuditTrail` service. Because settling routes through one shared private method, the approving and rejecting paths cannot drift apart in what they record.
+
+Recording who decided required an API change: `approve()`/`reject()` previously took no identity, so "who approved" was unrecordable. They now accept an `actor`, supplied by the application, since the framework never infers identity.
+
+Three defaults are deliberate. Tool arguments are withheld unless `audit.includeArgs` is set, because an audit store usually outlives application logs and arguments can carry secrets. `allow` decisions are omitted unless asked for, because every governed call produces one and that volume is tracing rather than audit. And a sink that throws is isolated — failing an already-approved refund because a log store is unreachable is worse than losing the entry, so sinks that cannot lose events must buffer durably themselves.
+
 What remains roadmap work:
 
 - idempotency keys so a claimed-but-failed tool can be safely retried without risking a duplicate side effect;
-- checkpointing turns that are still in flight, rather than only at an approval suspension point (see [State, Sessions, and Memory](#state-sessions-and-memory)).
+- checkpointing turns that are still in flight, rather than only at an approval suspension point (see [State, Sessions, and Memory](#state-sessions-and-memory));
+- traces and metrics for model and tool execution, which are part of the observability milestone rather than the governance trail.
 
 Both built-in stores are verified by `runApprovalStoreContract()`, the exported behavioral suite any `ApprovalStore` can run. Because the contract asserts that records behave as serializable data — `Date` fields revived as `Date`s, returned records isolated from stored state, `claim()` atomic under concurrent callers — `InMemoryApprovalStore` stores serialized snapshots rather than live references. A record that would not survive a real store therefore fails in development too, instead of appearing to work until it reaches Redis.
 

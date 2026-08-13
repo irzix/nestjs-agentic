@@ -26,6 +26,14 @@ export const SESSION_STORE = Symbol('SESSION_STORE');
 export const AGENT_OBSERVERS = Symbol('AGENT_OBSERVERS');
 
 /**
+ * Injection token for registering AuditSink instances.
+ * Accepts a multi-provider array. Without a registered sink the framework
+ * records nothing, so auditing is opt-in.
+ * @example { provide: AUDIT_SINKS, useClass: PostgresAuditSink, multi: true }
+ */
+export const AUDIT_SINKS = Symbol('AUDIT_SINKS');
+
+/**
  * Multi-provider token for all registered ToolPolicy instances.
  * Populated automatically by AgenticModule.forFeature() for each policy
  * listed in the `policies` array. LocalToolProvider uses this to build
