@@ -463,6 +463,8 @@ interface ApprovalStore {
   save(approval: PendingApproval): Promise<void>;
   get(id: string): Promise<PendingApproval | null>;
   delete(id: string): Promise<void>;
+  // Atomically remove and return the approval, or null if already claimed.
+  claim(id: string): Promise<PendingApproval | null>;
 }
 
 type ApprovalDecision = { approved: true } | { approved: false; reason?: string };
@@ -487,6 +489,8 @@ Behavior of `approve()` and `reject()`:
 - When the approval did not originate from the built-in runtime (no `toolCallId`, for example an agent driven entirely by a `RuntimeAdapter`), only the tool is invoked or the denial is built, and the bare `ToolExecutionResult` is returned, matching `0.4.x` behavior.
 - Both methods throw `ApprovalNotFoundError` if the ID is unknown or was already resolved. Approvals are single-use.
 - Resuming requires the session's conversation history to still be present in `SessionStore`; if it was cleared or trimmed past the suspension point, resuming throws `ApprovalTranscriptMissingError`.
+
+**Exactly-once settlement.** `approve()` and `reject()` claim the approval through `ApprovalStore.claim()` — an atomic remove-and-return — before running the withheld tool. This makes settlement at most once: two concurrent `approve()` calls for the same id, or a retry triggered by a restart, result in exactly one that runs the side effect while the others throw `ApprovalNotFoundError`. Because the claim happens first, a tool that fails after being claimed will not be retried; making the underlying side effect idempotent remains the tool's responsibility. `InMemoryApprovalStore` claims atomically within a process; `RedisApprovalStore` uses `GETDEL` for cross-instance atomicity when the client supports it.
 
 ```typescript
 const outcome = await approvalService.approve(approvalId);

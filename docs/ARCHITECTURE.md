@@ -127,9 +127,11 @@ sequenceDiagram
 
 Approvals created outside the built-in runtime (an agent driven entirely by a `RuntimeAdapter`, which has no `toolCallId` to resume against) keep returning the bare `ToolExecutionResult`, matching prior behavior for that path.
 
+**At-most-once settlement.** `ApprovalService.approve()`/`reject()` claim the approval through `ApprovalStore.claim()`, an atomic remove-and-return, before running the withheld tool. Concurrent settlements of the same approval, or a retry after a restart, therefore resolve exactly one caller and reject the rest with `ApprovalNotFoundError` — the side effect runs at most once. The claim happens before execution, so a tool that fails after being claimed is not retried; end-to-end exactly-once for a side effect still depends on the tool itself being idempotent, which is tracked as follow-up idempotency-key work.
+
 What remains roadmap work:
 
-- exactly-once execution guarantees under concurrent or duplicate approval requests;
+- idempotency keys so a claimed-but-failed tool can be safely retried without risking a duplicate side effect;
 - expiring an approval that is never resolved;
 - durable execution checkpoints for the in-flight turn itself, independent of the approval record (see [State, Sessions, and Memory](#state-sessions-and-memory)).
 

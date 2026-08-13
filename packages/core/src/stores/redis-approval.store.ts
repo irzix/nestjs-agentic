@@ -50,14 +50,39 @@ export class RedisApprovalStore implements ApprovalStore {
 
   async get(id: string): Promise<PendingApproval | null> {
     const raw = await this.client.get(this.getKey(id));
+    return this.deserialize(raw);
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.client.del(this.getKey(id));
+  }
+
+  /**
+   * Atomically claims the approval so it can be settled at most once across
+   * instances. Uses Redis `GETDEL` when the client exposes it, which reads
+   * and removes the key in a single round trip. Falls back to a non-atomic
+   * get+del when `getdel` is unavailable; in that case concurrent callers on
+   * different instances could both observe the record, so prefer a client
+   * that supports `GETDEL` (Redis 6.2+) for the exactly-once guarantee.
+   */
+  async claim(id: string): Promise<PendingApproval | null> {
+    const key = this.getKey(id);
+
+    if (typeof this.client.getdel === 'function') {
+      return this.deserialize(await this.client.getdel(key));
+    }
+
+    const raw = await this.client.get(key);
+    if (!raw) return null;
+    await this.client.del(key);
+    return this.deserialize(raw);
+  }
+
+  private deserialize(raw: string | null): PendingApproval | null {
     if (!raw) return null;
 
     const parsed = JSON.parse(raw) as PendingApproval;
     // Dates do not round-trip through JSON, so createdAt is restored here.
     return { ...parsed, createdAt: new Date(parsed.createdAt) };
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.client.del(this.getKey(id));
   }
 }

@@ -21,21 +21,26 @@ export class ApprovalService {
    * created outside the built-in runtime (no `toolCallId`) still return the
    * `ToolExecutionResult` directly, matching prior behavior.
    *
-   * Throws `ApprovalNotFoundError` if the ID is unknown or already resolved.
+   * The approval is claimed atomically before its tool runs, so a given
+   * approval is settled at most once even under concurrent calls or a
+   * restart-triggered retry. If the tool itself fails after the claim, the
+   * approval is already consumed and will not be retried; making the
+   * underlying side effect idempotent is the tool's responsibility.
+   *
+   * Throws `ApprovalNotFoundError` if the ID is unknown, already resolved, or
+   * claimed by a concurrent caller.
    */
   async approve(
     approvalId: string,
     options?: { signal?: AbortSignal },
   ): Promise<AgentResult | ToolExecutionResult> {
-    const pending = await this.store.get(approvalId);
+    const pending = await this.store.claim(approvalId);
 
     if (!pending) {
       throw new ApprovalNotFoundError(approvalId);
     }
 
-    const result = await this.runner.settleApproval(pending, { approved: true }, options);
-    await this.store.delete(approvalId);
-    return result;
+    return this.runner.settleApproval(pending, { approved: true }, options);
   }
 
   /**
@@ -44,24 +49,26 @@ export class ApprovalService {
    * with a `denied` outcome so the model can recover within the same
    * conversation instead of the turn simply disappearing.
    *
-   * Throws `ApprovalNotFoundError` if the ID is unknown or already resolved.
+   * The approval is claimed atomically, so a given approval is settled at most
+   * once even under concurrent calls.
+   *
+   * Throws `ApprovalNotFoundError` if the ID is unknown, already resolved, or
+   * claimed by a concurrent caller.
    */
   async reject(
     approvalId: string,
     options?: { reason?: string; signal?: AbortSignal },
   ): Promise<AgentResult | ToolExecutionResult> {
-    const pending = await this.store.get(approvalId);
+    const pending = await this.store.claim(approvalId);
 
     if (!pending) {
       throw new ApprovalNotFoundError(approvalId);
     }
 
-    const result = await this.runner.settleApproval(
+    return this.runner.settleApproval(
       pending,
       { approved: false, reason: options?.reason },
       options,
     );
-    await this.store.delete(approvalId);
-    return result;
   }
 }

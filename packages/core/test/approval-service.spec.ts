@@ -137,8 +137,64 @@ export async function runApprovalServiceTests() {
       secondApproval = err;
     }
     assert(secondApproval instanceof Error, 'Test 1f: Approval cannot be replayed');
+    assert(
+      tools.transfers.length === 1,
+      'Test 1g: Replayed approval does not re-run the side effect',
+    );
   } catch (err: any) {
     assert(false, 'Test 1: Approval resumes the model turn', err.message);
+  }
+
+  // TEST 1B: Concurrent approvals of the same id settle exactly once
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Transfer $7000 to vendor')
+      .callTool('transferMoney', { amount: 7000 })
+      .reply('Transfer of $7000 completed.');
+
+    const { LocalToolProvider, ToolDiscoveryService } = await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [new ApprovalNeededPolicy()],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const tools = new LedgerTools();
+    const runner = new AgentRunner(
+      [new BankerAgent(tools)],
+      undefined,
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(model),
+      new InMemorySessionStore(),
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    const suspended = await runner.run('banker', {
+      sessionId: 'sess_hitl_concurrent',
+      message: 'Transfer $7000 to vendor',
+    });
+    const pending = suspended.toolCalls[0]?.result as any;
+
+    // Fire two approvals for the same id at once; exactly one should win.
+    const outcomes = await Promise.allSettled([
+      approvals.approve(pending.approvalId),
+      approvals.approve(pending.approvalId),
+    ]);
+    const fulfilled = outcomes.filter((o) => o.status === 'fulfilled');
+    const rejected = outcomes.filter((o) => o.status === 'rejected');
+
+    assert(fulfilled.length === 1, 'Test 1B-a: Exactly one concurrent approval succeeds');
+    assert(rejected.length === 1, 'Test 1B-b: The losing concurrent approval is rejected');
+    assert(
+      tools.transfers.length === 1,
+      'Test 1B-c: Side effect runs exactly once under concurrency',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 1B: Concurrent approvals settle exactly once', err.message);
   }
 
   // TEST 2: Rejection resumes the turn with a denied outcome instead of executing
