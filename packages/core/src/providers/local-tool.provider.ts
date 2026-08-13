@@ -2,7 +2,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import { APPROVAL_STORE, POLICY_INSTANCES } from '../constants';
-import { PolicyNotRegisteredError } from '../errors';
+import { ApprovalToolNotFoundError, PolicyNotRegisteredError } from '../errors';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
 import type {
@@ -61,41 +61,92 @@ export class LocalToolProvider {
     }
   }
 
-  buildTools(toolSetTokensOrInstances: (object | Function)[], agentContext: AgentContext): ResolvedTool[] {
+  /**
+   * Builds policy-guarded tool closures for one agent turn.
+   * `agentName` is stored on any `PendingApproval` created while executing
+   * these tools, so a later resume can re-resolve the same agent's tool set
+   * through DI instead of closing over live instances.
+   */
+  buildTools(
+    toolSetTokensOrInstances: (object | Function)[],
+    agentContext: AgentContext,
+    agentName = '',
+  ): ResolvedTool[] {
     return toolSetTokensOrInstances.flatMap((tokenOrInstance) => {
-      let instance: object | undefined;
-      if (typeof tokenOrInstance === 'function') {
-        try {
-          instance = this.moduleRef.get(tokenOrInstance as any, { strict: false });
-        } catch {
-          instance = undefined;
-        }
-        if (!instance) {
-          try {
-            instance = new (tokenOrInstance as any)();
-          } catch {
-            instance = undefined;
-          }
-        }
-      } else {
-        instance = tokenOrInstance;
-      }
-
+      const instance = this.resolveInstance(tokenOrInstance);
       if (!instance) return [];
 
       const discovered = this.discovery.discover(instance);
       if (!discovered) return [];
 
       return discovered.tools.map((tool) =>
-        this.buildResolvedTool(tool, discovered.classPolicyConstructors, agentContext),
+        this.buildResolvedTool(tool, discovered.classPolicyConstructors, agentContext, agentName),
       );
     });
+  }
+
+  /**
+   * Invokes a tool method directly, bypassing policy evaluation.
+   *
+   * Used to resolve an already-approved `PendingApproval`: the policy that
+   * required approval already ran once, and a human decision now stands in
+   * for it. Any policies declared after it in the chain were never evaluated
+   * originally and are not evaluated here either, matching prior behavior.
+   */
+  async invokeApprovedTool(
+    toolSetTokensOrInstances: (object | Function)[],
+    toolName: string,
+    args: Record<string, unknown>,
+    agentContext: AgentContext,
+  ): Promise<ToolExecutionResult> {
+    const tool = this.discoverToolByName(toolSetTokensOrInstances, toolName);
+    if (!tool) {
+      throw new ApprovalToolNotFoundError(toolName);
+    }
+    return this.invokeMethod(tool, args, agentContext);
+  }
+
+  private discoverToolByName(
+    toolSetTokensOrInstances: (object | Function)[],
+    toolName: string,
+  ): DiscoveredTool | undefined {
+    for (const tokenOrInstance of toolSetTokensOrInstances) {
+      const instance = this.resolveInstance(tokenOrInstance);
+      if (!instance) continue;
+
+      const discovered = this.discovery.discover(instance);
+      const match = discovered?.tools.find((t) => t.toolName === toolName);
+      if (match) return match;
+    }
+    return undefined;
+  }
+
+  private resolveInstance(tokenOrInstance: object | Function): object | undefined {
+    if (typeof tokenOrInstance !== 'function') {
+      return tokenOrInstance;
+    }
+
+    let instance: object | undefined;
+    try {
+      instance = this.moduleRef.get(tokenOrInstance as any, { strict: false });
+    } catch {
+      instance = undefined;
+    }
+    if (!instance) {
+      try {
+        instance = new (tokenOrInstance as any)();
+      } catch {
+        instance = undefined;
+      }
+    }
+    return instance;
   }
 
   private buildResolvedTool(
     tool: DiscoveredTool,
     classPolicyConstructors: PolicyConstructor[],
     agentContext: AgentContext,
+    agentName: string,
   ): ResolvedTool {
     const allPolicyConstructors = [...classPolicyConstructors, ...tool.policyConstructors];
 
@@ -110,7 +161,13 @@ export class LocalToolProvider {
       name: tool.toolName,
       description: tool.description,
       parameters,
-      execute: async ({ args }: { args: Record<string, unknown> }): Promise<ToolExecutionResult> => {
+      execute: async ({
+        args,
+        toolCallId,
+      }: {
+        args: Record<string, unknown>;
+        toolCallId?: string;
+      }): Promise<ToolExecutionResult> => {
         const policyMap = this.getPolicyMap();
 
         for (const Constructor of allPolicyConstructors) {
@@ -130,12 +187,13 @@ export class LocalToolProvider {
             const approvalId = randomUUID();
             await this.approvalStore.save({
               id: approvalId,
+              agentName,
               toolName: tool.toolName,
               args,
               context: agentContext,
               reason: result.reason,
               createdAt: new Date(),
-              execute: () => this.invokeMethod(tool, args, agentContext),
+              toolCallId,
             });
             return {
               success: false,

@@ -43,7 +43,7 @@ const cards = [
     tagline: 'Core available · HITL experimental',
     description: (
       <>
-        Every framework-managed tool call crosses an <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code> policy boundary. Current approval continuation is process-local and does not resume the model turn.
+        Every framework-managed tool call crosses an <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code> policy boundary. Approval decisions resume the suspended model turn and use a serializable, durably storable approval record.
       </>
     ),
   },

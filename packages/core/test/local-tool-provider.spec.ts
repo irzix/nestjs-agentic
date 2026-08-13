@@ -162,14 +162,24 @@ export async function runLocalToolProviderTests() {
 
     if (!result.success && (result as any).approvalId) {
       const pendingRecord = await approvalStore.get((result as any).approvalId);
-      assert(pendingRecord !== undefined, 'Test 4d: Pending tool closure saved to ApprovalStore');
+      assert(pendingRecord !== undefined, 'Test 4d: Pending approval record saved to ApprovalStore');
       assert(pendingRecord?.toolName === 'highRiskAction', 'Test 4e: Store record contains toolName');
+      assert(
+        typeof (pendingRecord as any)?.execute !== 'function',
+        'Test 4f: Record is serializable data, not a live closure',
+      );
 
-      // Execute stored closure
-      const executionRes = (await pendingRecord?.execute()) as ToolExecutionResult;
+      // Resolve the approved call directly, bypassing policy evaluation, the
+      // same way ApprovalService resumes it.
+      const executionRes = (await provider.invokeApprovedTool(
+        [toolsInstance],
+        pendingRecord!.toolName,
+        pendingRecord!.args,
+        pendingRecord!.context,
+      )) as ToolExecutionResult;
       assert(
         executionRes?.success === true && (executionRes as any).data?.target === 'database_prod',
-        'Test 4f: Saved closure executes method correctly upon human approval',
+        'Test 4g: Saved record resolves and executes the method correctly upon human approval',
       );
     }
   } catch (err: any) {

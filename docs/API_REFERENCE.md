@@ -260,14 +260,33 @@ interface AgentExecutionInput {
   signal?: AbortSignal;
 }
 
+interface AgentResumeInput {
+  sessionId: string;
+  model: ModelConfig;
+  tools: ResolvedTool[];
+  traceId?: string;
+  instructions?: string;
+  history: ModelMessage[]; // full transcript, including the withheld tool message
+  toolCallId: string;      // identifies which withheld message to resolve
+  toolName: string;
+  args: Record<string, unknown>;
+  outcome: ToolExecutionResult; // the resolved approve/deny outcome
+  limits?: ExecutionLimits;
+  signal?: AbortSignal;
+}
+
 class AgentExecutor {
   isAvailable(): boolean;
   execute(input: AgentExecutionInput): Promise<AgentResult>;
   stream(input: AgentExecutionInput): AsyncIterable<AgentStreamEvent>;
+  resume(input: AgentResumeInput): Promise<AgentResult>;
+  resumeStream(input: AgentResumeInput): AsyncIterable<AgentStreamEvent>;
 }
 ```
 
 `AgentExecutor` is registered by `AgenticModule.forRoot()`. `AgentRunner` uses it automatically, so most applications do not call it directly.
+
+`resume()` and `resumeStream()` continue a turn that suspended on `require_approval`. They splice `outcome` into the tool message identified by `toolCallId` within `history`, then run the model-to-tool loop exactly as `execute()`/`stream()` would, starting from that point. `AgentRunner.settleApproval()` — used internally by `ApprovalService` — calls these when a resolved approval's `PendingApproval.toolCallId` is set.
 
 Loop behavior per round:
 
@@ -315,6 +334,15 @@ class ExecutionLimitExceededError extends AgenticError {
 }
 class ExecutionCancelledError extends AgenticError {}
 class RuntimeNotConfiguredError extends AgenticError {}
+class ApprovalNotFoundError extends AgenticError {
+  approvalId: string;
+}
+class ApprovalToolNotFoundError extends AgenticError {
+  toolName: string;
+}
+class ApprovalTranscriptMissingError extends AgenticError {
+  toolCallId: string;
+}
 ```
 
 `ToolValidationError` is reported back to the model rather than thrown. Budget, cancellation, and configuration errors are thrown to the caller.
@@ -397,8 +425,15 @@ class AgentRunner {
     agentName: string,
     input: RunInput,
   ): AsyncIterable<AgentStreamEvent>;
+  settleApproval(
+    pending: PendingApproval,
+    decision: ApprovalDecision,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentResult | ToolExecutionResult>;
 }
 ```
+
+`settleApproval()` is what `ApprovalService.approve()`/`reject()` call internally. It re-resolves `pending.agentName` and its tool sets, invokes the tool (on approval) or builds a denial (on rejection), and, when the approval carries a `toolCallId`, resumes the suspended turn through `AgentExecutor.resume()`. Most applications call `ApprovalService` rather than this method directly.
 
 `run()` resolves the registered agent, creates the context, and resolves governed tools. Execution is then routed by registration:
 
@@ -415,12 +450,13 @@ class AgentRunner {
 ```typescript
 interface PendingApproval {
   id: string;
+  agentName: string;
   toolName: string;
   args: Record<string, unknown>;
   context: AgentContext;
   reason: string;
   createdAt: Date;
-  execute: () => Promise<unknown>;
+  toolCallId?: string;
 }
 
 interface ApprovalStore {
@@ -429,13 +465,43 @@ interface ApprovalStore {
   delete(id: string): Promise<void>;
 }
 
+type ApprovalDecision = { approved: true } | { approved: false; reason?: string };
+
 class ApprovalService {
-  approve(approvalId: string): Promise<ToolExecutionResult>;
-  reject(approvalId: string): Promise<void>;
+  approve(
+    approvalId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentResult | ToolExecutionResult>;
+  reject(
+    approvalId: string,
+    options?: { reason?: string; signal?: AbortSignal },
+  ): Promise<AgentResult | ToolExecutionResult>;
 }
 ```
 
-`approve()` invokes the stored closure and then removes the record. In `0.4.x`, the closure is process-local and cannot be reconstructed after a restart. The API protects individual tool invocations; it does not resume the original model turn.
+`PendingApproval` is a plain serializable record rather than a closure over live objects, so an `ApprovalStore` can persist it across a process restart or resolve it from a different instance than the one that created it. Approving or rejecting re-resolves the agent, its tool sets, and the tool method through NestJS DI using `agentName` and `toolName`.
+
+Behavior of `approve()` and `reject()`:
+
+- When the approval originated from the built-in runtime (it carries a `toolCallId`), the tool outcome is spliced into the exact suspended tool message in the persisted transcript and the model turn **resumes**: the model sees the outcome and can answer, request another tool, or suspend again. The return value is the full `AgentResult`.
+- When the approval did not originate from the built-in runtime (no `toolCallId`, for example an agent driven entirely by a `RuntimeAdapter`), only the tool is invoked or the denial is built, and the bare `ToolExecutionResult` is returned, matching `0.4.x` behavior.
+- Both methods throw `ApprovalNotFoundError` if the ID is unknown or was already resolved. Approvals are single-use.
+- Resuming requires the session's conversation history to still be present in `SessionStore`; if it was cleared or trimmed past the suspension point, resuming throws `ApprovalTranscriptMissingError`.
+
+```typescript
+const outcome = await approvalService.approve(approvalId);
+// outcome is AgentResult when resuming the built-in runtime, otherwise ToolExecutionResult
+```
+
+`RedisApprovalStore` is the production-intent `ApprovalStore` implementation:
+
+```typescript
+new RedisApprovalStore({
+  client: redisClient,
+  keyPrefix: 'agentic:approval:', // default
+  ttlSeconds: undefined,          // unset by default; approvals never expire
+});
+```
 
 ## Module Configuration
 
@@ -542,6 +608,7 @@ Exported implementations:
 | Class | Purpose |
 | --- | --- |
 | `InMemoryApprovalStore` | Default approval store; process-local. |
+| `RedisApprovalStore` | JSON-serializing `ApprovalStore` using a compatible Redis client. Supports optional TTL-based expiry. |
 | `InMemorySessionStore` | Default session store; process-local. |
 | `InMemoryStateStore` | Default `STATE_STORE`; process-local. |
 | `RedisStateStore` | JSON-serializing `StateStore` using a compatible Redis client. |

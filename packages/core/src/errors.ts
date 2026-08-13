@@ -65,3 +65,39 @@ export class RuntimeNotConfiguredError extends AgenticError {
     );
   }
 }
+
+/**
+ * Raised when `ApprovalService.approve()` or `.reject()` is called with an ID
+ * that is unknown to the configured `ApprovalStore`, including because it was
+ * already resolved.
+ */
+export class ApprovalNotFoundError extends AgenticError {
+  constructor(readonly approvalId: string) {
+    super(`Approval "${approvalId}" not found or has already been processed.`);
+  }
+}
+
+/**
+ * Raised when a pending approval is resumed but its tool can no longer be
+ * found among the agent's current tool sets — for example the tool was
+ * renamed or removed after the approval was created.
+ */
+export class ApprovalToolNotFoundError extends AgenticError {
+  constructor(readonly toolName: string) {
+    super(`Tool "${toolName}" was not found while resuming a pending approval.`);
+  }
+}
+
+/**
+ * Raised when resuming a suspended turn cannot locate the tool message it
+ * withheld — for example the session history was cleared or trimmed past the
+ * suspension point before the approval was resolved.
+ */
+export class ApprovalTranscriptMissingError extends AgenticError {
+  constructor(readonly toolCallId: string) {
+    super(
+      `Could not resume: no suspended tool call "${toolCallId}" was found in the ` +
+        `conversation history. The session may have been cleared or trimmed.`,
+    );
+  }
+}

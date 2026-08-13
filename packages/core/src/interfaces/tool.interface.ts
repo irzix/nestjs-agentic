@@ -15,6 +15,12 @@ export interface ToolParamSchema {
  */
 export interface ToolExecutionInput {
   args: Record<string, unknown>;
+  /**
+   * Identifier of the model tool call this invocation corresponds to, when
+   * known. Threaded through so a suspended `require_approval` result can be
+   * correlated back to the exact conversation entry it withheld.
+   */
+  toolCallId?: string;
 }
 
 export type ToolExecutionResult<T = unknown> =

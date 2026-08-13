@@ -50,7 +50,7 @@ flowchart TD
     INVOKE --> POLICIES[Evaluate tool policies]
     POLICIES -->|allow| METHOD[Invoke NestJS provider method]
     POLICIES -->|deny| DENIED[Return denied result]
-    POLICIES -->|require approval| PENDING[Store PendingApproval]
+    POLICIES -->|require approval| PENDING[Store serializable PendingApproval]
     METHOD --> RESULT[Return tool result to runtime]
     DENIED --> RESULT
     PENDING --> RESULT
@@ -80,7 +80,7 @@ ResolvedTool.execute({ args })
     |     return { success: false, status: 'denied', reason }
     |
     +-- require_approval
-    |     save PendingApproval
+    |     save PendingApproval (serializable: agentName, toolName, args, context, toolCallId)
     |     return { success: false, status: 'pending_approval', approvalId, reason }
     |
     +-- allow
@@ -102,26 +102,38 @@ sequenceDiagram
     participant Store as ApprovalStore
     participant Human
     participant Service as ApprovalService
+    participant Runner as AgentRunner
+    participant Executor as AgentExecutor
 
-    Runtime->>Tool: execute(args)
+    Runtime->>Tool: execute(args, toolCallId)
     Tool->>Policy: evaluate(context, toolName, args)
     Policy-->>Tool: require_approval
-    Tool->>Store: save PendingApproval with execute closure
+    Tool->>Store: save PendingApproval (serializable record)
     Tool-->>Runtime: pending_approval + approvalId
-    Human->>Service: approve(approvalId)
+    Human->>Service: approve(approvalId) or reject(approvalId)
     Service->>Store: get(approvalId)
-    Service->>Service: invoke stored closure
+    Service->>Runner: settleApproval(pending, decision)
+    Runner->>Tool: re-resolve tool via DI and invoke, or build a denial
+    Runner->>Executor: resume(history, toolCallId, outcome)
+    Executor->>Executor: splice outcome into the withheld tool message
+    Executor-->>Runner: model reacts, turn continues to completion
     Service->>Store: delete(approvalId)
 ```
 
-The current approval API protects an individual tool invocation, but it is not yet a durable workflow pause:
+`PendingApproval` is a plain serializable record — `agentName`, `toolName`, `args`, `context`, and the originating `toolCallId` — rather than a JavaScript closure over live objects. This makes two things possible that were not before:
 
-- continuation is stored as a process-local JavaScript closure;
-- a process restart cannot reconstruct that closure;
-- the built-in runtime suspends the turn and returns the `approvalId`, but approving it executes only the pending tool and does not resume the model loop;
-- durable checkpoint and exactly-once behavior are roadmap work.
+- **Persistence across restarts and instances.** Because there is no closure to keep alive, `ApprovalStore` implementations like `RedisApprovalStore` can persist a pending approval and resolve it from a different process than the one that created it. Resolving an approval re-resolves the agent, its tool sets, and the target method through Nest DI using `agentName` and `toolName`, rather than reusing a captured reference.
+- **Resuming the original model turn.** When a `PendingApproval` carries a `toolCallId` (always true for turns run by the built-in `AgentExecutor`), `AgentRunner.settleApproval()` loads the persisted transcript, splices the resolved outcome into the exact tool message that was withheld, and calls `AgentExecutor.resume()`, which continues the model-to-tool loop from there. The model sees the approval or denial as an ordinary tool result and can react to it — answer, request another tool, or suspend again — instead of the conversation simply ending at the suspension point. `ApprovalService.approve()`/`reject()` therefore return the full `AgentResult` for built-in-runtime turns, not the bare `ToolExecutionResult`.
 
-Applications should treat the current HITL implementation as experimental when restart recovery or multi-instance execution is required.
+Approvals created outside the built-in runtime (an agent driven entirely by a `RuntimeAdapter`, which has no `toolCallId` to resume against) keep returning the bare `ToolExecutionResult`, matching prior behavior for that path.
+
+What remains roadmap work:
+
+- exactly-once execution guarantees under concurrent or duplicate approval requests;
+- expiring an approval that is never resolved;
+- durable execution checkpoints for the in-flight turn itself, independent of the approval record (see [State, Sessions, and Memory](#state-sessions-and-memory)).
+
+Applications that need durability today should provide a persistent `ApprovalStore` (such as `RedisApprovalStore`) and a persistent `SessionStore`, since resuming a turn depends on both.
 
 ## Built-in Agent Runtime
 
@@ -204,7 +216,7 @@ These concepts exist today but do not yet form one execution lifecycle:
 | Runtime checkpointer | Adapter-specific checkpoint facility, currently separate from core stores. |
 | Memory packages | Explicitly constructed short-term, semantic, episodic, and scratchpad memory primitives. |
 
-`AgentRunner` persists conversation history through `SessionStore` so turns on the same session continue each other. It does not yet persist or recover an in-flight execution, so a process restart still loses a suspended turn. The durable execution milestone covers checkpoints, resumable approval, and audit events.
+`AgentRunner` persists conversation history through `SessionStore` so turns on the same session continue each other. Combined with a persistent `ApprovalStore`, a turn that suspends for approval can now be resumed from a different process, because both the transcript and the pending approval are durable, serializable records. What is not yet covered is a checkpoint of the execution loop's own in-flight state (iteration count, accumulated usage) independent of the transcript — a process crash mid-round, rather than at a suspension point, still loses that round. The durable execution milestone covers that remaining checkpoint gap and audit events.
 
 ## Orchestration: Current Behavior
 

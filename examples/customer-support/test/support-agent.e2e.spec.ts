@@ -81,11 +81,12 @@ async function main() {
     assert(false, 'Test 1: Multi-round loop', err.message);
   }
 
-  // TEST 2: Policy holds the refund for approval, then it applies once
+  // TEST 2: Policy holds the refund for approval, then approving resumes the
+  // turn so the model reacts to the outcome
   try {
-    const script = new ScriptedOpenAi().callTools([
-      { name: 'refundOrder', args: { orderId: '123', amount: 600 } },
-    ]);
+    const script = new ScriptedOpenAi()
+      .callTools([{ name: 'refundOrder', args: { orderId: '123', amount: 600 } }])
+      .reply('Refund of $600 for order 123 is complete.');
 
     const moduleRef = await bootstrap(script);
     const controller = moduleRef.get(SupportController, { strict: false });
@@ -107,10 +108,21 @@ async function main() {
     );
 
     const approved = (await controller.approve(pending.approvalId)) as any;
-    assert(approved?.success === true, 'Test 2d: Approval executed the pending tool');
+    assert(
+      approved?.toolCalls?.[0]?.result?.success === true,
+      'Test 2d: Approval executed the pending tool',
+    );
     assert(
       (await orders.findById('123'))?.status === 'refunded',
       'Test 2e: Side effect applied after approval',
+    );
+    assert(
+      approved?.output === 'Refund of $600 for order 123 is complete.',
+      'Test 2f: Approval resumed the model turn instead of just returning the tool result',
+    );
+    assert(
+      script.requests.length === 2,
+      'Test 2g: Exactly one additional model round issued on resume',
     );
 
     let secondApproval: unknown;
@@ -119,11 +131,45 @@ async function main() {
     } catch (err) {
       secondApproval = err;
     }
-    assert(secondApproval instanceof Error, 'Test 2f: Approval cannot be replayed');
+    assert(secondApproval instanceof Error, 'Test 2h: Approval cannot be replayed');
 
     await moduleRef.close();
   } catch (err: any) {
     assert(false, 'Test 2: Approval flow', err.message);
+  }
+
+  // TEST 2B: Rejecting a refund resumes the turn with a denial instead of
+  // executing the tool
+  try {
+    const script = new ScriptedOpenAi()
+      .callTools([{ name: 'refundOrder', args: { orderId: '456', amount: 900 } }])
+      .reply('I was unable to process that refund without approval.');
+
+    const moduleRef = await bootstrap(script);
+    const controller = moduleRef.get(SupportController, { strict: false });
+    const orders = moduleRef.get(OrderService, { strict: false });
+
+    const result = await controller.chat({
+      sessionId: 'sess_e2e_2b',
+      message: 'Refund $900 for order 456',
+      userId: 'user-1',
+    });
+
+    const pending = result.toolCalls[0]?.result as any;
+    const rejected = (await controller.reject(pending.approvalId)) as any;
+
+    assert(
+      (await orders.findById('456'))?.status === 'completed',
+      'Test 2B-a: Rejected refund never applies the side effect',
+    );
+    assert(
+      rejected?.output === 'I was unable to process that refund without approval.',
+      'Test 2B-b: Rejection resumed the model turn with a denial',
+    );
+
+    await moduleRef.close();
+  } catch (err: any) {
+    assert(false, 'Test 2B: Rejection flow', err.message);
   }
 
   // TEST 3: Security context is enforced by the service, and the refusal is

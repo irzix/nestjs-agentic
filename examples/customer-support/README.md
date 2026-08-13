@@ -9,7 +9,7 @@ It demonstrates a real model-to-tool loop. The model looks up an order, requests
 - `@ToolSet` and `@Tool`: `OrderTools` exposes `getOrder` and `refundOrder` from an ordinary `OrderService`.
 - `@UsePolicies`: `RefundLimitPolicy` requires approval for refunds above $500.
 - `@Context`: the caller identity is bound server-side, so the model cannot choose whose order to read.
-- `ApprovalService`: approves or rejects a withheld refund.
+- `ApprovalService`: approves or rejects a withheld refund. Either decision resumes the original model turn — the model sees the outcome and answers accordingly, instead of the conversation ending at the suspension point.
 - Execution budgets: `forRoot()` caps iterations, tool calls, and wall-clock time.
 
 ## Structure
@@ -63,8 +63,11 @@ curl -X POST http://localhost:3000/support/chat \
   -H 'Content-Type: application/json' \
   -d '{"sessionId":"s2","message":"Refund $600 for order 123","userId":"user-1"}'
 
-# Apply the withheld refund
+# Apply the withheld refund and resume the conversation
 curl -X POST http://localhost:3000/support/approve/<approvalId>
+
+# Or deny it, which also resumes the conversation with a denial
+curl -X POST http://localhost:3000/support/reject/<approvalId>
 ```
 
 Seeded orders: `123` for $600 and `456` for $200, both owned by `user-1`.
@@ -80,7 +83,8 @@ The suite boots this application and replaces only the model adapter with a scri
 Covered behavior:
 
 - multi-round loop with tool results fed back to the model
-- refunds above the limit suspend for approval, then apply exactly once
+- refunds above the limit suspend for approval, apply exactly once, then resume the model turn so it can answer
+- rejecting a refund resumes the turn with a denial instead of executing it
 - the caller identity is enforced by the service, not the model
 - incomplete tool arguments are rejected before the service runs and reported back to the model
 - streaming emits provider tokens plus ordered tool lifecycle events
@@ -88,4 +92,4 @@ Covered behavior:
 
 ## Current limitations
 
-Approval executes the withheld tool but does not resume the original model turn, and pending approvals live in memory, so they do not survive a restart. Durable resume is planned in the roadmap.
+`PendingApproval` records are serializable and can be persisted to a store like Redis via `RedisApprovalStore`, but this example still uses the process-local default (`InMemoryApprovalStore`), so a pending approval does not survive a restart unless a durable store is configured.
