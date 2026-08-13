@@ -3,6 +3,7 @@ import {
   AGENT_PROVIDERS,
   AGENTIC_OPTIONS,
   APPROVAL_STORE,
+  AUDIT_SINKS,
   POLICY_INSTANCES,
   SESSION_STORE,
 } from './constants';
@@ -14,6 +15,7 @@ import { LocalToolProvider } from './providers/local-tool.provider';
 import { AgentExecutor } from './services/agent-executor.service';
 import { AgentRunner, AgenticModuleOptions } from './services/agent-runner.service';
 import { ApprovalService } from './services/approval.service';
+import { AuditTrail } from './services/audit-trail.service';
 import { InMemoryApprovalStore } from './stores/in-memory-approval.store';
 import { InMemorySessionStore } from './stores/in-memory-session.store';
 import { InMemoryStateStore } from './stores/in-memory-state.store';
@@ -37,6 +39,7 @@ const CORE_PROVIDERS: Provider[] = [
   AgentExecutor,
   AgentRunner,
   ApprovalService,
+  AuditTrail,
   { provide: APPROVAL_STORE, useClass: InMemoryApprovalStore },
   { provide: SESSION_STORE, useClass: InMemorySessionStore },
 ];
@@ -63,6 +66,12 @@ export class AgenticModule {
       ? [{ provide: MODEL_ADAPTER, useValue: options.modelAdapter }]
       : [];
 
+    // Auditing stays opt-in: without a sink the token is left unprovided and
+    // AuditTrail records nothing.
+    const auditSinkProviders: Provider[] = options.auditSinks?.length
+      ? [{ provide: AUDIT_SINKS, useValue: options.auditSinks }]
+      : [];
+
     return {
       module: AgenticModule,
       global: true,
@@ -71,12 +80,14 @@ export class AgenticModule {
         stateStoreProvider,
         sessionStoreProvider,
         ...modelAdapterProviders,
+        ...auditSinkProviders,
         ...CORE_PROVIDERS,
       ],
       exports: [
         AgentRunner,
         AgentExecutor,
         ApprovalService,
+        AuditTrail,
         LocalToolProvider,
         ToolDiscoveryService,
         STATE_STORE,

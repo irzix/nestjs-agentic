@@ -478,14 +478,22 @@ interface ApprovalStore {
 
 type ApprovalDecision = { approved: true } | { approved: false; reason?: string };
 
+interface SettleApprovalOptions {
+  // Identity of the human or system making the decision, recorded on the
+  // audit trail. Omitting it records that an approval was settled but not
+  // who settled it.
+  actor?: AuditActor;
+  signal?: AbortSignal;
+}
+
 class ApprovalService {
   approve(
     approvalId: string,
-    options?: { signal?: AbortSignal },
+    options?: SettleApprovalOptions,
   ): Promise<AgentResult | ToolExecutionResult>;
   reject(
     approvalId: string,
-    options?: { reason?: string; signal?: AbortSignal },
+    options?: SettleApprovalOptions & { reason?: string },
   ): Promise<AgentResult | ToolExecutionResult>;
 }
 ```
@@ -679,6 +687,92 @@ new LoggingPolicy({
 ```
 
 This policy logs the attempted invocation and always returns `allow`. It is not a persistent audit store.
+
+## Audit Trail
+
+```typescript
+interface AuditActor {
+  userId?: string;
+  tenantId?: string;
+  roles?: string[];
+  label?: string; // for non-user actors, e.g. 'ops-console'
+}
+
+interface AuditEventBase {
+  at: Date;
+  sessionId: string;
+  traceId: string;
+  tenantId?: string;
+}
+
+type AuditEvent =
+  | ToolPolicyDecisionAuditEvent      // a call crossed the policy boundary
+  | ApprovalRequestedAuditEvent       // a call was withheld for approval
+  | ApprovalSettledAuditEvent         // a human approved or rejected it
+  | ApprovalExpiredAuditEvent         // a late decision was refused
+  | ApprovalSettlementFailedAuditEvent; // the tool failed after being claimed
+
+interface AuditSink {
+  record(event: AuditEvent): void | Promise<void>;
+}
+
+interface AuditOptions {
+  includeArgs?: boolean; // default false
+  sensitiveFields?: string[];
+  includeAllowDecisions?: boolean; // default false
+}
+
+class AuditTrail {
+  isEnabled(): boolean;
+  record(event: AuditEvent): Promise<void>;
+}
+```
+
+Records governance decisions — what was gated, why, and who resolved it — to every registered `AuditSink`.
+
+Auditing is **opt-in**: with no sink registered nothing is recorded. Register sinks through `auditSinks` on `forRoot()`, or the `AUDIT_SINKS` token directly.
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  auditSinks: [new ConsoleAuditSink(), new MyDatabaseAuditSink(repo)],
+  audit: { includeArgs: true, sensitiveFields: ['cardNumber'] },
+});
+```
+
+Recorded events:
+
+| Event | When |
+| --- | --- |
+| `tool_policy_decision` | a policy returned `deny`, `require_approval`, or (opt-in) `allow` |
+| `approval_requested` | a tool call was withheld and a pending approval created |
+| `approval_settled` | a human approved or rejected, and the outcome was applied |
+| `approval_expired` | a settlement was refused because the approval had expired |
+| `approval_settlement_failed` | the tool failed *after* the approval was claimed |
+
+`approval_settlement_failed` is the one worth alerting on: the claim already consumed the approval, so it cannot be retried, and the tool may have applied part of its side effect before failing.
+
+### Recording who decided
+
+Identity is application-owned — the framework never infers it. Pass `actor` when settling so the trail records who decided:
+
+```typescript
+await approvals.approve(approvalId, {
+  actor: { userId: req.user.id, roles: req.user.roles, label: 'ops-console' },
+});
+```
+
+`actor` is optional for compatibility, but omitting it records *that* an approval was settled without recording *who* settled it, which most review processes will not accept.
+
+### Defaults chosen for safety and volume
+
+- **Arguments are withheld** unless `includeArgs` is set. They can carry secrets and personal data, and an audit store usually outlives application logs. When enabled, `sensitiveFields` masks named fields, descending into nested objects.
+- **`allow` decisions are not recorded** unless `includeAllowDecisions` is set, because every framework-managed tool call produces one; that volume belongs to tracing rather than an audit trail.
+- **A failing sink never fails the operation.** Each sink is isolated, so an unreachable audit backend cannot fail an already-approved refund. The tradeoff is explicit: an entry can be lost. A sink that must not lose events should buffer durably itself.
+
+Built-in sinks: `InMemoryAuditSink` (tests and local inspection, with `all()` and `ofType()`) and `ConsoleAuditSink` (one greppable line per event). Neither is a queryable audit store; production deployments should write to a durable one.
+
+Model and tool execution traces and metrics are not part of this surface — they belong to the observability milestone.
 
 ## Adapter Contract Suite
 

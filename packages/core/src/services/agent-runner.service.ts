@@ -23,6 +23,8 @@ import type {
   AgentStreamEvent,
   ApprovalDecision,
   ApprovalStore,
+  AuditOptions,
+  AuditSink,
   ModelConfig,
   PendingApproval,
   ResolvedTool,
@@ -75,6 +77,17 @@ export interface AgenticModuleOptions {
    * decision via its own `ttlSeconds`. Unset means approvals never expire.
    */
   approvalTtlSeconds?: number;
+  /**
+   * Recording behavior for the audit trail. Only takes effect when at least one
+   * `AuditSink` is registered through the `AUDIT_SINKS` token.
+   */
+  audit?: AuditOptions;
+  /**
+   * Destinations for audit events. Equivalent to providing the `AUDIT_SINKS`
+   * token directly. Auditing is opt-in: with no sink the framework records
+   * nothing.
+   */
+  auditSinks?: AuditSink[];
 }
 
 export interface RunInput {

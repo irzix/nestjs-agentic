@@ -2,6 +2,7 @@ export * from './agent-context.interface';
 export * from './agent-stream.interface';
 export * from './agent.interface';
 export * from './approval.interface';
+export * from './audit.interface';
 export * from './execution.interface';
 export * from './model.interface';
 export * from './observer.interface';
