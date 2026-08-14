@@ -294,6 +294,7 @@ The current `@nestjs-agentic/adk` package is a synthetic runtime prototype, whil
 - [Architecture Guide](docs/ARCHITECTURE.md)
 - [Core API Reference](docs/API_REFERENCE.md)
 - [Contributing Guide](CONTRIBUTING.md)
+- [Community Discussions](https://github.com/irzix/nestjs-agentic/discussions)
 
 Runnable examples are available in [`examples`](examples).
 

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Ask a question or get help
+    url: https://github.com/irzix/nestjs-agentic/discussions/new?category=q-a
+    about: Ask technical questions or get troubleshooting help from the community.
+  - name: 💡 Propose a feature idea or RFC
+    url: https://github.com/irzix/nestjs-agentic/discussions/new?category=ideas
+    about: Discuss new ideas and architectural proposals before opening a formal issue.
+  - name: 🙌 Show off what you built
+    url: https://github.com/irzix/nestjs-agentic/discussions/new?category=show-and-tell
+    about: Share your agents and real-world use cases with the community.
