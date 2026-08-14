@@ -635,10 +635,17 @@ Exported implementations:
 | `InMemoryApprovalStore` | Default approval store; process-local. |
 | `RedisApprovalStore` | JSON-serializing `ApprovalStore` using a compatible Redis client. Supports optional TTL-based expiry. |
 | `InMemorySessionStore` | Default session store; process-local. |
+| `RedisSessionStore` | JSON-serializing `SessionStore` using a compatible Redis client. Supports optional TTL-based expiry. |
 | `InMemoryStateStore` | Default `STATE_STORE`; process-local. |
 | `RedisStateStore` | JSON-serializing `StateStore` using a compatible Redis client. |
 
 ```typescript
+const sessionStore = new RedisSessionStore({
+  client: redisClient,
+  keyPrefix: 'agentic:session:',
+  ttlSeconds: 86400, // optional 24-hour expiration
+});
+
 const stateStore = new RedisStateStore({
   client: redisClient,
   keyPrefix: 'agentic:state:',
@@ -646,6 +653,7 @@ const stateStore = new RedisStateStore({
 
 AgenticModule.forRoot({
   defaultModel: { provider: 'mock', model: 'deterministic' },
+  sessionStore,
   stateStore,
 });
 ```
@@ -892,6 +900,50 @@ if (result.failed > 0) {
 ```
 
 Set `supportsAtomicClaim: false` for a store that cannot claim atomically across concurrent callers — for example `RedisApprovalStore` behind a client without `GETDEL`, which falls back to a non-atomic get+del. The concurrency assertions are then skipped and counted separately rather than reported as failures. Both built-in stores, and the `GETDEL` fallback path, are verified against this suite.
+
+## `runSessionStoreContract`
+
+```typescript
+function runSessionStoreContract(
+  options: SessionStoreContractOptions,
+): Promise<SessionStoreContractResult>;
+
+interface SessionStoreContractOptions {
+  name: string;
+  createStore(): SessionStore | Promise<SessionStore>;
+  log?: boolean;
+}
+
+interface SessionStoreContractResult {
+  name: string;
+  passed: number;
+  failed: number;
+  skipped: number;
+  failures: string[];
+}
+```
+
+Runs the behavioral contract for a `SessionStore` to verify that an implementation accurately persists session records, isolates returned objects from internal store mutations, and maintains multi-tenant separation.
+
+Checked behavior:
+
+- `get()` returns `null` for an unknown session key
+- saved records round-trip with their `sessionId`, `messages`, and `updatedAt` timestamps intact
+- `delete()` removes the session record
+- subsequent `set()` overwrites the previous record
+- records across different tenants and sessions remain isolated
+- mutating a returned record does not mutate internal store state
+
+```typescript
+const result = await runSessionStoreContract({
+  name: 'MySessionStore',
+  createStore: () => new MySessionStore({ client: redis }),
+});
+
+if (result.failed > 0) {
+  throw new Error(result.failures.join('\n'));
+}
+```
 
 ## `MockModelAdapter`
 

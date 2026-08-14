@@ -18,3 +18,9 @@ export type {
   ApprovalStoreContractOptions,
   ApprovalStoreContractResult,
 } from './approval-store-contract';
+export { runSessionStoreContract } from './session-store-contract';
+export type {
+  SessionStoreContractOptions,
+  SessionStoreContractResult,
+} from './session-store-contract';
+
