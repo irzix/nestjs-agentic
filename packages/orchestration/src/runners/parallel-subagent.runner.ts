@@ -37,6 +37,8 @@ export class ParallelSubAgentRunner {
       aggregationStrategy: options?.aggregationStrategy ?? 'allSettled',
       timeoutMs: options?.timeoutMs ?? 30000,
       retriesPerSubAgent: options?.retriesPerSubAgent ?? 1,
+      maxConcurrency: options?.maxConcurrency,
+      signal: options?.signal,
       fallbackAgentName: options?.fallbackAgentName,
       customMergerFn: options?.customMergerFn,
     };
@@ -59,12 +61,49 @@ export class ParallelSubAgentRunner {
       return { combinedResponse: '', results: [], successCount: 0, failedCount: 0 };
     }
 
+    if (this.options.signal?.aborted) {
+      const abortedResults: SubAgentResult[] = tasks.map((t) => ({
+        agentName: t.agentName,
+        status: 'failed',
+        response: '',
+        toolCount: 0,
+        error: 'Parallel execution was aborted',
+      }));
+      return {
+        combinedResponse: 'Parallel execution was aborted',
+        results: abortedResults,
+        successCount: 0,
+        failedCount: tasks.length,
+      };
+    }
+
     const executeTaskWithRetryAndFallback = async (task: SubAgentTask): Promise<SubAgentResult> => {
+      const activeSignal = task.signal ?? this.options.signal;
+      if (activeSignal?.aborted) {
+        return {
+          agentName: task.agentName,
+          status: 'failed',
+          response: '',
+          toolCount: 0,
+          error: 'Sub-agent run was aborted',
+        };
+      }
+
       let attempts = 0;
       let lastResult: SubAgentResult | null = null;
       const maxAttempts = (this.options.retriesPerSubAgent ?? 1) + 1;
 
       while (attempts < maxAttempts) {
+        if (activeSignal?.aborted) {
+          return {
+            agentName: task.agentName,
+            status: 'failed',
+            response: '',
+            toolCount: 0,
+            error: 'Sub-agent run was aborted',
+          };
+        }
+
         attempts++;
 
         let timer: NodeJS.Timeout;
@@ -82,7 +121,7 @@ export class ParallelSubAgentRunner {
 
         try {
           lastResult = await Promise.race([
-            this.delegator.delegate(parentSessionId, parentSecurityContext, task),
+            this.delegator.delegate(parentSessionId, parentSecurityContext, task, undefined, activeSignal),
             timeoutPromise,
           ]);
         } finally {
@@ -101,7 +140,13 @@ export class ParallelSubAgentRunner {
           agentName: this.options.fallbackAgentName,
         };
 
-        const fallbackResult = await this.delegator.delegate(parentSessionId, parentSecurityContext, fallbackTask);
+        const fallbackResult = await this.delegator.delegate(
+          parentSessionId,
+          parentSecurityContext,
+          fallbackTask,
+          undefined,
+          activeSignal,
+        );
         if (fallbackResult.status === 'success') {
           return {
             ...fallbackResult,
@@ -113,7 +158,9 @@ export class ParallelSubAgentRunner {
       return lastResult!;
     };
 
-    const results = await Promise.all(tasks.map((t) => executeTaskWithRetryAndFallback(t)));
+    const results = await mapConcurrent(tasks, this.options.maxConcurrency, (t) =>
+      executeTaskWithRetryAndFallback(t),
+    );
     const successCount = results.filter((r) => r.status === 'success').length;
     const failedCount = results.length - successCount;
 
@@ -151,3 +198,30 @@ export class ParallelSubAgentRunner {
     };
   }
 }
+
+/**
+ * Runs tasks with a maximum concurrency limit.
+ */
+async function mapConcurrent<T, R>(
+  items: T[],
+  concurrency: number | undefined,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (!concurrency || concurrency >= items.length || concurrency < 1) {
+    return Promise.all(items.map(fn));
+  }
+
+  const results: R[] = new Array(items.length);
+  let currentIndex = 0;
+
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (currentIndex < items.length) {
+      const index = currentIndex++;
+      results[index] = await fn(items[index]);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+

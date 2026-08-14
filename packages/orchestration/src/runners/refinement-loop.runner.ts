@@ -36,6 +36,7 @@ export class RefinementLoopRunner {
     this.options = {
       maxIterations: options?.maxIterations ?? 3,
       qualityThreshold: options?.qualityThreshold ?? 0.85,
+      signal: options?.signal,
       satisfactionFn: options?.satisfactionFn,
     };
   }
@@ -59,9 +60,14 @@ export class RefinementLoopRunner {
     let currentMessage = initialTask.message;
     let satisfied = false;
     let iteration = 0;
+    const activeSignal = initialTask.signal ?? this.options.signal;
 
     const maxIter = this.options.maxIterations ?? 3;
     while (iteration < maxIter) {
+      if (activeSignal?.aborted) {
+        break;
+      }
+
       iteration++;
 
       const task: SubAgentTask = {
@@ -69,7 +75,13 @@ export class RefinementLoopRunner {
         message: currentMessage,
       };
 
-      const result = await this.delegator.delegate(parentSessionId, parentSecurityContext, task, iteration);
+      const result = await this.delegator.delegate(
+        parentSessionId,
+        parentSecurityContext,
+        task,
+        iteration,
+        activeSignal,
+      );
       history.push(result);
 
       if (result.status !== 'success') {

@@ -107,7 +107,7 @@ Goal: make executions safe to pause, recover, inspect, and operate in production
 
 Goal: build multi-agent coordination on the same guarantees as single-agent execution.
 
-- [ ] Add cancellation-aware fan-out and bounded parallel execution.
+- [x] Add cancellation-aware fan-out and bounded parallel execution (`maxConcurrency` and `AbortSignal` in `ParallelSubAgentRunner`).
 - [ ] Implement true first-success, fallback, and evaluator-driven aggregation semantics.
 - [ ] Make refinement loops budget-aware, checkpointed, and resumable.
 - [ ] Preserve immutable identity and tenant context while allowing explicit capability narrowing.

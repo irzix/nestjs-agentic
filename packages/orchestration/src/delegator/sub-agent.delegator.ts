@@ -38,6 +38,7 @@ export class SubAgentDelegator {
    * @param parentSecurityContext Security context inherited from the parent agent.
    * @param task Sub-agent task payload.
    * @param iteration Optional loop iteration index for versioned session memory namespacing.
+   * @param signal Optional AbortSignal to cancel execution.
    * @returns Promise resolving to the sub-agent execution result.
    */
   async delegate(
@@ -45,7 +46,19 @@ export class SubAgentDelegator {
     parentSecurityContext: ParentSecurityContext,
     task: SubAgentTask,
     iteration?: number,
+    signal?: AbortSignal,
   ): Promise<SubAgentResult> {
+    const activeSignal = task.signal ?? signal;
+    if (activeSignal?.aborted) {
+      return {
+        agentName: task.agentName,
+        status: 'failed',
+        response: '',
+        toolCount: 0,
+        error: 'Sub-agent run was aborted',
+      };
+    }
+
     const iterSuffix = iteration !== undefined ? `:iter_${iteration}` : '';
     const subSessionId = `${parentSessionId}:${task.agentName}${iterSuffix}`;
 
@@ -57,6 +70,7 @@ export class SubAgentDelegator {
           ...parentSecurityContext,
           ...(task.context || {}),
         },
+        signal: activeSignal,
       });
 
       return {
