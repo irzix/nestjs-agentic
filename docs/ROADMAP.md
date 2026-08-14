@@ -92,8 +92,9 @@ Goal: make executions safe to pause, recover, inspect, and operate in production
 - [ ] Add idempotency support and safe retry behavior for side-effecting tools. (Approval settlement is now atomic and at-most-once via `ApprovalStore.claim()`; idempotency keys for safely retrying a claimed-but-failed tool remain.)
 - [ ] Propagate cancellation and deadlines through model, tool, and persistence operations.
 - [ ] Add bounded concurrency and failure-aware retries.
-- [ ] Provide production-intent Redis and/or PostgreSQL persistence adapters. (`RedisApprovalStore` and `RedisStateStore` exist; `RedisApprovalStore` is covered by the `runApprovalStoreContract` suite. A session store and PostgreSQL adapters remain.)
+- [ ] Provide production-intent Redis and/or PostgreSQL persistence adapters. (`RedisApprovalStore`, `RedisSessionStore`, and `RedisStateStore` exist; `RedisApprovalStore` and `RedisSessionStore` are covered by their contract test suites. PostgreSQL adapters remain.)
 - [x] Publish a reusable behavioral contract-test suite for approval stores (`runApprovalStoreContract`).
+- [x] Publish a reusable behavioral contract-test suite for session stores (`runSessionStoreContract`).
 - [ ] Wire runtime observers and OpenTelemetry-compatible traces and metrics.
 - [ ] Record auditable model, tool, policy, and approval events. (Policy decisions and the full approval lifecycle are recorded through `AuditSink`, including the deciding actor. Model and tool execution events remain.)
 - [ ] Harden tenant and identity isolation throughout runtime execution.

@@ -230,7 +230,7 @@ These concepts exist today but do not yet form one execution lifecycle:
 
 | Concept | Current role |
 | --- | --- |
-| `SessionStore` | Conversation history for the built-in runtime, keyed by tenant and session, with an in-memory default. |
+| `SessionStore` | Conversation history for the built-in runtime, keyed by tenant and session, with in-memory and Redis implementations. |
 | `StateStore` | General state abstraction with in-memory and Redis implementations. It can be registered through `AgenticModule`. |
 | Runtime checkpointer | Adapter-specific checkpoint facility, currently separate from core stores. |
 | Memory packages | Explicitly constructed short-term, semantic, episodic, and scratchpad memory primitives. |
