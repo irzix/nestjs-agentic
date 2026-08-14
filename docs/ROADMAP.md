@@ -36,6 +36,7 @@ The current release line is `0.4.x`.
 | Additional model adapters | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same `ModelAdapter` contract. |
 | Human approval | Experimental | Approval and rejection APIs are available and the runtime suspends a turn on `require_approval`; durable pause and resume across process restarts is not yet supported. |
 | Legacy runtime adapters | Experimental | The ADK-named package is currently a synthetic runtime prototype. The LangGraph package provides limited LangChain and checkpointer compatibility, but full graph execution is not currently part of the adapter. |
+| Conversation history | Available | The built-in runtime replays and persists per-session conversation through `SessionStore`, scoped by tenant, with retention that keeps tool exchanges intact. |
 | Streaming and state | Experimental | Shared event and state abstractions exist, but adapter behavior and execution recovery are not yet unified. |
 | Memory and experience | Experimental | Memory, summarization, reflection, and experience primitives are available as opt-in packages. |
 | RAG | Experimental | Retrieval strategies, vector-store abstractions, and knowledge-graph primitives are available as opt-in packages. |
@@ -83,6 +84,7 @@ Goal: run a complete, governed agent turn without requiring LangGraph or another
 
 Goal: make executions safe to pause, recover, inspect, and operate in production environments.
 
+- [x] Persist and replay conversation history per session, scoped by tenant.
 - [ ] Introduce durable, versioned execution checkpoints and documented recovery behavior.
 - [ ] Replace process-local approval continuation with resumable human-in-the-loop execution.
 - [ ] Add idempotency support and safe retry behavior for side-effecting tools.
