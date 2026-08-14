@@ -62,7 +62,7 @@ Version numbers are directional and may change as the contracts are validated.
 
 ### 0.5 — Independent Agent Runtime
 
-> **Status: In progress**
+> **Status: Complete**
 
 Goal: run a complete, governed agent turn without requiring LangGraph or another orchestration framework.
 
@@ -74,9 +74,10 @@ Goal: run a complete, governed agent turn without requiring LangGraph or another
 - [x] Recover from tool exceptions by reporting them to the model, while keeping framework errors fatal.
 - [x] Ship at least one production-intent direct model adapter (`@nestjs-agentic/openai`).
 - [x] Publish a reusable behavioral contract-test suite for third-party adapters (`runModelAdapterContract`).
-- [ ] Evolve the ADK-named prototype and LangGraph compatibility package onto the common adapter contracts.
 
-**Exit criteria:** a NestJS application can run, stream, cancel, and test a governed tool-calling agent without adopting a graph framework.
+**Exit criteria met:** a NestJS application can run, stream, cancel, and test a governed tool-calling agent without adopting a graph framework.
+
+Migrating the ADK and LangGraph packages onto the common contracts was dropped from this milestone. Neither blocks the runtime, and the ADK package needs a naming decision before an implementation decision. Both moved to [Future Directions](#future-directions).
 
 ### 0.6 — Durable and Observable Execution
 
@@ -129,6 +130,8 @@ Integrations should follow the common contracts rather than define them. Work ma
 
 These are areas of interest, not committed release scope:
 
+- deciding the future of the ADK-named package: a real Google ADK integration, a rename that matches what it does, or deprecation
+- reworking the LangGraph package as a `ModelAdapter` over a LangChain model, rather than keeping a partial `RuntimeAdapter`
 - typed graph and workflow definitions
 - distributed execution workers
 - visual execution inspection and replay
