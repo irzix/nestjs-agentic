@@ -25,6 +25,7 @@ import type {
   ApprovalStore,
   AuditOptions,
   AuditSink,
+  IdempotencyStore,
   ModelConfig,
   PendingApproval,
   ResolvedTool,
@@ -68,6 +69,8 @@ export interface AgenticModuleOptions {
   toolErrorHandling?: ToolErrorHandling;
   /** Custom SessionStore used for conversation history. */
   sessionStore?: SessionStore;
+  /** Custom IdempotencyStore used for deduplicating tool executions. */
+  idempotencyStore?: IdempotencyStore;
   /** Conversation history behavior for the built-in runtime. */
   session?: SessionOptions;
   /**

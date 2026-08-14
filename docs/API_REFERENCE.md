@@ -636,6 +636,8 @@ Exported implementations:
 | `RedisApprovalStore` | JSON-serializing `ApprovalStore` using a compatible Redis client. Supports optional TTL-based expiry. |
 | `InMemorySessionStore` | Default session store; process-local. |
 | `RedisSessionStore` | JSON-serializing `SessionStore` using a compatible Redis client. Supports optional TTL-based expiry. |
+| `InMemoryIdempotencyStore` | Default `IDEMPOTENCY_STORE`; process-local. |
+| `RedisIdempotencyStore` | JSON-serializing `IdempotencyStore` using a compatible Redis client. |
 | `InMemoryStateStore` | Default `STATE_STORE`; process-local. |
 | `RedisStateStore` | JSON-serializing `StateStore` using a compatible Redis client. |
 
@@ -695,6 +697,16 @@ new LoggingPolicy({
 ```
 
 This policy logs the attempted invocation and always returns `allow`. It is not a persistent audit store.
+
+### `IdempotencyPolicy`
+
+```typescript
+new IdempotencyPolicy({
+  required: true, // denies execution if no idempotency key is found
+});
+```
+
+Enforces that tool calls carry an `idempotencyKey` in arguments or context, guarding side-effecting operations against accidental non-idempotent execution.
 
 ## Audit Trail
 
@@ -943,6 +955,23 @@ const result = await runSessionStoreContract({
 if (result.failed > 0) {
   throw new Error(result.failures.join('\n'));
 }
+```
+
+## `runIdempotencyStoreContract`
+
+```typescript
+function runIdempotencyStoreContract(
+  options: IdempotencyStoreContractOptions,
+): Promise<IdempotencyStoreContractResult>;
+```
+
+Runs behavioral assertions on an `IdempotencyStore` implementation verifying record persistence, result integrity, `Date` revival, deletion, and mutation isolation.
+
+```typescript
+const result = await runIdempotencyStoreContract({
+  name: 'MyIdempotencyStore',
+  createStore: () => new MyIdempotencyStore({ client: redis }),
+});
 ```
 
 ## `MockModelAdapter`

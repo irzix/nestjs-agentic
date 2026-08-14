@@ -1,7 +1,7 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
-import { APPROVAL_STORE, POLICY_INSTANCES } from '../constants';
+import { APPROVAL_STORE, IDEMPOTENCY_STORE, POLICY_INSTANCES } from '../constants';
 import { ApprovalToolNotFoundError, PolicyNotRegisteredError } from '../errors';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
@@ -9,6 +9,7 @@ import { auditEnvelope } from '../interfaces';
 import type {
   AgentContext,
   ApprovalStore,
+  IdempotencyStore,
   ResolvedTool,
   ToolExecutionResult,
   ToolParamSchema,
@@ -26,6 +27,7 @@ export class LocalToolProvider {
     private readonly discovery: ToolDiscoveryService,
     private readonly moduleRef: ModuleRef,
     @Optional() private readonly audit?: AuditTrail,
+    @Optional() @Inject(IDEMPOTENCY_STORE) private readonly idempotencyStore?: IdempotencyStore,
   ) {}
 
   private getPolicyMap(): Map<Function | string, ToolPolicy> {
@@ -113,7 +115,26 @@ export class LocalToolProvider {
     if (!tool) {
       throw new ApprovalToolNotFoundError(toolName);
     }
-    return this.invokeMethod(tool, args, agentContext);
+
+    const idempotencyKey =
+      (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
+    if (idempotencyKey && this.idempotencyStore) {
+      const cached = await this.idempotencyStore.get(idempotencyKey);
+      if (cached) return cached.result;
+    }
+
+    const result = await this.invokeMethod(tool, args, agentContext);
+
+    if (idempotencyKey && this.idempotencyStore && result.success) {
+      await this.idempotencyStore.save({
+        key: idempotencyKey,
+        toolName,
+        result,
+        createdAt: new Date(),
+      });
+    }
+
+    return result;
   }
 
   private discoverToolByName(
@@ -179,6 +200,13 @@ export class LocalToolProvider {
         args: Record<string, unknown>;
         toolCallId?: string;
       }): Promise<ToolExecutionResult> => {
+        const idempotencyKey =
+          (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
+        if (idempotencyKey && this.idempotencyStore) {
+          const cached = await this.idempotencyStore.get(idempotencyKey);
+          if (cached) return cached.result;
+        }
+
         const policyMap = this.getPolicyMap();
 
         for (const Constructor of allPolicyConstructors) {
@@ -275,7 +303,18 @@ export class LocalToolProvider {
           });
         }
 
-        return this.invokeMethod(tool, args, agentContext);
+        const executionResult = await this.invokeMethod(tool, args, agentContext);
+
+        if (idempotencyKey && this.idempotencyStore && executionResult.success) {
+          await this.idempotencyStore.save({
+            key: idempotencyKey,
+            toolName: tool.toolName,
+            result: executionResult,
+            createdAt: new Date(),
+          });
+        }
+
+        return executionResult;
       },
     };
   }
