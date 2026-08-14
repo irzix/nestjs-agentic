@@ -297,6 +297,14 @@ The current `@nestjs-agentic/adk` package is a synthetic runtime prototype, whil
 
 Runnable examples are available in [`examples`](examples).
 
+## Sponsorship & Support
+
+`nestjs-agentic` is an open-source framework dedicated to production-grade, governed AI agent systems in NestJS. If you or your organization find value in the project, consider supporting ongoing development:
+
+- 💖 **[Sponsor on GitHub](https://github.com/sponsors/irzix)**
+- ⭐ Star the repository on GitHub
+- 🤝 [Contribute](CONTRIBUTING.md) features, adapters, and improvements
+
 ## License
 
 [MIT](LICENSE) © [irzix](https://github.com/irzix)
