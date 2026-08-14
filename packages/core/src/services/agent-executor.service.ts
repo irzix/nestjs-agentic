@@ -47,6 +47,12 @@ export interface AgentExecutionInput {
   /** How exceptions thrown by tools are treated. Default: `report` */
   toolErrorHandling?: ToolErrorHandling;
   signal?: AbortSignal;
+  /**
+   * Receives the conversation once the turn ends, either with a final answer or
+   * suspended for approval. Not called when the turn fails, so a partial
+   * transcript is never persisted.
+   */
+  onTranscript?(messages: ModelMessage[]): void | Promise<void>;
 }
 
 /** Payload reported to the model, and recorded, when a tool throws. */
@@ -116,7 +122,9 @@ export class AgentExecutor {
         );
 
         if (finished) {
-          return this.toResult(input.sessionId, state, response.content);
+          const result = this.toResult(input.sessionId, state, response.content);
+          await this.publishTranscript(input, state, result.output);
+          return result;
         }
       }
     } finally {
@@ -175,11 +183,9 @@ export class AgentExecutor {
         }
 
         if (finished) {
-          yield {
-            type: 'complete',
-            sessionId: input.sessionId,
-            output: this.resolveOutput(state, response.content),
-          };
+          const output = this.resolveOutput(state, response.content);
+          await this.publishTranscript(input, state, output);
+          yield { type: 'complete', sessionId: input.sessionId, output };
           return;
         }
       }
@@ -470,6 +476,25 @@ export class AgentExecutor {
       toolName: call.name,
       content: JSON.stringify(payload),
     });
+  }
+
+  /**
+   * Hands the completed conversation to the caller for persistence, appending
+   * the final answer so the next turn sees what the agent replied.
+   */
+  private async publishTranscript(
+    input: AgentExecutionInput,
+    state: ExecutionState,
+    output: string,
+  ): Promise<void> {
+    if (!input.onTranscript) return;
+
+    const messages = [...state.messages];
+    if (output) {
+      messages.push({ role: 'assistant', content: output });
+    }
+
+    await input.onTranscript(messages);
   }
 
   private toResult(
