@@ -88,11 +88,10 @@ Goal: make executions safe to pause, recover, inspect, and operate in production
 
 - [x] Persist and replay conversation history per session, scoped by tenant.
 - [ ] Introduce durable, versioned execution checkpoints and documented recovery behavior. (Approval suspensions now carry a versioned `ApprovalCheckpoint` with documented recovery and refusal behavior; checkpointing a turn that is still mid-round remains.)
-- [x] Replace process-local approval continuation with resumable human-in-the-loop execution: `PendingApproval` is a serializable record, `RedisApprovalStore` supports durable storage, and resolving an approval resumes the suspended model turn instead of only returning the bare tool result.
-- [ ] Add idempotency support and safe retry behavior for side-effecting tools. (Approval settlement is now atomic and at-most-once via `ApprovalStore.claim()`; idempotency keys for safely retrying a claimed-but-failed tool remain.)
+- [x] Add idempotency support and safe retry behavior for side-effecting tools: `IdempotencyStore`, `RedisIdempotencyStore`, `IdempotencyPolicy`, and `runIdempotencyStoreContract` guard tool execution and deduplicate repeated calls.
 - [ ] Propagate cancellation and deadlines through model, tool, and persistence operations.
 - [ ] Add bounded concurrency and failure-aware retries.
-- [ ] Provide production-intent Redis and/or PostgreSQL persistence adapters. (`RedisApprovalStore`, `RedisSessionStore`, and `RedisStateStore` exist; `RedisApprovalStore` and `RedisSessionStore` are covered by their contract test suites. PostgreSQL adapters remain.)
+- [ ] Provide production-intent Redis and/or PostgreSQL persistence adapters. (`RedisApprovalStore`, `RedisSessionStore`, `RedisIdempotencyStore`, and `RedisStateStore` exist; all stores are covered by their contract test suites. PostgreSQL adapters remain.)
 - [x] Publish a reusable behavioral contract-test suite for approval stores (`runApprovalStoreContract`).
 - [x] Publish a reusable behavioral contract-test suite for session stores (`runSessionStoreContract`).
 - [ ] Wire runtime observers and OpenTelemetry-compatible traces and metrics.

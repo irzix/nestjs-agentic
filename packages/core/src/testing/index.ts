@@ -23,4 +23,10 @@ export type {
   SessionStoreContractOptions,
   SessionStoreContractResult,
 } from './session-store-contract';
+export { runIdempotencyStoreContract } from './idempotency-store-contract';
+export type {
+  IdempotencyStoreContractOptions,
+  IdempotencyStoreContractResult,
+} from './idempotency-store-contract';
+
 

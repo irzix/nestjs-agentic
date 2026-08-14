@@ -4,6 +4,7 @@ import {
   AGENTIC_OPTIONS,
   APPROVAL_STORE,
   AUDIT_SINKS,
+  IDEMPOTENCY_STORE,
   POLICY_INSTANCES,
   SESSION_STORE,
 } from './constants';
@@ -17,6 +18,7 @@ import { AgentRunner, AgenticModuleOptions } from './services/agent-runner.servi
 import { ApprovalService } from './services/approval.service';
 import { AuditTrail } from './services/audit-trail.service';
 import { InMemoryApprovalStore } from './stores/in-memory-approval.store';
+import { InMemoryIdempotencyStore } from './stores/in-memory-idempotency.store';
 import { InMemorySessionStore } from './stores/in-memory-session.store';
 import { InMemoryStateStore } from './stores/in-memory-state.store';
 
@@ -42,6 +44,7 @@ const CORE_PROVIDERS: Provider[] = [
   AuditTrail,
   { provide: APPROVAL_STORE, useClass: InMemoryApprovalStore },
   { provide: SESSION_STORE, useClass: InMemorySessionStore },
+  { provide: IDEMPOTENCY_STORE, useClass: InMemoryIdempotencyStore },
 ];
 
 @Module({})
@@ -59,6 +62,10 @@ export class AgenticModule {
     const sessionStoreProvider: Provider = options.sessionStore
       ? { provide: SESSION_STORE, useValue: options.sessionStore }
       : { provide: SESSION_STORE, useClass: InMemorySessionStore };
+
+    const idempotencyStoreProvider: Provider = options.idempotencyStore
+      ? { provide: IDEMPOTENCY_STORE, useValue: options.idempotencyStore }
+      : { provide: IDEMPOTENCY_STORE, useClass: InMemoryIdempotencyStore };
 
     // Registering the adapter here keeps it resolvable by AgentExecutor, which is
     // instantiated inside this module rather than in the consuming module.
@@ -79,6 +86,7 @@ export class AgenticModule {
         { provide: AGENTIC_OPTIONS, useValue: options },
         stateStoreProvider,
         sessionStoreProvider,
+        idempotencyStoreProvider,
         ...modelAdapterProviders,
         ...auditSinkProviders,
         ...CORE_PROVIDERS,
@@ -93,6 +101,7 @@ export class AgenticModule {
         STATE_STORE,
         APPROVAL_STORE,
         SESSION_STORE,
+        IDEMPOTENCY_STORE,
         ...(options.modelAdapter ? [MODEL_ADAPTER] : []),
       ],
     };

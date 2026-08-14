@@ -19,6 +19,14 @@ export const APPROVAL_STORE = Symbol('APPROVAL_STORE');
 export const SESSION_STORE = Symbol('SESSION_STORE');
 
 /**
+ * Injection token for the IdempotencyStore implementation.
+ * Defaults to InMemoryIdempotencyStore when not explicitly provided.
+ * @example { provide: IDEMPOTENCY_STORE, useClass: RedisIdempotencyStore }
+ */
+export const IDEMPOTENCY_STORE = Symbol('IDEMPOTENCY_STORE');
+
+
+/**
  * Injection token for registering AgentObserver instances.
  * Accepts a multi-provider array.
  * @example { provide: AGENT_OBSERVERS, useClass: LangfuseObserver, multi: true }

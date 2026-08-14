@@ -4,6 +4,7 @@ export * from './agent.interface';
 export * from './approval.interface';
 export * from './audit.interface';
 export * from './execution.interface';
+export * from './idempotency.interface';
 export * from './model.interface';
 export * from './observer.interface';
 export * from './policy.interface';
