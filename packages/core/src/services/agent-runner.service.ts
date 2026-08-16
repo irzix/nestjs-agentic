@@ -498,10 +498,10 @@ export class AgentRunner {
 
     const res = await adapter.execute(adapterInput);
     for (const toolCall of res.toolCalls) {
-      yield { type: 'action_call', toolName: toolCall.toolName, args: toolCall.args };
       yield { type: 'tool_start', toolName: toolCall.toolName, args: toolCall.args };
-      yield { type: 'action_observation', toolName: toolCall.toolName, result: toolCall.result as any };
+      yield { type: 'action_call', toolName: toolCall.toolName, args: toolCall.args };
       yield { type: 'tool_result', toolName: toolCall.toolName, result: toolCall.result as any };
+      yield { type: 'action_observation', toolName: toolCall.toolName, result: toolCall.result as any };
     }
     yield { type: 'token', text: res.output };
     yield { type: 'final_answer', sessionId: res.sessionId, output: res.output, usage: res.usage };

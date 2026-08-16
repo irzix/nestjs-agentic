@@ -87,11 +87,11 @@ export async function runStreamingTests() {
     }
 
     assert(events.length >= 6, 'Test 1a: Stream emitted complete ReAct lifecycle event sequence');
-    assert(events[0].type === 'action_call', 'Test 1b: First event is ReAct "action_call"');
-    assert((events[0] as any).toolName === 'mockTool', 'Test 1c: "action_call" carries toolName');
-    assert(events[1].type === 'tool_start', 'Test 1d: Second event is "tool_start" for backwards compatibility');
-    assert(events[2].type === 'action_observation', 'Test 1e: Third event is ReAct "action_observation"');
-    assert(events[3].type === 'tool_result', 'Test 1f: Fourth event is "tool_result"');
+    assert(events[0].type === 'tool_start', 'Test 1b: First event is "tool_start" for backwards compatibility');
+    assert(events[1].type === 'action_call', 'Test 1c: Second event is ReAct "action_call"');
+    assert((events[1] as any).toolName === 'mockTool', 'Test 1d: "action_call" carries toolName');
+    assert(events[2].type === 'tool_result', 'Test 1e: Third event is "tool_result"');
+    assert(events[3].type === 'action_observation', 'Test 1f: Fourth event is ReAct "action_observation"');
     
     const finalAnswerIdx = events.findIndex((e) => e.type === 'final_answer');
     const completeIdx = events.findIndex((e) => e.type === 'complete');

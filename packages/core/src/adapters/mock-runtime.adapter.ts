@@ -65,8 +65,8 @@ export class MockRuntimeAdapter implements RuntimeAdapter {
         );
       }
 
-      yield { type: 'action_call', toolName: scenario.toolName, args: scenario.args };
       yield { type: 'tool_start', toolName: scenario.toolName, args: scenario.args };
+      yield { type: 'action_call', toolName: scenario.toolName, args: scenario.args };
 
       const result = await tool.execute({ args: scenario.args });
 
@@ -78,8 +78,8 @@ export class MockRuntimeAdapter implements RuntimeAdapter {
           reason: result.reason,
         };
       } else {
-        yield { type: 'action_observation', toolName: scenario.toolName, result };
         yield { type: 'tool_result', toolName: scenario.toolName, result };
+        yield { type: 'action_observation', toolName: scenario.toolName, result };
       }
 
       const text = `Mock executed tool "${scenario.toolName}"`;

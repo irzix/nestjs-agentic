@@ -568,13 +568,13 @@ export class AgentExecutor {
       }
 
       events?.push({
-        type: 'action_call',
+        type: 'tool_start',
         id: call.id,
         toolName: tool.name,
         args: validation.args,
       });
       events?.push({
-        type: 'tool_start',
+        type: 'action_call',
         id: call.id,
         toolName: tool.name,
         args: validation.args,
@@ -621,8 +621,8 @@ export class AgentExecutor {
         return true;
       }
 
-      events?.push({ type: 'action_observation', id: call.id, toolName: tool.name, result });
       events?.push({ type: 'tool_result', id: call.id, toolName: tool.name, result });
+      events?.push({ type: 'action_observation', id: call.id, toolName: tool.name, result });
     }
 
     return false;
