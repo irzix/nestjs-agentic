@@ -17,21 +17,21 @@ Each specification document provides conceptual foundations, seminal research ci
 
 | # | Specification Document | Key Educational & Architectural Topics | Academic Research Foundation (arXiv) |
 |---|---|---|---|
-| **00** | [00-system-requirements-and-scenarios.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/00-system-requirements-and-scenarios.spec.md) | GitHub PR workflows, user personas, triggers (`@njent review`, `@njent apply-fixes`), and the functional requirements matrix (FR-01 to FR-12). | PRD / Industry Standard |
-| **01** | [01-foundations-and-agent-lifecycle.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/01-foundations-and-agent-lifecycle.spec.md) | How LLMs work, What is an Agent, State vs. Memory vs. Knowledge vs. Context, What is a Chunk, The Governed Agent Lifecycle. | [Yao et al. (ICLR 2023) arXiv:2210.03629](https://arxiv.org/abs/2210.03629) *(ReAct)* |
-| **02** | [02-tools-actions-and-mcp.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/02-tools-actions-and-mcp.spec.md) | Tool calling protocol, Model Context Protocol (MCP), Native Tools vs. MCP, Deterministic conditions, Parameter schema validation. | [Schick et al. (Meta AI) arXiv:2302.04761](https://arxiv.org/abs/2302.04761) *(Toolformer)* |
-| **03** | [03-agent-architecture-and-flows.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/03-agent-architecture-and-flows.spec.md) | Agent flows vs. Orchestration, Nodes & edges, Sub-agent taxonomy, Dynamic agent delegation, Architectural trade-offs. | [Hong et al. (ICLR 2024) arXiv:2308.00352](https://arxiv.org/abs/2308.00352) *(MetaGPT)* |
-| **04** | [04-context-engineering.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/04-context-engineering.spec.md) | Context windows, "Lost in the middle", Context selection & noise stripping, Contextual compression, Sub-agent context isolation. | [Liu et al. (Stanford/Berkeley) arXiv:2307.03172](https://arxiv.org/abs/2307.03172) *(Lost in the Middle)* |
-| **05** | [05-knowledge-and-rag.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/05-knowledge-and-rag.spec.md) | RAG architectures, AST-aware code chunking, Parent-child hydration, Hybrid search (Dense Vector + BM25), Graph-RAG, Cross-encoder reranking. | [Lewis et al. (NeurIPS 2020) arXiv:2005.11401](https://arxiv.org/abs/2005.11401) *(RAG)* & [arXiv:2404.16130](https://arxiv.org/abs/2404.16130) *(GraphRAG)* |
-| **06** | [06-memory-and-experience.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/06-memory-and-experience.spec.md) | All 5 memory types (Short-term, Long-term, Semantic, Episodic, Procedural), Reflection loops, Experience records, Maintainer feedback. | [Park et al. (Stanford) arXiv:2304.03442](https://arxiv.org/abs/2304.03442) & [Shinn et al. (NeurIPS 2023) arXiv:2303.11366](https://arxiv.org/abs/2303.11366) *(Reflexion)* |
-| **07** | [07-reliability-and-failure-recovery.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/07-reliability-and-failure-recovery.spec.md) | Agent failure modes, Exponential retries, Idempotency stores, Timeouts & AbortSignals, Self-correction, Human-in-the-loop durability. | [Packer et al. (UC Berkeley) arXiv:2310.08560](https://arxiv.org/abs/2310.08560) *(MemGPT)* |
-| **08** | [08-multi-agent-orchestration.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/08-multi-agent-orchestration.spec.md) | Why multiple agents, Supervisor-worker topology, Specialist sub-agents, Parallel fan-out execution, Consensus aggregation. | [Du et al. (MIT) arXiv:2305.14325](https://arxiv.org/abs/2305.14325) & [Li et al. arXiv:2402.05120](https://arxiv.org/abs/2402.05120) *(More Agents)* |
-| **09** | [09-evaluation-quality-gates.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/09-evaluation-quality-gates.spec.md) | Why agent evaluation is different, Step-level vs. Trajectory evaluation, LLM-as-a-Judge rubrics, Automated test validation, Benchmarks. | [Zheng et al. (NeurIPS 2023) arXiv:2306.05685](https://arxiv.org/abs/2306.05685) *(LLM-as-a-Judge)* |
-| **10** | [10-observability-and-monitoring.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/10-observability-and-monitoring.spec.md) | Multi-turn semantic tracing, Structured audit sinks, Token & cost monitoring, Latency metrics, Prometheus/OTel schemas. | [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) |
-| **11** | [11-security-and-guardrails.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/11-security-and-guardrails.spec.md) | Threat taxonomy, Indirect prompt injection defense, XML boundary delimitation, Collaborator RBAC, Pre-egress secret redaction. | [Greshake et al. (USENIX 2023) arXiv:2302.12173](https://arxiv.org/abs/2302.12173) & [NVIDIA arXiv:2310.10501](https://arxiv.org/abs/2310.10501) |
-| **12** | [12-governance-and-policies.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/12-governance-and-policies.spec.md) | Code boundaries vs. prompt instructions, Policy engine (`allow`/`deny`/`require_approval`), Suspension checkpoints, Settlement APIs. | [NIST AI Risk Management Framework 1.0](https://doi.org/10.6028/NIST.AI.100-1) |
-| **13** | [13-performance-and-optimization.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/13-performance-and-optimization.spec.md) | Latency-cost-quality triangle, Model tiering & routing, Prompt KV-caching, Bounded concurrency fan-out. | [Chen et al. (Stanford) arXiv:2305.05176](https://arxiv.org/abs/2305.05176) *(FrugalGPT)* |
-| **14** | [14-production-agent-systems.spec.md](file:///Users/anette/Desktop/workspace/nestjs-agentic/examples/code-review-agent/specs/14-production-agent-systems.spec.md) | The 5 production pillars, Distributed recovery in Kubernetes, BullMQ queue decoupling, Continuous improvement loops. | [Xi et al. arXiv:2309.07864](https://arxiv.org/abs/2309.07864) *(Agent Survey)* & [Madaan et al. arXiv:2303.17651](https://arxiv.org/abs/2303.17651) |
+| **00** | [00-system-requirements-and-scenarios.spec.md](specs/00-system-requirements-and-scenarios.spec.md) | GitHub PR workflows, user personas, triggers (`@njent review`, `@njent apply-fixes`), and the functional requirements matrix (FR-01 to FR-12). | PRD / Industry Standard |
+| **01** | [01-foundations-and-agent-lifecycle.spec.md](specs/01-foundations-and-agent-lifecycle.spec.md) | How LLMs work, What is an Agent, State vs. Memory vs. Knowledge vs. Context, What is a Chunk, The Governed Agent Lifecycle. | [Yao et al. (ICLR 2023) arXiv:2210.03629](https://arxiv.org/abs/2210.03629) *(ReAct)* |
+| **02** | [02-tools-actions-and-mcp.spec.md](specs/02-tools-actions-and-mcp.spec.md) | Tool calling protocol, Model Context Protocol (MCP), Native Tools vs. MCP, Deterministic conditions, Parameter schema validation. | [Schick et al. (Meta AI) arXiv:2302.04761](https://arxiv.org/abs/2302.04761) *(Toolformer)* |
+| **03** | [03-agent-architecture-and-flows.spec.md](specs/03-agent-architecture-and-flows.spec.md) | Agent flows vs. Orchestration, Nodes & edges, Sub-agent taxonomy, Dynamic agent delegation, Architectural trade-offs. | [Hong et al. (ICLR 2024) arXiv:2308.00352](https://arxiv.org/abs/2308.00352) *(MetaGPT)* |
+| **04** | [04-context-engineering.spec.md](specs/04-context-engineering.spec.md) | Context windows, "Lost in the middle", Context selection & noise stripping, Contextual compression, Sub-agent context isolation. | [Liu et al. (Stanford/Berkeley) arXiv:2307.03172](https://arxiv.org/abs/2307.03172) *(Lost in the Middle)* |
+| **05** | [05-knowledge-and-rag.spec.md](specs/05-knowledge-and-rag.spec.md) | RAG architectures, AST-aware code chunking, Parent-child hydration, Hybrid search (Dense Vector + BM25), Graph-RAG, Cross-encoder reranking. | [Lewis et al. (NeurIPS 2020) arXiv:2005.11401](https://arxiv.org/abs/2005.11401) *(RAG)* & [arXiv:2404.16130](https://arxiv.org/abs/2404.16130) *(GraphRAG)* |
+| **06** | [06-memory-and-experience.spec.md](specs/06-memory-and-experience.spec.md) | All 5 memory types (Short-term, Long-term, Semantic, Episodic, Procedural), Reflection loops, Experience records, Maintainer feedback. | [Park et al. (Stanford) arXiv:2304.03442](https://arxiv.org/abs/2304.03442) & [Shinn et al. (NeurIPS 2023) arXiv:2303.11366](https://arxiv.org/abs/2303.11366) *(Reflexion)* |
+| **07** | [07-reliability-and-failure-recovery.spec.md](specs/07-reliability-and-failure-recovery.spec.md) | Agent failure modes, Exponential retries, Idempotency stores, Timeouts & AbortSignals, Self-correction, Human-in-the-loop durability. | [Packer et al. (UC Berkeley) arXiv:2310.08560](https://arxiv.org/abs/2310.08560) *(MemGPT)* |
+| **08** | [08-multi-agent-orchestration.spec.md](specs/08-multi-agent-orchestration.spec.md) | Why multiple agents, Supervisor-worker topology, Specialist sub-agents, Parallel fan-out execution, Consensus aggregation. | [Du et al. (MIT) arXiv:2305.14325](https://arxiv.org/abs/2305.14325) & [Li et al. arXiv:2402.05120](https://arxiv.org/abs/2402.05120) *(More Agents)* |
+| **09** | [09-evaluation-quality-gates.spec.md](specs/09-evaluation-quality-gates.spec.md) | Why agent evaluation is different, Step-level vs. Trajectory evaluation, LLM-as-a-Judge rubrics, Automated test validation, Benchmarks. | [Zheng et al. (NeurIPS 2023) arXiv:2306.05685](https://arxiv.org/abs/2306.05685) *(LLM-as-a-Judge)* |
+| **10** | [10-observability-and-monitoring.spec.md](specs/10-observability-and-monitoring.spec.md) | Multi-turn semantic tracing, Structured audit sinks, Token & cost monitoring, Latency metrics, Prometheus/OTel schemas. | [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) |
+| **11** | [11-security-and-guardrails.spec.md](specs/11-security-and-guardrails.spec.md) | Threat taxonomy, Indirect prompt injection defense, XML boundary delimitation, Collaborator RBAC, Pre-egress secret redaction. | [Greshake et al. (USENIX 2023) arXiv:2302.12173](https://arxiv.org/abs/2302.12173) & [NVIDIA arXiv:2310.10501](https://arxiv.org/abs/2310.10501) |
+| **12** | [12-governance-and-policies.spec.md](specs/12-governance-and-policies.spec.md) | Code boundaries vs. prompt instructions, Policy engine (`allow`/`deny`/`require_approval`), Suspension checkpoints, Settlement APIs. | [NIST AI Risk Management Framework 1.0](https://doi.org/10.6028/NIST.AI.100-1) |
+| **13** | [13-performance-and-optimization.spec.md](specs/13-performance-and-optimization.spec.md) | Latency-cost-quality triangle, Model tiering & routing, Prompt KV-caching, Bounded concurrency fan-out. | [Chen et al. (Stanford) arXiv:2305.05176](https://arxiv.org/abs/2305.05176) *(FrugalGPT)* |
+| **14** | [14-production-agent-systems.spec.md](specs/14-production-agent-systems.spec.md) | The 5 production pillars, Distributed recovery in Kubernetes, BullMQ queue decoupling, Continuous improvement loops. | [Xi et al. arXiv:2309.07864](https://arxiv.org/abs/2309.07864) *(Agent Survey)* & [Madaan et al. arXiv:2303.17651](https://arxiv.org/abs/2303.17651) |
 
 ---
 
@@ -95,6 +95,23 @@ flowchart TD
 
 ---
 
+## 🛠️ Infrastructure Prerequisites & Quickstart
+
+To run the Njent infrastructure locally:
+* **PostgreSQL 16+** with `pgvector` extension installed.
+* **Redis 7+** for session durability, approval checkpoints, and atomic idempotency.
+* **Docker** for executing the sandboxed Model Context Protocol (MCP) test runner.
+
+```bash
+# Spin up PostgreSQL (with pgvector) and Redis locally
+docker-compose up -d
+
+# Verify database tables and vector extension
+psql -h localhost -U njent_user -d njent_db -f scripts/init-db.sql
+```
+
+---
+
 ## 🚀 Commands Quick Reference
 
 ```bash
@@ -118,8 +135,9 @@ flowchart TD
 ```
 examples/code-review-agent/
 ├── README.md                                   # Master overview and educational index
-├── package.json                                # Dependencies and run scripts
-├── tsconfig.json
+├── docker-compose.yml                          # Local PostgreSQL + pgvector and Redis setup
+├── scripts/
+│   └── init-db.sql                             # Database schema, pgvector indexes & migrations
 │
 ├── specs/                                      # 📚 14-Pillar Specification & Masterclass
 │   ├── 00-system-requirements-and-scenarios.spec.md
@@ -160,5 +178,5 @@ examples/code-review-agent/
 │   ├── task-07-memory-experience-observability.md # Stanford Memory, Reflexion, OTel Audit
 │   └── task-08-e2e-testing-and-verification.md  # E2E Test Suite & Contract Tests
 │
-└── src/                                        # 💻 Source Code Implementation
+└── src/                                        # 💻 Source Code Implementation (Phase 2)
 ```
