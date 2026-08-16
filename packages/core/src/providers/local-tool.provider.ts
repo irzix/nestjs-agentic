@@ -304,17 +304,71 @@ export class LocalToolProvider {
         }
 
         const executionResult = await this.invokeMethod(tool, args, agentContext);
+        let finalResult = executionResult;
 
-        if (idempotencyKey && this.idempotencyStore && executionResult.success) {
+        if (finalResult.success) {
+          for (const Constructor of allPolicyConstructors) {
+            const policy = this.resolvePolicy(Constructor, policyMap);
+            if (policy?.evaluateOutput) {
+              const outputResult = await policy.evaluateOutput(
+                agentContext,
+                tool.toolName,
+                finalResult.data,
+              );
+
+              if (outputResult.decision === 'deny') {
+                await this.audit?.record({
+                  ...auditEnvelope(agentContext),
+                  type: 'tool_output_policy_decision',
+                  agentName,
+                  toolName: tool.toolName,
+                  policyName: Constructor.name,
+                  decision: 'deny',
+                  reason: outputResult.reason,
+                  args,
+                });
+
+                return { success: false, status: 'denied', reason: outputResult.reason };
+              }
+
+              if (outputResult.decision === 'sanitize') {
+                finalResult = { ...finalResult, data: outputResult.sanitizedResult };
+
+                await this.audit?.record({
+                  ...auditEnvelope(agentContext),
+                  type: 'tool_output_policy_decision',
+                  agentName,
+                  toolName: tool.toolName,
+                  policyName: Constructor.name,
+                  decision: 'sanitize',
+                  reason: 'Output sanitized by policy',
+                  args,
+                });
+              } else if (outputResult.decision === 'allow') {
+                await this.audit?.record({
+                  ...auditEnvelope(agentContext),
+                  type: 'tool_output_policy_decision',
+                  agentName,
+                  toolName: tool.toolName,
+                  policyName: Constructor.name,
+                  decision: 'allow',
+                  args,
+                });
+              }
+            }
+          }
+        }
+
+        if (idempotencyKey && this.idempotencyStore && finalResult.success) {
           await this.idempotencyStore.save({
             key: idempotencyKey,
             toolName: tool.toolName,
-            result: executionResult,
+            result: finalResult,
             createdAt: new Date(),
           });
         }
 
-        return executionResult;
+        return finalResult;
       },
     };
   }

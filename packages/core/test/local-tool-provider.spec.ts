@@ -186,6 +186,53 @@ export async function runLocalToolProviderTests() {
     assert(false, 'Test 4: Policy require_approval & Store', err.message);
   }
 
+  // TEST 5: Output Rails (evaluateOutput hook)
+  try {
+    class OutputSanitizingPolicy implements ToolPolicy {
+      async evaluate(): Promise<PolicyResult> {
+        return { decision: 'allow' };
+      }
+
+      async evaluateOutput(_ctx: AgentContext, _toolName: string, result: any) {
+        if (result && typeof result === 'object' && result.rawSecret) {
+          return {
+            decision: 'sanitize' as const,
+            sanitizedResult: { ...result, rawSecret: '[REDACTED]' },
+          };
+        }
+        return { decision: 'allow' as const };
+      }
+    }
+
+    @ToolSet({ name: 'output-rail-tools' })
+    class OutputRailTools {
+      @Tool({ description: 'Tool returning raw secrets' })
+      @UsePolicies(OutputSanitizingPolicy)
+      async getCredentials() {
+        return { username: 'admin', rawSecret: 'super-secret-key-123' };
+      }
+    }
+
+    const outputModuleRef = new MockModuleRef();
+    const outputProvider = new LocalToolProvider(
+      [new OutputSanitizingPolicy()],
+      approvalStore,
+      discovery,
+      outputModuleRef as unknown as ModuleRef,
+    );
+
+    const tools = outputProvider.buildTools([new OutputRailTools()], agentContext, 'TestAgent');
+    const credTool = tools.find((t) => t.name === 'getCredentials');
+    const toolExecResult = await credTool?.execute({ args: {} });
+
+    assert(toolExecResult?.success === true, 'Test 5a: Tool executes successfully');
+    const data = (toolExecResult as any)?.data;
+    assert(data?.username === 'admin', 'Test 5b: Non-secret field preserved');
+    assert(data?.rawSecret === '[REDACTED]', 'Test 5c: Output rail policy sanitizes secret before returning');
+  } catch (err: any) {
+    assert(false, 'Test 5: Output Rails (evaluateOutput hook)', err.message);
+  }
+
   console.log(`\n  📊 Step 2 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 2 Unit Tests Failed');

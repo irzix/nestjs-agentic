@@ -102,9 +102,24 @@ export interface ApprovalSettlementFailedAuditEvent extends AuditEventBase {
   actor?: AuditActor;
 }
 
+/**
+ * A governed tool call's output crossed the output policy boundary (Output Rail).
+ */
+export interface ToolOutputPolicyDecisionAuditEvent extends AuditEventBase {
+  type: 'tool_output_policy_decision';
+  agentName: string;
+  toolName: string;
+  /** Policy class that produced the decision. */
+  policyName: string;
+  decision: 'allow' | 'deny' | 'sanitize';
+  reason?: string;
+  args?: Record<string, unknown>;
+}
+
 /** Any event the framework records on the governance boundary. */
 export type AuditEvent =
   | ToolPolicyDecisionAuditEvent
+  | ToolOutputPolicyDecisionAuditEvent
   | ApprovalRequestedAuditEvent
   | ApprovalSettledAuditEvent
   | ApprovalExpiredAuditEvent
