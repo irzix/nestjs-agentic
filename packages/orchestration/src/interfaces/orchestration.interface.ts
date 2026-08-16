@@ -22,6 +22,17 @@ export interface CapabilityNarrowing {
 }
 
 /**
+ * Internal namespaced context metadata stored under `context.data.agentic`.
+ */
+export interface AgenticInternalContext {
+  /** Capability narrowing rules active for the current agent turn. */
+  capabilityNarrowing?: CapabilityNarrowing;
+
+  /** Current sub-agent delegation depth in the execution tree. */
+  delegationDepth?: number;
+}
+
+/**
  * Task payload for delegating work to a designated sub-agent.
  */
 export interface SubAgentTask {

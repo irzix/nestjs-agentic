@@ -17,6 +17,7 @@ import {
   UsePolicies,
 } from '@nestjs-agentic/core';
 import {
+  CapabilityEscalationError,
   CapabilityNarrowingPolicy,
   MaxDelegationDepthExceededError,
   ParallelSubAgentRunner,
@@ -151,6 +152,17 @@ export async function runOrchestrationTests() {
           };
         }
         return { content: `Transfer result: ${lastToolMsg.content}` };
+      }
+
+      if (lastUserMsg.includes('Call auditLogs')) {
+        const lastToolMsg = messages.find((m) => m.role === 'tool');
+        if (!lastToolMsg) {
+          return {
+            content: 'Auditing logs...',
+            toolCalls: [{ id: 'call_audit_1', name: 'auditLogs', args: {} }],
+          };
+        }
+        return { content: `Audit result: ${lastToolMsg.content}` };
       }
 
       return { content: `Processed ${lastUserMsg}` };
@@ -503,25 +515,28 @@ export async function runOrchestrationTests() {
       },
     };
 
-    // Delegate with narrowed permissions and attempted privilege escalation
+    // Delegate with narrowed subset
     await delegator.delegate(parentContext, {
       agentName: 'sub_agent_a',
       message: 'Perform SubTask A',
       narrowing: {
-        allowedPermissions: ['read:all', 'system:superadmin'], // system:superadmin is not in parent
-        allowedRoles: ['editor', 'cluster_root'], // cluster_root is not in parent
+        allowedPermissions: ['read:all', 'write:all'],
+        allowedRoles: ['editor', 'admin'],
       },
     });
 
     const subContext = capturedContexts[capturedContexts.length - 1];
-    // Sub-agent receives intersection only (no escalation)
     assert(
-      JSON.stringify(subContext.security.permissions) === JSON.stringify(['read:all']),
-      `Permissions narrowed without escalation: ${JSON.stringify(subContext.security.permissions)}`,
+      JSON.stringify(subContext.security.permissions) === JSON.stringify(['read:all', 'write:all']),
+      `Permissions narrowed: ${JSON.stringify(subContext.security.permissions)}`,
     );
     assert(
-      JSON.stringify(subContext.security.roles) === JSON.stringify(['editor']),
-      `Roles narrowed without escalation: ${JSON.stringify(subContext.security.roles)}`,
+      Boolean(
+        subContext.security.roles?.includes('editor') &&
+          subContext.security.roles?.includes('admin') &&
+          subContext.security.roles?.length === 2,
+      ),
+      `Roles narrowed: ${JSON.stringify(subContext.security.roles)}`,
     );
     console.log('    ✓ Permission & role least-privilege narrowing verified');
   }
@@ -561,7 +576,7 @@ export async function runOrchestrationTests() {
       sessionId: 'sess_depth_1',
       traceId: 'trace_depth',
       security: { tenantId: 'tenant_gamma' },
-      data: { __delegationDepth: 2 }, // Already at depth 2
+      data: { agentic: { delegationDepth: 2 } }, // Already at depth 2
     };
 
     let depthExceeded = false;
@@ -580,6 +595,148 @@ export async function runOrchestrationTests() {
 
     assert(depthExceeded, 'MaxDelegationDepthExceededError thrown when recursion depth exceeded');
     console.log('    ✓ Delegation depth recursion guard verified');
+  }
+
+  // =========================================================================
+  // TEST 13: Capability Escalation Check (throws CapabilityEscalationError)
+  // =========================================================================
+  {
+    console.log('  - Test 13: Capability Escalation Check (throws CapabilityEscalationError)');
+    const delegator = new SubAgentDelegator(runner);
+    const parentContext: AgentContext = {
+      sessionId: 'sess_escalate_1',
+      traceId: 'trace_esc',
+      security: {
+        userId: 'usr_normal',
+        tenantId: 'tenant_omega',
+        permissions: ['read:basic'],
+        roles: ['viewer'],
+      },
+    };
+
+    let escalationCaught = false;
+    try {
+      await delegator.delegate(parentContext, {
+        agentName: 'sub_agent_a',
+        message: 'Perform SubTask A',
+        narrowing: {
+          allowedPermissions: ['read:basic', 'root:superadmin'], // Escalation attempt
+        },
+      });
+    } catch (err) {
+      if (err instanceof CapabilityEscalationError) {
+        escalationCaught = true;
+        assert(err.type === 'permissions', 'Identified permission escalation');
+        assert(err.requestedCapabilities.includes('root:superadmin'), 'Identified unauthorized permission');
+      }
+    }
+    assert(escalationCaught, 'CapabilityEscalationError thrown on permission escalation');
+    console.log('    ✓ Privilege escalation prevention verified');
+  }
+
+  // =========================================================================
+  // TEST 14: Empty allowedTools: [] (Deny All Tools)
+  // =========================================================================
+  {
+    console.log('  - Test 14: Empty allowedTools: [] (Deny All Tools)');
+    const delegator = new SubAgentDelegator(runner);
+    const parentContext: AgentContext = {
+      sessionId: 'sess_empty_whitelist',
+      traceId: 'trace_empty_w',
+      security: { tenantId: 'tenant_omega' },
+    };
+
+    const deniedRes = await delegator.delegate(parentContext, {
+      agentName: 'finance_agent',
+      message: 'Call getBalance',
+      narrowing: {
+        allowedTools: [], // Empty whitelist -> deny all tools
+      },
+    });
+
+    assert(
+      deniedRes.response.includes('denied') || deniedRes.response.includes('not permitted'),
+      'Empty allowedTools whitelist denied tool invocation',
+    );
+    console.log('    ✓ Empty allowedTools whitelist enforcement verified');
+  }
+
+  // =========================================================================
+  // TEST 15: Nested Delegation Capability Stacking
+  // =========================================================================
+  {
+    console.log('  - Test 15: Nested Delegation Capability Stacking & Narrowing Inheritance');
+    const delegator = new SubAgentDelegator(runner, { maxDelegationDepth: 5 });
+    // Root parent allows ['getBalance', 'auditLogs']
+    const rootContext: AgentContext = {
+      sessionId: 'sess_nested_root',
+      traceId: 'trace_root_stack',
+      security: { tenantId: 'tenant_stack' },
+      data: {
+        agentic: {
+          capabilityNarrowing: {
+            allowedTools: ['getBalance', 'auditLogs'],
+            deniedTools: ['transferFunds'],
+          },
+        },
+      },
+    };
+
+    // Sub-agent delegates further to sub-sub-agent narrowing to ['getBalance']
+    const resSub = await delegator.delegate(rootContext, {
+      agentName: 'finance_agent',
+      message: 'Call getBalance',
+      narrowing: {
+        allowedTools: ['getBalance'], // Intersects with root allowedTools
+      },
+    });
+
+    assert(resSub.status === 'success', 'Sub-sub-agent executed whitelisted tool in stack');
+
+    // Attempting tool allowed in root ('auditLogs') but omitted in sub-delegation
+    const resDenied = await delegator.delegate(rootContext, {
+      agentName: 'finance_agent',
+      message: 'Call auditLogs',
+      narrowing: {
+        allowedTools: ['getBalance'], // auditLogs excluded in child layer
+      },
+    });
+
+    assert(
+      resDenied.response.includes('denied') || resDenied.response.includes('not permitted'),
+      'Sub-agent narrowing restriction inherited and enforced',
+    );
+    console.log('    ✓ Nested capability narrowing stacking verified');
+  }
+
+  // =========================================================================
+  // TEST 16: Conflicting Whitelist & Blacklist (Blacklist Takes Precedence)
+  // =========================================================================
+  {
+    console.log('  - Test 16: Conflicting Whitelist & Blacklist (Blacklist Precedence)');
+    const delegator = new SubAgentDelegator(runner);
+    const parentContext: AgentContext = {
+      sessionId: 'sess_conflict_1',
+      traceId: 'trace_conflict',
+      security: { tenantId: 'tenant_conflict' },
+    };
+
+    // Specify transferFunds in BOTH allowedTools and deniedTools
+    const res = await delegator.delegate(parentContext, {
+      agentName: 'finance_agent',
+      message: 'Call transferFunds',
+      narrowing: {
+        allowedTools: ['getBalance', 'transferFunds'],
+        deniedTools: ['transferFunds'], // Blacklist must override whitelist
+      },
+    });
+
+    assert(
+      res.response.includes('prohibited') || res.response.includes('denied'),
+      'Blacklist took precedence over whitelist for conflicting tool',
+    );
+    assert(financeTools.transfers.length === 0, 'Side effect never executed');
+    console.log('    ✓ Blacklist precedence over whitelist verified');
   }
 
   console.log('🎉 All Orchestration Unit & Security Tests Passed!\n');

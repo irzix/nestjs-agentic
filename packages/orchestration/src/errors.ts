@@ -36,3 +36,19 @@ export class CapabilityDeniedError extends OrchestrationError {
     super(`Capability denied for tool "${toolName}": ${reason}`);
   }
 }
+
+/**
+ * Thrown when a delegated task attempts to request permissions or roles that the parent context does not hold.
+ */
+export class CapabilityEscalationError extends OrchestrationError {
+  constructor(
+    public readonly requestedCapabilities: string[],
+    public readonly parentCapabilities: string[],
+    public readonly type: 'permissions' | 'roles',
+  ) {
+    super(
+      `Capability escalation forbidden: Sub-agent requested ${type} [${requestedCapabilities.join(', ')}] ` +
+        `which are not held by parent context [${parentCapabilities.join(', ')}].`,
+    );
+  }
+}
