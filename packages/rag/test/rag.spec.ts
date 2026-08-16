@@ -270,6 +270,121 @@ export async function runRAGTests() {
     assert(false, 'Test 9: VectorStoreFactory Integration', err.message);
   }
 
+  // TEST 10: AstCodebaseSplitter AST-Aware Code Chunking
+  try {
+    const { AstCodebaseSplitter } = await import('../src');
+    const splitter = new AstCodebaseSplitter({ maxChunkSize: 200, minChunkSize: 10 });
+
+    const sampleTypeScriptCode = `
+import { Injectable } from '@nestjs/common';
+import { ToolPolicy } from './policy.interface';
+
+export interface ReviewOptions {
+  depth: number;
+  strict: boolean;
+}
+
+export type ReviewDecision = 'approve' | 'request_changes';
+
+@Injectable()
+export class SecurityReviewService {
+  constructor(private readonly policy: ToolPolicy) {}
+
+  async evaluatePr(prNumber: number): Promise<ReviewDecision> {
+    return 'approve';
+  }
+}
+
+export function formatReviewSummary(decision: ReviewDecision): string {
+  return \`Review outcome: \${decision}\`;
+}
+`;
+
+    const chunks = await splitter.splitDocument({
+      id: 'doc_ast_sample',
+      title: 'src/security-review.service.ts',
+      rawContent: sampleTypeScriptCode,
+      chunks: [],
+      metadata: { repository: 'nestjs-agentic' },
+    });
+
+    assert(chunks.length >= 4, 'Test 10a: AstCodebaseSplitter parsed code into discrete semantic units');
+
+    const importsChunk = chunks.find((c) => c.metadata.nodeType === 'imports');
+    assert(Boolean(importsChunk), 'Test 10b: Extracted imports header block chunk');
+    assert(
+      (importsChunk?.metadata.importedModules as string[])?.includes('@nestjs/common'),
+      'Test 10c: Extracted imported module name @nestjs/common',
+    );
+
+    const interfaceChunk = chunks.find((c) => c.metadata.nodeType === 'interface');
+    assert(Boolean(interfaceChunk), 'Test 10d: Extracted interface chunk');
+    assert(interfaceChunk?.metadata.identifier === 'ReviewOptions', 'Test 10e: Interface identifier ReviewOptions matches');
+    assert(interfaceChunk?.metadata.exported === true, 'Test 10f: Interface exported modifier preserved');
+
+    const typeChunk = chunks.find((c) => c.metadata.nodeType === 'type');
+    assert(Boolean(typeChunk), 'Test 10g: Extracted type alias chunk');
+    assert(typeChunk?.metadata.identifier === 'ReviewDecision', 'Test 10h: Type identifier ReviewDecision matches');
+
+    const classOrMethodChunk = chunks.find((c) => c.metadata.nodeType === 'class' || c.metadata.parentClass === 'SecurityReviewService');
+    assert(Boolean(classOrMethodChunk), 'Test 10i: Extracted class/method AST chunk');
+
+    const functionChunk = chunks.find((c) => c.metadata.nodeType === 'function' && c.metadata.identifier === 'formatReviewSummary');
+    assert(Boolean(functionChunk), 'Test 10j: Extracted function AST chunk');
+  } catch (err: any) {
+    assert(false, 'Test 10: AstCodebaseSplitter AST Chunking', err.message);
+  }
+
+  // TEST 11: GraphDependencyStrategy Monorepo Package Traversal
+  try {
+    const { GraphDependencyStrategy, InMemoryKnowledgeGraphProvider } = await import('../src');
+    const graph = new InMemoryKnowledgeGraphProvider();
+
+    // Setup monorepo package & component dependency graph
+    await graph.addNode({ id: '@nestjs-agentic/core', label: 'Package', properties: { tier: 'core' } });
+    await graph.addNode({ id: '@nestjs-agentic/orchestration', label: 'Package', properties: { tier: 'orchestration' } });
+    await graph.addNode({ id: 'examples/code-review-agent', label: 'Application', properties: { tier: 'app' } });
+    await graph.addNode({ id: 'PrReviewOrchestrator', label: 'Class', properties: { file: 'pr-review.orchestrator.ts' } });
+
+    await graph.addEdge({ sourceId: '@nestjs-agentic/orchestration', targetId: '@nestjs-agentic/core', relation: 'DEPENDS_ON' });
+    await graph.addEdge({ sourceId: 'examples/code-review-agent', targetId: '@nestjs-agentic/orchestration', relation: 'DEPENDS_ON' });
+    await graph.addEdge({ sourceId: 'PrReviewOrchestrator', targetId: '@nestjs-agentic/orchestration', relation: 'IMPORTS' });
+
+    const strategy = new GraphDependencyStrategy({
+      graphProvider: graph,
+      dependencyScoreBoost: 1.5,
+    });
+
+    const candidateChunk = {
+      id: 'chunk_orch_1',
+      parentId: 'doc_orch',
+      content: 'ParallelSubAgentRunner orchestration fanout logic in @nestjs-agentic/orchestration',
+      metadata: { filePath: 'packages/orchestration/src/runners/parallel-subagent.runner.ts' },
+    };
+
+    const result = await strategy.process({
+      query: 'PrReviewOrchestrator @nestjs-agentic/core impact',
+      chunks: [candidateChunk],
+      scores: new Map([['chunk_orch_1', 1.0]]),
+    });
+
+    assert(Boolean(result.graphContext), 'Test 11a: GraphDependencyStrategy generated dependency context');
+    assert(
+      result.graphContext!.includes('DEPENDS_ON') || result.graphContext!.includes('IMPORTS'),
+      'Test 11b: Dependency context contains graph relationships',
+    );
+    assert(
+      (result.scores?.get('chunk_orch_1') ?? 0) > 1.0,
+      'Test 11c: Impacted dependency chunk score boosted from 1.0 to 1.5',
+    );
+    assert(
+      result.relationalFacts?.length! > 0,
+      'Test 11d: Relational facts array populated for multi-hop reasoning',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 11: GraphDependencyStrategy Package Traversal', err.message);
+  }
+
   console.log(`\n  📊 RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');
