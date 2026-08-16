@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-16
+
+### Added
+
+- **Multi-Tenant Identity Preservation & Capability Narrowing (`@nestjs-agentic/orchestration`)**:
+  - `CapabilityNarrowing`: Explicit capability restrictions for delegated sub-agents including tool whitelists (`allowedTools`), tool blacklists (`deniedTools`), least-privilege permission and role subsetting (`allowedPermissions`, `allowedRoles`), and execution limits (`limits`).
+  - `CapabilityNarrowingPolicy`: Built-in governance policy enforcing delegated tool capability constraints at policy evaluation time.
+  - `Tenant Isolation & Trace Hierarchy`: SubAgentDelegator enforces strict `tenantId` immutability and propagates OpenTelemetry distributed trace parentage (`parentTraceId`, `rootTraceId`).
+  - `MaxDelegationDepthExceededError` & `CapabilityDeniedError`: Bounded recursion depth protection (`maxDelegationDepth: 3`) preventing runaway sub-agent delegation loops (#38).
+
 ## [0.6.0] - 2026-08-16
 
 ### Added
