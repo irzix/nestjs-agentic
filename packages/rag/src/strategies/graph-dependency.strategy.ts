@@ -60,6 +60,9 @@ export class GraphDependencyStrategy implements RAGStrategy {
     'test',
     'code',
     'file',
+    'import',
+    'export',
+    'class',
   ]);
 
   constructor(options: GraphDependencyStrategyOptions) {
@@ -123,28 +126,28 @@ export class GraphDependencyStrategy implements RAGStrategy {
       }
     }
 
+    // High-performance single-pass O(N) regex evaluation
     let updatedChunks = context.chunks;
-    if (context.chunks && context.chunks.length > 0) {
+    const validEntities = Array.from(impactedEntities).filter(
+      (e) => e.length >= 3 && !GraphDependencyStrategy.STOP_WORDS.has(e),
+    );
+
+    if (validEntities.length > 0 && context.chunks && context.chunks.length > 0) {
+      const entityPattern = validEntities
+        .map((e) => e.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|');
+      const combinedRegex = new RegExp(
+        `(^|[^a-zA-Z0-9_])(?:${entityPattern})([^a-zA-Z0-9_]|$)`,
+        'i',
+      );
+
       updatedChunks = context.chunks.map((chunk) => {
         const content = typeof chunk.content === 'string' ? chunk.content : '';
-        const filePath = typeof chunk.metadata?.filePath === 'string' ? chunk.metadata.filePath : '';
-        const combinedText = `${content}\n${filePath}`.toLowerCase();
+        const filePath =
+          typeof chunk.metadata?.filePath === 'string' ? chunk.metadata.filePath : '';
+        const combinedText = `${content}\n${filePath}`;
 
-        let matched = false;
-        for (const entity of impactedEntities) {
-          if (entity.length < 3 || GraphDependencyStrategy.STOP_WORDS.has(entity)) continue;
-
-          // Exact word/token boundary matching
-          const escaped = entity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const wordRegex = new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, 'i');
-
-          if (wordRegex.test(combinedText)) {
-            matched = true;
-            break;
-          }
-        }
-
-        if (matched) {
+        if (combinedRegex.test(combinedText)) {
           const currentScore = scoresMap.get(chunk.id) ?? 1.0;
           scoresMap.set(chunk.id, currentScore * this.dependencyScoreBoost);
         }

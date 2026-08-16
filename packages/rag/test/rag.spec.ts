@@ -440,6 +440,61 @@ export const computeChecksum = (data: string): string => {
     assert(false, 'Test 11: GraphDependencyStrategy Package Traversal', err.message);
   }
 
+  // TEST 12: AstCodebaseSplitter High-Throughput Large Codebase Benchmark & Edge Cases
+  try {
+    const { AstCodebaseSplitter } = await import('../src');
+    const splitter = new AstCodebaseSplitter();
+
+    // 12a. Empty and whitespace document handling
+    const emptyChunks = await splitter.splitDocument({
+      id: 'doc_empty',
+      title: 'empty.ts',
+      rawContent: '   \n\n  \t ',
+      chunks: [],
+      metadata: {},
+    });
+    assert(emptyChunks.length === 0, 'Test 12a: Empty/whitespace document returns empty chunk array gracefully');
+
+    // 12b. 1000+ line large codebase document splitting benchmark
+    const largeCodeLines: string[] = [
+      "import { Injectable } from '@nestjs/common';",
+      "import { ModuleRef } from '@nestjs/core';",
+    ];
+    for (let i = 0; i < 60; i++) {
+      largeCodeLines.push(`
+export interface EntityConfig${i} {
+  id: string;
+  count: number;
+}
+
+@Injectable()
+export class BenchmarkService${i} {
+  public static readonly SVC_ID = ${i};
+
+  async executeTask${i}(param: string): Promise<string> {
+    return \`Processed task \${param} on service ${i}\`;
+  }
+}
+      `);
+    }
+
+    const largeDocumentText = largeCodeLines.join('\n');
+    const startTime = Date.now();
+    const largeChunks = await splitter.splitDocument({
+      id: 'doc_benchmark_1000_lines',
+      title: 'benchmark.service.ts',
+      rawContent: largeDocumentText,
+      chunks: [],
+      metadata: { repository: 'nestjs-agentic-bench' },
+    });
+    const duration = Date.now() - startTime;
+
+    assert(largeChunks.length >= 100, 'Test 12b: Successfully split 1000+ line codebase into discrete semantic chunks');
+    assert(duration < 250, `Test 12c: High throughput splitting completed in ${duration}ms (< 250ms)`);
+  } catch (err: any) {
+    assert(false, 'Test 12: Large Codebase Benchmark', err.message);
+  }
+
   console.log(`\n  📊 RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');

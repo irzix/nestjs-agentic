@@ -41,7 +41,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
   private readonly minChunkSize: number;
   private readonly splitClassMethods: boolean;
 
-  // Pre-compiled static regular expressions for single-pass O(N) scanning
+  // Simple, linear regular expressions immune to catastrophic backtracking (ReDoS)
   private static readonly RE_INTERFACE = /^(?:export\s+)?interface\s+([A-Za-z0-9_$]+)/;
   private static readonly RE_TYPE_ALIAS = /^(?:export\s+)?type\s+([A-Za-z0-9_$]+)\s*=/;
   private static readonly RE_CLASS = /^(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z0-9_$]+)/;
@@ -127,34 +127,34 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       };
     };
 
-    // 1. Extract import block (single-line, multi-line, import type, dynamic imports)
+    // 1. Extract import block with bracket-depth tracking
     const importLines: string[] = [];
     let importStartLine = -1;
     let importEndLine = -1;
-    let inMultiLineImport = false;
+    let importBraceDepth = 0;
+    let inImportStatement = false;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const trimmed = line.trim();
 
-      // Skip non-import lines and comment-only lines
       if (trimmed.startsWith('//') || (trimmed.startsWith('/*') && !trimmed.includes('*/'))) {
         continue;
       }
 
-      if (trimmed.startsWith('import ') || trimmed.startsWith('import(') || inMultiLineImport) {
+      if (trimmed.startsWith('import ') || trimmed.startsWith('import(') || inImportStatement) {
         if (importStartLine === -1) importStartLine = i + 1;
         importLines.push(line);
         importEndLine = i + 1;
+        inImportStatement = true;
 
-        if (
-          trimmed.includes(';') ||
-          (trimmed.includes("from '") && trimmed.endsWith("';")) ||
-          (trimmed.includes('from "') && trimmed.endsWith('";'))
-        ) {
-          inMultiLineImport = false;
-        } else if (!trimmed.includes(';') && (trimmed.includes('{') || trimmed.includes('from'))) {
-          inMultiLineImport = true;
+        for (const ch of trimmed) {
+          if (ch === '{') importBraceDepth++;
+          else if (ch === '}') importBraceDepth--;
+        }
+
+        if (importBraceDepth <= 0 && (trimmed.endsWith(';') || trimmed.includes("from '") || trimmed.includes('from "'))) {
+          inImportStatement = false;
         }
       }
     }
@@ -170,19 +170,18 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       }
     }
 
-    // 2. Parse top-level declarations with brace depth tracking
+    // 2. Parse top-level declarations with single-pass O(N) scan
     let idx = 0;
     while (idx < lines.length) {
       const line = lines[idx];
       const trimmed = line.trim();
 
-      // Skip import lines and standalone blank lines
       if (trimmed.startsWith('import ') || trimmed.length === 0) {
         idx++;
         continue;
       }
 
-      // Collect leading JSDoc and decorators strictly bound to this declaration
+      // Collect strictly associated leading JSDoc and decorators
       const leadingLines: string[] = [];
       const declStartLine = idx + 1;
 
@@ -203,7 +202,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       const currentLine = lines[idx];
       const currentTrimmed = currentLine.trim();
 
-      // Match Interface Declaration
+      // Interface
       const interfaceMatch = currentTrimmed.match(AstCodebaseSplitter.RE_INTERFACE);
       if (interfaceMatch) {
         const interfaceName = interfaceMatch[1];
@@ -219,7 +218,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         continue;
       }
 
-      // Match Type Alias Declaration
+      // Type Alias
       const typeMatch = currentTrimmed.match(AstCodebaseSplitter.RE_TYPE_ALIAS);
       if (typeMatch) {
         const typeName = typeMatch[1];
@@ -235,7 +234,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         continue;
       }
 
-      // Match Class Declaration
+      // Class
       const classMatch = currentTrimmed.match(AstCodebaseSplitter.RE_CLASS);
       if (classMatch) {
         const className = classMatch[1];
@@ -243,7 +242,6 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         const { blockContent, endLine, nextIdx, bodyLines } = this.extractBracedBlock(lines, idx, leadingLines);
 
         if (this.splitClassMethods && blockContent.length > this.maxChunkSize && bodyLines.length > 0) {
-          // Emit Class Signature Chunk
           const classSignature = `${leadingLines.join('\n')}\n${currentTrimmed.split('{')[0].trim()} { ... }`.trim();
           chunks.push(
             createChunk(classSignature, 'class', className, declStartLine, idx + 1, {
@@ -252,7 +250,6 @@ export class AstCodebaseSplitter implements DocumentSplitter {
             }),
           );
 
-          // Sub-split class methods and constructor
           const methodChunks = this.splitClassMembers(bodyLines, className, idx + 2, isExported);
           for (const m of methodChunks) {
             chunks.push(
@@ -275,7 +272,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         continue;
       }
 
-      // Match Standard Function Declaration
+      // Standard Function
       const funcMatch = currentTrimmed.match(AstCodebaseSplitter.RE_FUNCTION);
       if (funcMatch) {
         const funcName = funcMatch[1] ?? 'anonymousFunction';
@@ -291,7 +288,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         continue;
       }
 
-      // Match Arrow Function Declaration
+      // Arrow Function
       const arrowMatch = currentTrimmed.match(AstCodebaseSplitter.RE_ARROW_FUNCTION);
       if (arrowMatch) {
         const funcName = arrowMatch[1];
@@ -308,7 +305,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         continue;
       }
 
-      // Match Enum Declaration
+      // Enum
       const enumMatch = currentTrimmed.match(AstCodebaseSplitter.RE_ENUM);
       if (enumMatch) {
         const enumName = enumMatch[1];
@@ -394,6 +391,9 @@ export class AstCodebaseSplitter implements DocumentSplitter {
     };
   }
 
+  /**
+   * Linear, ReDoS-immune class member parser.
+   */
   private splitClassMembers(
     bodyLines: string[],
     className: string,
@@ -407,20 +407,25 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       const line = bodyLines[i];
       const trimmed = line.trim();
 
-      // Skip comments or blank lines
       if (trimmed.length === 0 || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
         i++;
         continue;
       }
 
-      // Check if it's a method/constructor/accessor/field
-      const isStatic = trimmed.startsWith('static ') || trimmed.includes(' static ');
-      const memberMatch = trimmed.match(
-        /^(?:@\w+(?:\([^)]*\))?\s+)*(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+|override\s+|abstract\s+|async\s+)*(?:get\s+|set\s+)?(constructor|#?[A-Za-z0-9_$]+)/,
-      );
+      const isStatic = /\bstatic\b/.test(trimmed);
 
-      if (memberMatch) {
-        const memberName = memberMatch[1];
+      // Strip decorators: e.g. @Tool({ ... })
+      let cleanLine = trimmed.replace(/^@\w+(?:\([^)]*\))?\s+/, '');
+      // Strip access modifiers linearly
+      cleanLine = cleanLine
+        .replace(/^(?:public|private|protected|static|readonly|override|abstract|async)\s+/, '')
+        .replace(/^(?:public|private|protected|static|readonly|override|abstract|async)\s+/, '')
+        .replace(/^(?:get|set)\s+/, '');
+
+      const memberNameMatch = cleanLine.match(/^(constructor|#?[A-Za-z0-9_$]+)/);
+
+      if (memberNameMatch) {
+        const memberName = memberNameMatch[1];
         if (AstCodebaseSplitter.RESERVED_KEYWORDS.has(memberName)) {
           i++;
           continue;
@@ -428,7 +433,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
 
         const mStartLine = bodyStartLine + i;
 
-        // Check if this is a simple field statement ending in semicolon without braces
+        // Check if property statement without braces
         if (trimmed.includes(';') && !trimmed.includes('{')) {
           if (trimmed.length >= this.minChunkSize) {
             members.push({
