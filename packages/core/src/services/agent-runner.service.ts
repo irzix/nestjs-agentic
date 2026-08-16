@@ -12,6 +12,7 @@ import {
 import {
   ApprovalCheckpointVersionError,
   ApprovalTranscriptMissingError,
+  ExecutionCancelledError,
   RuntimeNotConfiguredError,
 } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
@@ -211,6 +212,10 @@ export class AgentRunner {
     decision: ApprovalDecision,
     options?: { signal?: AbortSignal },
   ): Promise<AgentResult | ToolExecutionResult> {
+    if (options?.signal?.aborted) {
+      throw new ExecutionCancelledError();
+    }
+
     const agent = this.getAgentMap().get(pending.agentName);
     if (!agent) {
       throw new Error(
@@ -379,6 +384,10 @@ export class AgentRunner {
     }
 
     const config = agent.define();
+    const limits = input.limits ?? config.limits ?? this.options.limits;
+    const deadline =
+      limits?.timeoutMs !== undefined ? new Date(Date.now() + limits.timeoutMs) : undefined;
+
     const context: AgentContext = {
       sessionId: input.sessionId,
       traceId: randomUUID(),
@@ -389,6 +398,8 @@ export class AgentRunner {
         permissions: input.context?.permissions,
       },
       data: input.context?.data,
+      signal: input.signal,
+      deadline,
     };
 
     return {
@@ -401,7 +412,7 @@ export class AgentRunner {
         agentName,
         this.options.approvalTtlSeconds,
       ),
-      limits: input.limits ?? config.limits ?? this.options.limits,
+      limits,
       toolErrorHandling:
         input.toolErrorHandling ?? config.toolErrorHandling ?? this.options.toolErrorHandling,
     };

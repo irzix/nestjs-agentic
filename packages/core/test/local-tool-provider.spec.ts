@@ -233,6 +233,134 @@ export async function runLocalToolProviderTests() {
     assert(false, 'Test 5: Output Rails (evaluateOutput hook)', err.message);
   }
 
+  // TEST 6: Tool Cancellation and Deadline Propagation
+  try {
+    const { ExecutionCancelledError, ExecutionLimitExceededError } = await import('../src');
+    const controller = new AbortController();
+    const deadline = new Date(Date.now() + 5000);
+    const cancellableContext: AgentContext = {
+      ...agentContext,
+      signal: controller.signal,
+      deadline,
+    };
+
+    @ToolSet({ name: 'cancellable-tools' })
+    class CancellableTools {
+      @Tool({ description: 'Tool reading context signal and deadline' })
+      async checkCancellation(@Context() ctx: AgentContext) {
+        return {
+          hasSignal: Boolean(ctx.signal),
+          isAborted: ctx.signal?.aborted ?? false,
+          hasDeadline: Boolean(ctx.deadline),
+        };
+      }
+
+      @Tool({ description: 'Long running async tool' })
+      async longRunningTask(@Context() ctx: AgentContext) {
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => resolve('completed'), 200);
+          if (ctx.signal) {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer);
+                reject(new ExecutionCancelledError('Tool aborted in-flight'));
+              },
+              { once: true },
+            );
+          }
+        });
+      }
+    }
+
+    const cancelProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      discovery,
+      moduleRef as unknown as ModuleRef,
+    );
+
+    const tools = cancelProvider.buildTools([new CancellableTools()], cancellableContext, 'TestAgent');
+    const tool = tools.find((t) => t.name === 'checkCancellation');
+
+    const exec1 = await tool?.execute({ args: {} });
+    assert(exec1?.success === true, 'Test 6a: Tool executed with context signal');
+    assert((exec1 as any)?.data?.hasSignal === true, 'Test 6b: Context signal was propagated');
+    assert((exec1 as any)?.data?.hasDeadline === true, 'Test 6c: Context deadline was propagated');
+
+    // Abort controller
+    controller.abort();
+
+    let abortedError: unknown;
+    try {
+      await tool?.execute({ args: {} });
+    } catch (err) {
+      abortedError = err;
+    }
+    assert(
+      abortedError instanceof ExecutionCancelledError,
+      'Test 6d: Aborted signal throws ExecutionCancelledError uniformly',
+    );
+
+    let approvedErr: unknown;
+    try {
+      await cancelProvider.invokeApprovedTool(
+        [new CancellableTools()],
+        'checkCancellation',
+        {},
+        cancellableContext,
+      );
+    } catch (err) {
+      approvedErr = err;
+    }
+    assert(
+      approvedErr instanceof ExecutionCancelledError,
+      'Test 6e: invokeApprovedTool throws ExecutionCancelledError when aborted',
+    );
+
+    // Deadline expiry test
+    const expiredContext: AgentContext = {
+      ...agentContext,
+      deadline: new Date(Date.now() - 1000), // In the past
+    };
+    const expiredTools = cancelProvider.buildTools([new CancellableTools()], expiredContext, 'TestAgent');
+    let deadlineErr: unknown;
+    try {
+      await expiredTools[0]?.execute({ args: {} });
+    } catch (err) {
+      deadlineErr = err;
+    }
+    assert(
+      deadlineErr instanceof ExecutionLimitExceededError,
+      'Test 6f: Expired deadline throws ExecutionLimitExceededError',
+    );
+
+    // In-flight async tool cancellation test
+    const inFlightCtrl = new AbortController();
+    const inFlightCtx: AgentContext = {
+      ...agentContext,
+      signal: inFlightCtrl.signal,
+    };
+    const inFlightTools = cancelProvider.buildTools([new CancellableTools()], inFlightCtx, 'TestAgent');
+    const longTool = inFlightTools.find((t) => t.name === 'longRunningTask');
+
+    const longPromise = longTool?.execute({ args: {} });
+    setTimeout(() => inFlightCtrl.abort(), 20);
+
+    let inFlightErr: unknown;
+    try {
+      await longPromise;
+    } catch (err) {
+      inFlightErr = err;
+    }
+    assert(
+      inFlightErr instanceof ExecutionCancelledError,
+      'Test 6g: In-flight async tool aborts immediately on signal abort event',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 6: Tool Cancellation and Deadline Propagation', err.message);
+  }
+
   console.log(`\n  📊 Step 2 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 2 Unit Tests Failed');

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { APPROVAL_STORE } from '../constants';
-import { ApprovalExpiredError, ApprovalNotFoundError } from '../errors';
+import { ApprovalExpiredError, ApprovalNotFoundError, ExecutionCancelledError } from '../errors';
 import { auditEnvelope } from '../interfaces';
 import type { ApprovalStore, AuditActor, PendingApproval } from '../interfaces';
 import type { AgentResult } from '../interfaces';
@@ -94,7 +94,29 @@ export class ApprovalService {
     decision: { approved: true } | { approved: false; reason?: string },
     options?: SettleApprovalOptions,
   ): Promise<AgentResult | ToolExecutionResult> {
-    const claimed = await this.store.claim(approvalId);
+    if (options?.signal?.aborted) {
+      throw new ExecutionCancelledError();
+    }
+
+    let abortHandler: (() => void) | undefined;
+    let claimed: PendingApproval | null;
+
+    if (options?.signal) {
+      const abortPromise = new Promise<never>((_, reject) => {
+        abortHandler = () => reject(new ExecutionCancelledError());
+        options.signal!.addEventListener('abort', abortHandler, { once: true });
+      });
+
+      try {
+        claimed = await Promise.race([this.store.claim(approvalId), abortPromise]);
+      } finally {
+        if (abortHandler) {
+          options.signal.removeEventListener('abort', abortHandler);
+        }
+      }
+    } else {
+      claimed = await this.store.claim(approvalId);
+    }
 
     if (!claimed) {
       throw new ApprovalNotFoundError(approvalId);

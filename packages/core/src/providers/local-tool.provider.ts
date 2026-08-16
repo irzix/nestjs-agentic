@@ -2,7 +2,12 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import { APPROVAL_STORE, IDEMPOTENCY_STORE, POLICY_INSTANCES } from '../constants';
-import { ApprovalToolNotFoundError, PolicyNotRegisteredError } from '../errors';
+import {
+  ApprovalToolNotFoundError,
+  ExecutionCancelledError,
+  ExecutionLimitExceededError,
+  PolicyNotRegisteredError,
+} from '../errors';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
 import { auditEnvelope } from '../interfaces';
@@ -111,6 +116,14 @@ export class LocalToolProvider {
     args: Record<string, unknown>,
     agentContext: AgentContext,
   ): Promise<ToolExecutionResult> {
+    if (agentContext.signal?.aborted) {
+      throw new ExecutionCancelledError();
+    }
+
+    if (isDeadlineExceeded(agentContext.deadline)) {
+      throw new ExecutionLimitExceededError('timeout', 0);
+    }
+
     const tool = this.discoverToolByName(toolSetTokensOrInstances, toolName);
     if (!tool) {
       throw new ApprovalToolNotFoundError(toolName);
@@ -200,6 +213,14 @@ export class LocalToolProvider {
         args: Record<string, unknown>;
         toolCallId?: string;
       }): Promise<ToolExecutionResult> => {
+        if (agentContext.signal?.aborted) {
+          throw new ExecutionCancelledError();
+        }
+
+        if (isDeadlineExceeded(agentContext.deadline)) {
+          throw new ExecutionLimitExceededError('timeout', 0);
+        }
+
         const idempotencyKey =
           (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
         if (idempotencyKey && this.idempotencyStore) {
@@ -394,4 +415,14 @@ export class LocalToolProvider {
 
     return { success: true, data };
   }
+}
+
+/**
+ * Safely evaluates if a deadline timestamp has expired, supporting both Date objects
+ * and serialized ISO-8601 string representations.
+ */
+function isDeadlineExceeded(deadline?: Date | string | number): boolean {
+  if (!deadline) return false;
+  const time = deadline instanceof Date ? deadline.getTime() : new Date(deadline).getTime();
+  return !isNaN(time) && Date.now() > time;
 }
