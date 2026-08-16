@@ -61,7 +61,7 @@ export async function runOrchestrationTests() {
 
   const mockAdapter = {
     async execute(input: any) {
-      if (input.message.includes('Hanging Task')) {
+      if (input.sessionId?.includes('agent_slow') && input.message.includes('Hanging Task')) {
         await new Promise((r) => setTimeout(r, 300));
       }
       if (input.message.includes('Refinement Feedback')) {
@@ -235,6 +235,28 @@ export async function runOrchestrationTests() {
     const result = await parallelRunner.runParallel('sess_p7', parentContext, tasks);
     assert(result.failedCount === 2, 'Test 7a: Pre-aborted signal cancels all tasks immediately');
     assert(result.results[0].error!.includes('aborted'), 'Test 7b: Failure reason notes cancellation');
+
+    // 7c. Mid-execution in-flight cancellation
+    const inFlightController = new AbortController();
+    const inFlightRunner = new ParallelSubAgentRunner(runner, {
+      signal: inFlightController.signal,
+      timeoutMs: 1000,
+    });
+
+    const startTime = Date.now();
+    // Schedule abort after 20ms while 300ms hanging task is in-flight
+    setTimeout(() => inFlightController.abort(), 20);
+
+    const inFlightResult = await inFlightRunner.runParallel('sess_p7_inflight', parentContext, [
+      { agentName: 'agent_slow', message: 'Hanging Task' },
+    ]);
+    const duration = Date.now() - startTime;
+
+    assert(inFlightResult.failedCount === 1, 'Test 7c: In-flight abort cancelled running sub-agent');
+    assert(
+      duration < 200,
+      `Test 7d: Cancelled immediately in ${duration}ms without waiting for 1000ms timeout`,
+    );
   } catch (err: any) {
     assert(false, 'Test 7: ParallelSubAgentRunner AbortSignal Cancellation', err.message);
   }

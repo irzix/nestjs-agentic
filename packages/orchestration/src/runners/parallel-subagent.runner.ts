@@ -106,7 +106,9 @@ export class ParallelSubAgentRunner {
 
         attempts++;
 
-        let timer: NodeJS.Timeout;
+        let timer: NodeJS.Timeout | undefined;
+        let abortHandler: (() => void) | undefined;
+
         const timeoutPromise = new Promise<SubAgentResult>((resolve) => {
           timer = setTimeout(() => {
             resolve({
@@ -119,47 +121,132 @@ export class ParallelSubAgentRunner {
           }, this.options.timeoutMs);
         });
 
+        const abortPromise = new Promise<SubAgentResult>((resolve) => {
+          if (activeSignal?.aborted) {
+            resolve({
+              agentName: task.agentName,
+              status: 'failed',
+              response: '',
+              toolCount: 0,
+              error: 'Sub-agent run was aborted',
+            });
+            return;
+          }
+          if (activeSignal) {
+            abortHandler = () => {
+              resolve({
+                agentName: task.agentName,
+                status: 'failed',
+                response: '',
+                toolCount: 0,
+                error: 'Sub-agent run was aborted',
+              });
+            };
+            activeSignal.addEventListener('abort', abortHandler, { once: true });
+          }
+        });
+
         try {
           lastResult = await Promise.race([
             this.delegator.delegate(parentSessionId, parentSecurityContext, task, undefined, activeSignal),
             timeoutPromise,
+            abortPromise,
           ]);
         } finally {
-          clearTimeout(timer!);
+          if (timer) clearTimeout(timer);
+          if (activeSignal && abortHandler) {
+            activeSignal.removeEventListener('abort', abortHandler);
+          }
         }
 
-        if (lastResult.status === 'success') {
+        if (lastResult.status === 'success' || activeSignal?.aborted) {
           return lastResult;
         }
       }
 
-      // Fallback agent execution if primary sub-agent fails all retries
-      if (this.options.fallbackAgentName && this.options.fallbackAgentName !== task.agentName) {
+      // Fallback agent execution if primary sub-agent fails all retries and is not aborted
+      if (!activeSignal?.aborted && this.options.fallbackAgentName && this.options.fallbackAgentName !== task.agentName) {
         const fallbackTask: SubAgentTask = {
           ...task,
           agentName: this.options.fallbackAgentName,
         };
 
-        const fallbackResult = await this.delegator.delegate(
-          parentSessionId,
-          parentSecurityContext,
-          fallbackTask,
-          undefined,
-          activeSignal,
-        );
-        if (fallbackResult.status === 'success') {
-          return {
-            ...fallbackResult,
-            response: `[Fallback Agent ${this.options.fallbackAgentName}]: ${fallbackResult.response}`,
-          };
+        let fallbackTimer: NodeJS.Timeout | undefined;
+        let fallbackAbortHandler: (() => void) | undefined;
+
+        const fallbackTimeoutPromise = new Promise<SubAgentResult>((resolve) => {
+          fallbackTimer = setTimeout(() => {
+            resolve({
+              agentName: this.options.fallbackAgentName!,
+              status: 'failed',
+              response: '',
+              toolCount: 0,
+              error: `Fallback sub-agent ${this.options.fallbackAgentName} timed out after ${this.options.timeoutMs}ms`,
+            });
+          }, this.options.timeoutMs);
+        });
+
+        const fallbackAbortPromise = new Promise<SubAgentResult>((resolve) => {
+          if (activeSignal?.aborted) {
+            resolve({
+              agentName: this.options.fallbackAgentName!,
+              status: 'failed',
+              response: '',
+              toolCount: 0,
+              error: 'Sub-agent run was aborted',
+            });
+            return;
+          }
+          if (activeSignal) {
+            fallbackAbortHandler = () => {
+              resolve({
+                agentName: this.options.fallbackAgentName!,
+                status: 'failed',
+                response: '',
+                toolCount: 0,
+                error: 'Sub-agent run was aborted',
+              });
+            };
+            activeSignal.addEventListener('abort', fallbackAbortHandler, { once: true });
+          }
+        });
+
+        try {
+          const fallbackResult = await Promise.race([
+            this.delegator.delegate(
+              parentSessionId,
+              parentSecurityContext,
+              fallbackTask,
+              undefined,
+              activeSignal,
+            ),
+            fallbackTimeoutPromise,
+            fallbackAbortPromise,
+          ]);
+
+          if (fallbackResult.status === 'success') {
+            return {
+              ...fallbackResult,
+              response: `[Fallback Agent ${this.options.fallbackAgentName}]: ${fallbackResult.response}`,
+            };
+          }
+          lastResult = fallbackResult;
+        } finally {
+          if (fallbackTimer) clearTimeout(fallbackTimer);
+          if (activeSignal && fallbackAbortHandler) {
+            activeSignal.removeEventListener('abort', fallbackAbortHandler);
+          }
         }
       }
 
       return lastResult!;
     };
 
-    const results = await mapConcurrent(tasks, this.options.maxConcurrency, (t) =>
-      executeTaskWithRetryAndFallback(t),
+    const results = await mapConcurrent(
+      tasks,
+      this.options.maxConcurrency,
+      this.options.signal,
+      (t) => executeTaskWithRetryAndFallback(t),
     );
     const successCount = results.filter((r) => r.status === 'success').length;
     const failedCount = results.length - successCount;
@@ -200,11 +287,12 @@ export class ParallelSubAgentRunner {
 }
 
 /**
- * Runs tasks with a maximum concurrency limit.
+ * Runs tasks with a maximum concurrency limit and cancellation awareness.
  */
 async function mapConcurrent<T, R>(
   items: T[],
   concurrency: number | undefined,
+  signal: AbortSignal | undefined,
   fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
   if (!concurrency || concurrency >= items.length || concurrency < 1) {
@@ -216,12 +304,23 @@ async function mapConcurrent<T, R>(
 
   const workers = Array.from({ length: concurrency }, async () => {
     while (currentIndex < items.length) {
+      if (signal?.aborted) {
+        break;
+      }
       const index = currentIndex++;
       results[index] = await fn(items[index]);
     }
   });
 
   await Promise.all(workers);
+
+  // Fill in any unstarted tasks due to abort
+  for (let i = 0; i < items.length; i++) {
+    if (results[i] === undefined) {
+      results[i] = (await fn(items[i])) as R;
+    }
+  }
+
   return results;
 }
 
