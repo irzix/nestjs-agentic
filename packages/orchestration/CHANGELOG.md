@@ -1,5 +1,21 @@
 # @nestjs-agentic/orchestration
 
+## 0.7.0
+
+### Minor Changes
+
+- 92dabec: Add bounded concurrency (`maxConcurrency`) and `AbortSignal` cancellation support to `ParallelSubAgentRunner`, `SubAgentDelegator`, and `RefinementLoopRunner`.
+
+  - adds `maxConcurrency` option to `ParallelRunnerOptions` to throttle concurrent sub-agent executions without unbounded fan-out
+  - adds `signal` support across `SubAgentTask`, `ParallelRunnerOptions`, and `RefinementLoopOptions` for graceful cancellation
+  - adds unit test coverage for bounded concurrency limits and early abort handling
+
+### Patch Changes
+
+- Updated dependencies [73181d8]
+- Updated dependencies [e0f6c3a]
+  - @nestjs-agentic/core@0.7.0
+
 ## 0.6.0
 
 ### Patch Changes
