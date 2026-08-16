@@ -555,14 +555,56 @@ export async function runAuditTrailTests() {
     // Test OpenTelemetryGenAiSink with custom exporter callback
     let recordedAttrs: Record<string, unknown> | null = null;
     const otelSink = new OpenTelemetryGenAiSink({
-      exporter: (attributes) => {
+      system: 'custom-ai-service',
+      exporter: async (attributes) => {
         recordedAttrs = attributes;
       },
     });
 
     await otelSink.record(sampleEvent);
     assert(recordedAttrs !== null, 'Test 11i: OpenTelemetryGenAiSink dispatches attributes to exporter');
-    assert(recordedAttrs?.[OpenTelemetryGenAiConventions.AGENT_NAME] === 'SecurityReviewer', 'Test 11j: Exporter receives valid OTel attributes');
+    assert(recordedAttrs?.[OpenTelemetryGenAiConventions.SYSTEM] === 'custom-ai-service', 'Test 11j: Custom system override is applied');
+    assert(recordedAttrs?.[OpenTelemetryGenAiConventions.AGENT_NAME] === 'SecurityReviewer', 'Test 11k: Exporter receives valid OTel attributes');
+
+    // Test Token Usage & Model Attributes Mapping
+    const executionEventWithUsage: any = {
+      at: new Date(),
+      sessionId: 'sess_otel_usage',
+      traceId: 'trc_otel_usage',
+      type: 'approval_settled',
+      agentName: 'CodeReviewer',
+      toolName: 'diffCheck',
+      outcome: 'approved',
+      model: 'gpt-4o-2024-08-06',
+      usage: {
+        promptTokens: 1200,
+        completionTokens: 350,
+        totalTokens: 1550,
+      },
+    };
+
+    const usageAttrs = toOpenTelemetryGenAiAttributes(executionEventWithUsage);
+    assert(usageAttrs[OpenTelemetryGenAiConventions.REQUEST_MODEL] === 'gpt-4o-2024-08-06', 'Test 11l: gen_ai.request.model mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.RESPONSE_MODEL] === 'gpt-4o-2024-08-06', 'Test 11m: gen_ai.response.model mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.USAGE_INPUT_TOKENS] === 1200, 'Test 11n: gen_ai.usage.input_tokens mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.USAGE_OUTPUT_TOKENS] === 350, 'Test 11o: gen_ai.usage.output_tokens mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.USAGE_TOTAL_TOKENS] === 1550, 'Test 11p: gen_ai.usage.total_tokens mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.APPROVAL_OUTCOME] === 'approved', 'Test 11q: gen_ai.approval.outcome mapped with constant');
+
+    // Test Exporter Failure Resilience (must not throw or crash runtime)
+    const failingSink = new OpenTelemetryGenAiSink({
+      exporter: () => {
+        throw new Error('Network timeout in OpenTelemetry Collector');
+      },
+    });
+
+    let sinkThrew = false;
+    try {
+      await failingSink.record(sampleEvent);
+    } catch {
+      sinkThrew = true;
+    }
+    assert(!sinkThrew, 'Test 11r: OpenTelemetryGenAiSink isolates exporter failures without throwing');
   } catch (err: any) {
     assert(false, 'Test 11: OpenTelemetry GenAI Semantic Conventions', err.message);
   }

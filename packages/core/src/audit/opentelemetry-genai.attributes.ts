@@ -36,23 +36,66 @@ export const OpenTelemetryGenAiConventions = {
   POLICY_NAME: 'gen_ai.policy.name',
   POLICY_DECISION: 'gen_ai.policy.decision',
   APPROVAL_ID: 'gen_ai.approval.id',
+  APPROVAL_OUTCOME: 'gen_ai.approval.outcome',
+  ERROR_MESSAGE: 'gen_ai.error.message',
 } as const;
 
 /**
- * Translates a framework AuditEvent into standard OpenTelemetry GenAI semantic attributes.
+ * Options for converting framework AuditEvents to OpenTelemetry GenAI semantic attributes.
+ */
+export interface ToOpenTelemetryAttributesOptions {
+  /** Override the default system identifier. Default: `'nestjs-agentic'` */
+  system?: string;
+}
+
+/**
+ * Translates a framework AuditEvent into standard OpenTelemetry GenAI semantic attributes,
+ * mapping model identity and token accounting metrics.
  *
  * @param event - The framework audit event to convert.
+ * @param options - Optional configuration overrides (e.g. system name).
  * @returns Key-value dictionary conforming to OpenTelemetry GenAI semantic conventions.
  */
-export function toOpenTelemetryGenAiAttributes(event: AuditEvent): Record<string, unknown> {
+export function toOpenTelemetryGenAiAttributes(
+  event: AuditEvent,
+  options?: ToOpenTelemetryAttributesOptions,
+): Record<string, unknown> {
   const attributes: Record<string, unknown> = {
-    [OpenTelemetryGenAiConventions.SYSTEM]: 'nestjs-agentic',
+    [OpenTelemetryGenAiConventions.SYSTEM]: options?.system ?? 'nestjs-agentic',
     [OpenTelemetryGenAiConventions.SESSION_ID]: event.sessionId,
     [OpenTelemetryGenAiConventions.TRACE_ID]: event.traceId,
   };
 
   if (event.tenantId) {
     attributes[OpenTelemetryGenAiConventions.TENANT_ID] = event.tenantId;
+  }
+
+  // Map Model attributes if present
+  const anyEvent = event as any;
+  const modelName = anyEvent.model ?? anyEvent.genAiModel ?? anyEvent.requestModel;
+  if (modelName) {
+    attributes[OpenTelemetryGenAiConventions.REQUEST_MODEL] = modelName;
+    attributes[OpenTelemetryGenAiConventions.RESPONSE_MODEL] = modelName;
+  }
+
+  // Map Token Usage attributes if present
+  const usage = anyEvent.usage;
+  const inputTokens = usage?.inputTokens ?? usage?.promptTokens ?? anyEvent.promptTokens;
+  const outputTokens = usage?.outputTokens ?? usage?.completionTokens ?? anyEvent.completionTokens;
+  const totalTokens = usage?.totalTokens ?? anyEvent.totalTokens ?? (
+    inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined
+  );
+
+  if (inputTokens !== undefined) {
+    attributes[OpenTelemetryGenAiConventions.USAGE_INPUT_TOKENS] = inputTokens;
+    attributes[OpenTelemetryGenAiConventions.USAGE_PROMPT_TOKENS] = inputTokens;
+  }
+  if (outputTokens !== undefined) {
+    attributes[OpenTelemetryGenAiConventions.USAGE_OUTPUT_TOKENS] = outputTokens;
+    attributes[OpenTelemetryGenAiConventions.USAGE_COMPLETION_TOKENS] = outputTokens;
+  }
+  if (totalTokens !== undefined) {
+    attributes[OpenTelemetryGenAiConventions.USAGE_TOTAL_TOKENS] = totalTokens;
   }
 
   switch (event.type) {
@@ -87,7 +130,7 @@ export function toOpenTelemetryGenAiAttributes(event: AuditEvent): Record<string
       attributes[OpenTelemetryGenAiConventions.AGENT_NAME] = event.agentName;
       attributes[OpenTelemetryGenAiConventions.TOOL_NAME] = event.toolName;
       attributes[OpenTelemetryGenAiConventions.APPROVAL_ID] = event.approvalId;
-      attributes['gen_ai.approval.outcome'] = event.outcome;
+      attributes[OpenTelemetryGenAiConventions.APPROVAL_OUTCOME] = event.outcome;
       if (event.actor?.userId) {
         attributes[OpenTelemetryGenAiConventions.USER_ID] = event.actor.userId;
       }
@@ -105,7 +148,7 @@ export function toOpenTelemetryGenAiAttributes(event: AuditEvent): Record<string
       attributes[OpenTelemetryGenAiConventions.AGENT_NAME] = event.agentName;
       attributes[OpenTelemetryGenAiConventions.TOOL_NAME] = event.toolName;
       attributes[OpenTelemetryGenAiConventions.APPROVAL_ID] = event.approvalId;
-      attributes['gen_ai.error.message'] = event.error;
+      attributes[OpenTelemetryGenAiConventions.ERROR_MESSAGE] = event.error;
       break;
   }
 
