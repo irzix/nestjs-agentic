@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { StateStore } from '../../interfaces/state-store.interface';
+import { safeDeserialize, validateSqlIdentifier } from './postgres-utils';
 
 /**
  * Generic interface for PostgreSQL database clients or connection pools
@@ -29,11 +30,11 @@ export class PostgresStateStore implements StateStore {
   private readonly tableName: string;
   private readonly keyPrefix: string;
   private readonly autoCreateTable: boolean;
-  private tableInitialized = false;
+  private tableInitPromise?: Promise<void>;
 
   constructor(options: PostgresStateStoreOptions) {
     this.client = options.client;
-    this.tableName = options.tableName ?? 'agentic_state';
+    this.tableName = validateSqlIdentifier(options.tableName ?? 'agentic_state');
     this.keyPrefix = options.keyPrefix ?? 'agentic:state:';
     this.autoCreateTable = options.autoCreateTable ?? true;
   }
@@ -42,22 +43,29 @@ export class PostgresStateStore implements StateStore {
     return `${this.keyPrefix}${key}`;
   }
 
-  private async ensureTable(): Promise<void> {
-    if (!this.autoCreateTable || this.tableInitialized) return;
-    try {
-      await this.client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.tableName} (
-          key VARCHAR(255) PRIMARY KEY,
-          value JSONB NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          expires_at TIMESTAMPTZ
-        );
-        CREATE INDEX IF NOT EXISTS idx_${this.tableName}_expires ON ${this.tableName} (expires_at);
-      `);
-    } catch {
-      // Table might already exist or concurrent creation
+  private ensureTable(): Promise<void> {
+    if (!this.autoCreateTable) return Promise.resolve();
+    if (!this.tableInitPromise) {
+      this.tableInitPromise = (async () => {
+        try {
+          await this.client.query(`
+            CREATE TABLE IF NOT EXISTS ${this.tableName} (
+              key VARCHAR(255) PRIMARY KEY,
+              value JSONB NOT NULL,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              expires_at TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_${this.tableName}_expires ON ${this.tableName} (expires_at) WHERE expires_at IS NOT NULL;
+          `);
+        } catch (err: any) {
+          // Ignore Postgres "already exists" errors (42P07 for table, 42710 for index)
+          if (err?.code && !['42P07', '42710'].includes(err.code)) {
+            throw err;
+          }
+        }
+      })();
     }
-    this.tableInitialized = true;
+    return this.tableInitPromise;
   }
 
   async get<T = unknown>(key: string): Promise<T | null> {
@@ -69,8 +77,7 @@ export class PostgresStateStore implements StateStore {
     );
 
     if (result.rows.length === 0) return null;
-    const raw = result.rows[0].value;
-    return (typeof raw === 'string' ? JSON.parse(raw) : raw) as T;
+    return safeDeserialize<T>(result.rows[0].value);
   }
 
   async set<T = unknown>(key: string, value: T, ttlSeconds?: number): Promise<void> {

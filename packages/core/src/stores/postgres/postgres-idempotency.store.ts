@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { IdempotencyRecord, IdempotencyStore } from '../../interfaces/idempotency.interface';
 import type { GenericPostgresClient } from './postgres-state.store';
+import { safeDeserialize, validateSqlIdentifier } from './postgres-utils';
 
 export interface PostgresIdempotencyStoreOptions {
   /** Database client or pool connection instance. */
@@ -25,11 +26,11 @@ export class PostgresIdempotencyStore implements IdempotencyStore {
   private readonly keyPrefix: string;
   private readonly ttlSeconds?: number;
   private readonly autoCreateTable: boolean;
-  private tableInitialized = false;
+  private tableInitPromise?: Promise<void>;
 
   constructor(options: PostgresIdempotencyStoreOptions) {
     this.client = options.client;
-    this.tableName = options.tableName ?? 'agentic_idempotency';
+    this.tableName = validateSqlIdentifier(options.tableName ?? 'agentic_idempotency');
     this.keyPrefix = options.keyPrefix ?? 'agentic:idempotency:';
     this.ttlSeconds = options.ttlSeconds;
     this.autoCreateTable = options.autoCreateTable ?? true;
@@ -39,22 +40,29 @@ export class PostgresIdempotencyStore implements IdempotencyStore {
     return `${this.keyPrefix}${id}`;
   }
 
-  private async ensureTable(): Promise<void> {
-    if (!this.autoCreateTable || this.tableInitialized) return;
-    try {
-      await this.client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.tableName} (
-          key VARCHAR(255) PRIMARY KEY,
-          data JSONB NOT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          expires_at TIMESTAMPTZ
-        );
-        CREATE INDEX IF NOT EXISTS idx_${this.tableName}_expires ON ${this.tableName} (expires_at);
-      `);
-    } catch {
-      // Table might already exist
+  private ensureTable(): Promise<void> {
+    if (!this.autoCreateTable) return Promise.resolve();
+    if (!this.tableInitPromise) {
+      this.tableInitPromise = (async () => {
+        try {
+          await this.client.query(`
+            CREATE TABLE IF NOT EXISTS ${this.tableName} (
+              key VARCHAR(255) PRIMARY KEY,
+              data JSONB NOT NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              expires_at TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_${this.tableName}_expires ON ${this.tableName} (expires_at) WHERE expires_at IS NOT NULL;
+          `);
+        } catch (err: any) {
+          // Ignore Postgres "already exists" errors (42P07 for table, 42710 for index)
+          if (err?.code && !['42P07', '42710'].includes(err.code)) {
+            throw err;
+          }
+        }
+      })();
     }
-    this.tableInitialized = true;
+    return this.tableInitPromise;
   }
 
   async get<T = unknown>(key: string): Promise<IdempotencyRecord<T> | null> {
@@ -102,7 +110,7 @@ export class PostgresIdempotencyStore implements IdempotencyStore {
 
   private deserialize<T>(raw: unknown): IdempotencyRecord<T> | null {
     if (!raw) return null;
-    const parsed = (typeof raw === 'string' ? JSON.parse(raw) : JSON.parse(JSON.stringify(raw))) as IdempotencyRecord<T>;
+    const parsed = safeDeserialize<IdempotencyRecord<T>>(raw);
     return {
       ...parsed,
       createdAt: new Date(parsed.createdAt),

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { SessionStore } from '../../interfaces/session.interface';
 import type { GenericPostgresClient } from './postgres-state.store';
+import { safeDeserialize, validateSqlIdentifier } from './postgres-utils';
 
 export interface PostgresSessionStoreOptions {
   /** Database client or pool connection instance. */
@@ -25,11 +26,11 @@ export class PostgresSessionStore implements SessionStore {
   private readonly keyPrefix: string;
   private readonly ttlSeconds?: number;
   private readonly autoCreateTable: boolean;
-  private tableInitialized = false;
+  private tableInitPromise?: Promise<void>;
 
   constructor(options: PostgresSessionStoreOptions) {
     this.client = options.client;
-    this.tableName = options.tableName ?? 'agentic_sessions';
+    this.tableName = validateSqlIdentifier(options.tableName ?? 'agentic_sessions');
     this.keyPrefix = options.keyPrefix ?? 'agentic:session:';
     this.ttlSeconds = options.ttlSeconds;
     this.autoCreateTable = options.autoCreateTable ?? true;
@@ -39,22 +40,29 @@ export class PostgresSessionStore implements SessionStore {
     return `${this.keyPrefix}${sessionId}`;
   }
 
-  private async ensureTable(): Promise<void> {
-    if (!this.autoCreateTable || this.tableInitialized) return;
-    try {
-      await this.client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.tableName} (
-          session_id VARCHAR(255) PRIMARY KEY,
-          data JSONB NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          expires_at TIMESTAMPTZ
-        );
-        CREATE INDEX IF NOT EXISTS idx_${this.tableName}_expires ON ${this.tableName} (expires_at);
-      `);
-    } catch {
-      // Table might already exist
+  private ensureTable(): Promise<void> {
+    if (!this.autoCreateTable) return Promise.resolve();
+    if (!this.tableInitPromise) {
+      this.tableInitPromise = (async () => {
+        try {
+          await this.client.query(`
+            CREATE TABLE IF NOT EXISTS ${this.tableName} (
+              session_id VARCHAR(255) PRIMARY KEY,
+              data JSONB NOT NULL,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              expires_at TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_${this.tableName}_expires ON ${this.tableName} (expires_at) WHERE expires_at IS NOT NULL;
+          `);
+        } catch (err: any) {
+          // Ignore Postgres "already exists" errors (42P07 for table, 42710 for index)
+          if (err?.code && !['42P07', '42710'].includes(err.code)) {
+            throw err;
+          }
+        }
+      })();
     }
-    this.tableInitialized = true;
+    return this.tableInitPromise;
   }
 
   async get(sessionId: string): Promise<unknown | null> {
@@ -66,9 +74,7 @@ export class PostgresSessionStore implements SessionStore {
     );
 
     if (result.rows.length === 0) return null;
-    const raw = result.rows[0].data;
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return JSON.parse(JSON.stringify(parsed));
+    return safeDeserialize(result.rows[0].data);
   }
 
   async set(sessionId: string, data: unknown): Promise<void> {

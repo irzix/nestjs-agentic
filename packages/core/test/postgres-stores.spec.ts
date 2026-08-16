@@ -338,6 +338,88 @@ export async function runPostgresStoresTests() {
     assert(false, 'Test 8: autoCreateTable disabled', err.message);
   }
 
+  // 9. SQL Injection Prevention in tableName
+  try {
+    const { client } = createFakePostgres();
+    let caughtState = false;
+    let caughtSession = false;
+
+    try {
+      new PostgresStateStore({ client, tableName: 'users; DROP TABLE users; --' });
+    } catch {
+      caughtState = true;
+    }
+
+    try {
+      new PostgresSessionStore({ client, tableName: 'agentic_sessions" OR 1=1 --' });
+    } catch {
+      caughtSession = true;
+    }
+
+    assert(caughtState, 'Test 9a: PostgresStateStore rejects malicious SQL in tableName');
+    assert(caughtSession, 'Test 9b: PostgresSessionStore rejects malicious SQL in tableName');
+  } catch (err: any) {
+    assert(false, 'Test 9: SQL Injection Prevention', err.message);
+  }
+
+  // 10. Concurrent ensureTable() Calls Deduplication
+  try {
+    const { client, queries } = createFakePostgres();
+    const store = new PostgresStateStore({ client, tableName: 'parallel_tbl' });
+
+    // Run 5 parallel operations
+    await Promise.all([
+      store.set('key1', 'val1'),
+      store.set('key2', 'val2'),
+      store.get('key1'),
+      store.set('key3', 'val3'),
+      store.get('key2'),
+    ]);
+
+    const createTableQueries = queries.filter((q) => q.sql.includes('CREATE TABLE IF NOT EXISTS parallel_tbl'));
+    assert(createTableQueries.length === 1, 'Test 10: Concurrent operations run ensureTable() exactly once');
+  } catch (err: any) {
+    assert(false, 'Test 10: Concurrent ensureTable', err.message);
+  }
+
+  // 11. Non-Recoverable Database Error Propagation
+  try {
+    const brokenClient: GenericPostgresClient = {
+      async query() {
+        const error: any = new Error('Connection terminated unexpectedly');
+        error.code = '08006';
+        throw error;
+      },
+    };
+
+    const store = new PostgresStateStore({ client: brokenClient });
+    let caught = false;
+    try {
+      await store.get('any');
+    } catch (err: any) {
+      if (err.code === '08006') caught = true;
+    }
+
+    assert(caught, 'Test 11: Non-recoverable database connection errors propagate');
+  } catch (err: any) {
+    assert(false, 'Test 11: Database Error Propagation', err.message);
+  }
+
+  // 12. Partial Index Strategy
+  try {
+    const { client, queries } = createFakePostgres();
+    const store = new PostgresStateStore({ client, tableName: 'indexed_tbl' });
+    await store.get('check');
+
+    const indexQuery = queries.find((q) => q.sql.includes('CREATE INDEX IF NOT EXISTS'));
+    assert(
+      indexQuery !== undefined && indexQuery.sql.includes('WHERE expires_at IS NOT NULL'),
+      'Test 12: Partial index with WHERE expires_at IS NOT NULL created',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 12: Partial Index Strategy', err.message);
+  }
+
   console.log(`\n  📊 PostgreSQL Stores Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('PostgreSQL Stores Tests Failed');
