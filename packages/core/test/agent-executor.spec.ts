@@ -7,6 +7,7 @@ import {
   Context,
   ExecutionCancelledError,
   ExecutionLimitExceededError,
+  InMemoryApprovalStore,
   LocalToolProvider,
   MockModelAdapter,
   Param,
@@ -25,7 +26,6 @@ import type {
   PolicyResult,
   ToolPolicy,
 } from '../src';
-import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
 
 class RefundLimitPolicy implements ToolPolicy {
   async evaluate(

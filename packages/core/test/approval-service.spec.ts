@@ -23,9 +23,9 @@ import {
   ApprovalCheckpointVersionError,
   ApprovalExpiredError,
   ApprovalNotFoundError,
+  InMemoryApprovalStore,
+  InMemorySessionStore,
 } from '../src';
-import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
-import { InMemorySessionStore } from '../src/stores/in-memory-session.store';
 
 class ApprovalNeededPolicy implements ToolPolicy {
   async evaluate(

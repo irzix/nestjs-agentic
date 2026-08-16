@@ -65,13 +65,13 @@ Goal: run a complete, governed agent turn without requiring LangGraph or another
 Goal: make executions safe to pause, recover, inspect, and operate in production environments.
 
 - [x] Persist and replay conversation history per session, scoped by tenant.
-- [x] Add idempotency support and safe retry behavior for side-effecting tools (`RedisIdempotencyStore`, `IdempotencyPolicy`).
-- [x] Publish reusable behavioral contract suites for approval and session stores.
-- [ ] Introduce durable, versioned execution checkpoints and mid-round turn recovery ([#33](https://github.com/irzix/nestjs-agentic/issues/33)).
-- [ ] Propagate cancellation (`AbortSignal`) and deadlines through runtime, tools, and stores ([#31](https://github.com/irzix/nestjs-agentic/issues/31)).
-- [ ] Implement Tri-Rail Guardrails with post-execution tool output sanitization and canary tokens ([#49](https://github.com/irzix/nestjs-agentic/issues/49)).
+- [x] Add idempotency support and safe retry behavior for side-effecting tools (`RedisIdempotencyStore`, `PostgresIdempotencyStore`, `IdempotencyPolicy`).
+- [x] Publish reusable behavioral contract suites for approval, session, and idempotency stores.
+- [x] Introduce durable, versioned execution checkpoints and mid-round turn recovery ([#33](https://github.com/irzix/nestjs-agentic/issues/33)).
+- [x] Propagate cancellation (`AbortSignal`) and deadlines through runtime, tools, and stores ([#31](https://github.com/irzix/nestjs-agentic/issues/31)).
+- [x] Implement Tri-Rail Guardrails with post-execution tool output sanitization and canary tokens ([#49](https://github.com/irzix/nestjs-agentic/issues/49)).
+- [x] PostgreSQL persistence adapters for state, session, approval, and idempotency stores ([#34](https://github.com/irzix/nestjs-agentic/issues/34)).
 - [ ] Standardize formal ReAct event lifecycles (`thought`, `action_call`, `observation`) and OpenTelemetry GenAI attributes ([#32](https://github.com/irzix/nestjs-agentic/issues/32), [#56](https://github.com/irzix/nestjs-agentic/issues/56)).
-- [ ] PostgreSQL persistence adapters for state, session, approval, and idempotency stores ([#34](https://github.com/irzix/nestjs-agentic/issues/34)).
 - [ ] Integration test suite for crash recovery and HITL approvals ([#30](https://github.com/irzix/nestjs-agentic/issues/30)).
 
 ---

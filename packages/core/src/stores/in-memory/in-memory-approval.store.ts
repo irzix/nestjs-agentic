@@ -1,4 +1,4 @@
-import type { ApprovalStore, PendingApproval } from '../interfaces';
+import type { ApprovalStore, PendingApproval } from '../../interfaces';
 
 /**
  * In-memory implementation of ApprovalStore.

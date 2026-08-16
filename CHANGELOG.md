@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-16
+
+### Added
+
+- **PostgreSQL Persistence Adapters (`@nestjs-agentic/core`)**:
+  - `GenericPostgresClient`: Interface for SQL query execution across `pg.Pool`, `pg.Client`, TypeORM QueryRunner, Kysely, and Slonik.
+  - `PostgresStateStore`: PostgreSQL-backed `StateStore` for key-value runtime state and in-flight checkpoints with TTL and pattern clearing.
+  - `PostgresSessionStore`: PostgreSQL-backed `SessionStore` with upsert support (`ON CONFLICT (session_id) DO UPDATE`) and TTL.
+  - `PostgresApprovalStore`: Atomic, exactly-once approval claiming via single-statement `DELETE ... RETURNING` with `Date` revival and expiry grace periods.
+  - `PostgresIdempotencyStore`: Tool deduplication store in PostgreSQL with TTL support.
+  - `validateSqlIdentifier` & `safeDeserialize`: SQL identifier injection protection and deep-cloning JSON deserializer.
+- **Durable In-Flight Execution Checkpoints (`@nestjs-agentic/core`)**:
+  - Versioned `InFlightCheckpoint` capturing turn progress, token budgets, and completed tool calls across multi-turn loops.
+  - `AgentRunner.resumeCheckpoint` and `AgentRunner.recoverLatestCheckpoint` with `checkpointTtlSeconds` configuration.
+- **Contract Test Suites**:
+  - `runSessionStoreContract`, `runApprovalStoreContract`, and `runIdempotencyStoreContract` verifying store implementations against behavioral contracts.
+- **Modular Store Directory Architecture**:
+  - Reorganized `stores/` into driver submodules (`in-memory/`, `redis/`, `postgres/`) with unified barrel exports.
+
 ## [0.4.0] - 2026-08-10
 
 ### Added

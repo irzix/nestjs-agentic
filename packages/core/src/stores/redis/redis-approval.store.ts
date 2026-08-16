@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { ApprovalStore, PendingApproval } from '../interfaces/approval.interface';
+import type { ApprovalStore, PendingApproval } from '../../interfaces/approval.interface';
 import type { GenericRedisClient } from './redis-state.store';
 
 export interface RedisApprovalStoreOptions {

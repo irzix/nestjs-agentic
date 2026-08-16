@@ -3,12 +3,12 @@ import { ModuleRef } from '@nestjs/core';
 import {
   Agent,
   AgentRunner,
+  InMemoryApprovalStore,
   LocalToolProvider,
   MockRuntimeAdapter,
   ToolDiscoveryService,
 } from '../src';
 import type { AgentConfig, AgentProvider, AgentResult } from '../src';
-import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
 
 @Agent({
   name: 'customer-agent',

@@ -33,7 +33,7 @@ Application services remain ordinary NestJS providers. The model runtime receive
 
 ## Current Capabilities
 
-The current release line is `0.4.x`. Core primitives are available; runtime, persistence, and orchestration packages remain experimental while their behavior is standardized.
+The current release line is `0.6.x`. Core primitives, persistence adapters, and durable execution checkpoints are production-intent; higher-order orchestration packages remain experimental while their contracts stabilize.
 
 | Area | Status | Scope |
 | --- | --- | --- |
@@ -43,12 +43,11 @@ The current release line is `0.4.x`. Core primitives are available; runtime, per
 | OpenAI model adapter | Available | `@nestjs-agentic/openai` for OpenAI and Chat Completions compatible endpoints such as Azure, Ollama, vLLM, Groq, and OpenRouter. |
 | Mock runtime and mock model | Available | Deterministic agent, tool, policy, and loop testing without a model API. |
 | Other model providers | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same contract. |
-| Human approval | Experimental | The runtime suspends a turn on `require_approval`; pause/resume is not durable across process restarts. |
-| ADK prototype and LangGraph adapter | Experimental | `@nestjs-agentic/adk` is currently a synthetic runtime prototype; `@nestjs-agentic/langgraph` provides limited compatibility with adapter-specific behavior. Full graph execution is not part of the current LangGraph adapter. |
-| Conversation history | Available | Replayed and persisted per session through `SessionStore`, scoped by tenant. Durable in-flight execution state is still planned. |
-| Streaming and state | Experimental | Shared abstractions exist, but execution recovery and adapter semantics are not yet unified. |
+| Human approval & HITL | Available | The runtime suspends a turn on `require_approval`; resumes durably via `ApprovalStore` and execution checkpoints. |
+| Persistence adapters | Available | In-memory, Redis, and PostgreSQL drivers for `SessionStore`, `StateStore`, `ApprovalStore`, and `IdempotencyStore`. |
+| Durable execution checkpoints | Available | In-flight execution checkpoints, crash recovery, and turn resumption without re-executing completed side-effects. |
+| ADK prototype and LangGraph adapter | Experimental | `@nestjs-agentic/adk` is currently a synthetic runtime prototype; `@nestjs-agentic/langgraph` provides compatibility with adapter-specific behavior. |
 | Memory, RAG, experience, orchestration, evaluation | Experimental | Opt-in packages available for evaluation and feedback. |
-| Durable execution and observability | Planned | Checkpoint recovery, resumable HITL, standardized tracing, and audit events are roadmap work. |
 
 See the [product roadmap](docs/ROADMAP.md) for milestones and production-readiness criteria.
 

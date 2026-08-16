@@ -634,33 +634,101 @@ Exported implementations:
 | --- | --- |
 | `InMemoryApprovalStore` | Default approval store; process-local. |
 | `RedisApprovalStore` | JSON-serializing `ApprovalStore` using a compatible Redis client. Supports optional TTL-based expiry. |
+| `PostgresApprovalStore` | PostgreSQL-backed `ApprovalStore` featuring atomic single-statement `DELETE ... RETURNING` claiming. |
 | `InMemorySessionStore` | Default session store; process-local. |
 | `RedisSessionStore` | JSON-serializing `SessionStore` using a compatible Redis client. Supports optional TTL-based expiry. |
+| `PostgresSessionStore` | PostgreSQL-backed `SessionStore` supporting upsert (`ON CONFLICT (session_id) DO UPDATE`) and TTL. |
 | `InMemoryIdempotencyStore` | Default `IDEMPOTENCY_STORE`; process-local. |
 | `RedisIdempotencyStore` | JSON-serializing `IdempotencyStore` using a compatible Redis client. |
+| `PostgresIdempotencyStore` | PostgreSQL-backed `IdempotencyStore` for tool execution deduplication. |
 | `InMemoryStateStore` | Default `STATE_STORE`; process-local. |
 | `RedisStateStore` | JSON-serializing `StateStore` using a compatible Redis client. |
+| `PostgresStateStore` | PostgreSQL-backed `StateStore` supporting JSONB and TTL-based expiry. |
+
+### PostgreSQL Stores Configuration
 
 ```typescript
-const sessionStore = new RedisSessionStore({
-  client: redisClient,
-  keyPrefix: 'agentic:session:',
-  ttlSeconds: 86400, // optional 24-hour expiration
+import {
+  PostgresApprovalStore,
+  PostgresIdempotencyStore,
+  PostgresSessionStore,
+  PostgresStateStore,
+  GenericPostgresClient,
+} from '@nestjs-agentic/core';
+
+// Compatible with pg.Pool, pg.Client, TypeORM QueryRunner, Kysely, Slonik:
+const pgClient: GenericPostgresClient = {
+  query: (sql, values) => pool.query(sql, values),
+};
+
+const sessionStore = new PostgresSessionStore({
+  client: pgClient,
+  tableName: 'agentic_sessions', // default
+  keyPrefix: 'agentic:session:', // default
+  ttlSeconds: 86400,
 });
 
-const stateStore = new RedisStateStore({
-  client: redisClient,
-  keyPrefix: 'agentic:state:',
+const approvalStore = new PostgresApprovalStore({
+  client: pgClient,
+  tableName: 'agentic_approvals', // default
+  expiryGraceSeconds: 300,
 });
 
-AgenticModule.forRoot({
-  defaultModel: { provider: 'mock', model: 'deterministic' },
-  sessionStore,
-  stateStore,
+const stateStore = new PostgresStateStore({
+  client: pgClient,
+  tableName: 'agentic_state', // default
+});
+
+const idempotencyStore = new PostgresIdempotencyStore({
+  client: pgClient,
+  tableName: 'agentic_idempotency', // default
+  ttlSeconds: 86400,
 });
 ```
 
-Registering a `StateStore` does not automatically persist `AgentRunner` executions in `0.4.x`.
+### Modular Store Directory Layout
+
+The `@nestjs-agentic/core` store adapters are organized by driver submodule with clean top-level barrel exports:
+- `@nestjs-agentic/core` (re-exports all stores)
+- `packages/core/src/stores/in-memory`
+- `packages/core/src/stores/redis`
+- `packages/core/src/stores/postgres`
+
+## Durable In-Flight Execution Checkpoints
+
+Execution checkpoints capture turn progress across tool execution boundaries, enabling durable crash recovery and replay without re-executing completed side-effects.
+
+```typescript
+interface InFlightCheckpoint {
+  version: 1;
+  agentName: string;
+  sessionId: string;
+  traceId: string;
+  tenantId?: string;
+  roundIndex: number;
+  totalTokensUsed: number;
+  messages: ModelMessage[];
+  completedToolCalls: ToolCallRecord[];
+  pendingApproval?: PendingApproval;
+  createdAt: number;
+}
+```
+
+### Checkpoint Recovery APIs
+
+```typescript
+// Resume directly from a persisted checkpoint snapshot
+const result = await runner.resumeCheckpoint(checkpoint, {
+  signal?: AbortSignal,
+  security?: AgentSecurityContext,
+});
+
+// Automatically recover and resume the latest mid-round checkpoint for a session
+const recovered = await runner.recoverLatestCheckpoint(sessionId, {
+  signal?: AbortSignal,
+  security?: AgentSecurityContext,
+});
+```
 
 ## Built-in Policies
 
