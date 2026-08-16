@@ -100,6 +100,9 @@ export async function runStreamingTests() {
     assert(finalAnswerIdx < completeIdx, 'Test 1i: "final_answer" precedes "complete"');
     assert((events[finalAnswerIdx] as any).sessionId === 'sess_stream_1', 'Test 1j: "final_answer" includes sessionId');
     assert(events[events.length - 1].type === 'complete', 'Test 1k: Final event is "complete"');
+    assert(Boolean((events[0] as any).id), 'Test 1l: "tool_start" carries correlation id');
+    assert((events[0] as any).id === (events[1] as any).id, 'Test 1m: "tool_start" and "action_call" share identical correlation id for deduplication');
+    assert((events[2] as any).id === (events[3] as any).id, 'Test 1n: "tool_result" and "action_observation" share identical correlation id for deduplication');
   } catch (err: any) {
     assert(false, 'Test 1: AgentRunner runStream Event Emitting', err.message);
   }

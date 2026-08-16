@@ -1,9 +1,14 @@
 import type { AuditEvent } from '../interfaces/audit.interface';
 
 /**
- * Standard OpenTelemetry Semantic Conventions for Generative AI Systems.
+ * Standard OpenTelemetry Semantic Conventions for Generative AI Systems (v1.28.0+).
  * 
- * @see CNCF / OpenTelemetry GenAI Specification: https://opentelemetry.io/docs/specs/semconv/gen-ai/
+ * Conforms directly to the CNCF OpenTelemetry GenAI Semantic Conventions specification:
+ * - gen_ai.system, gen_ai.request.model, gen_ai.response.model, gen_ai.operation.name
+ * - gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, gen_ai.usage.total_tokens
+ * - gen_ai.agent.name, gen_ai.session.id, gen_ai.trace.id
+ *
+ * @see CNCF / OpenTelemetry GenAI Specification (v1.28.0+): https://opentelemetry.io/docs/specs/semconv/gen-ai/
  * @see Pillar 10 (Observability & Monitoring): specs/10-observability-and-monitoring.spec.md
  */
 export const OpenTelemetryGenAiConventions = {
