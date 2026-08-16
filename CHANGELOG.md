@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.0] - 2026-08-16
 
-### Added
-
+- **Resumable, Budget-Aware Refinement Loops with Checkpointing (`@nestjs-agentic/orchestration`)**:
+  - `RefinementLoopCheckpoint`: Persistent checkpoint snapshots capturing completed iterations, token usage, duration, and prepared next feedback prompts across process restarts (#37).
+  - `Resumption APIs`: `resumeLoop()` and `recoverLatestCheckpoint()` in `RefinementLoopRunner` allowing seamless recovery from crashes without losing prior iteration progress.
+  - `Budget-Aware Guardrails`: Cumulative token (`maxTotalTokens`) and wall-clock execution time (`maxTotalTimeMs`) limits across loop iterations with graceful `'budget_exceeded'` termination.
+  - `SatisfactionResult`: Structured satisfaction evaluator return object providing dynamic feedback prompts, confidence scores, and diagnostics.
+  - `RefinementBudgetExceededError`, `RefinementCheckpointNotFoundError`, `RefinementCheckpointVersionError`: Comprehensive domain errors for orchestration governance.
 - **Multi-Tenant Identity Preservation & Capability Narrowing (`@nestjs-agentic/orchestration`)**:
   - `CapabilityNarrowing`: Explicit capability restrictions for delegated sub-agents including tool whitelists (`allowedTools`), tool blacklists (`deniedTools`), least-privilege permission and role subsetting (`allowedPermissions`, `allowedRoles`), and execution limits (`limits`).
   - `CapabilityNarrowingPolicy`: Built-in governance policy enforcing delegated tool capability constraints at policy evaluation time.

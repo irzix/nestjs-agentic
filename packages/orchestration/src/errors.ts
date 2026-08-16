@@ -52,3 +52,38 @@ export class CapabilityEscalationError extends OrchestrationError {
     );
   }
 }
+
+/**
+ * Thrown when an iterative refinement loop exceeds its cumulative token or duration budget.
+ */
+export class RefinementBudgetExceededError extends OrchestrationError {
+  constructor(
+    public readonly budgetType: 'tokens' | 'duration',
+    public readonly current: number,
+    public readonly limit: number,
+  ) {
+    super(
+      `Refinement loop budget exceeded: ${budgetType} consumption (${current}) exceeded limit (${limit}).`,
+    );
+  }
+}
+
+/**
+ * Thrown when a requested refinement loop checkpoint is not found in the StateStore.
+ */
+export class RefinementCheckpointNotFoundError extends OrchestrationError {
+  constructor(public readonly checkpointKey: string) {
+    super(`Refinement loop checkpoint not found for key: "${checkpointKey}".`);
+  }
+}
+
+/**
+ * Thrown when attempting to resume a refinement loop from an unsupported checkpoint schema version.
+ */
+export class RefinementCheckpointVersionError extends OrchestrationError {
+  constructor(public readonly version: number, public readonly supportedVersion: number) {
+    super(
+      `Unsupported refinement loop checkpoint schema version: ${version} (expected: ${supportedVersion}).`,
+    );
+  }
+}

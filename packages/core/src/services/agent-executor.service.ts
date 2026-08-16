@@ -974,6 +974,7 @@ export class AgentExecutor {
       sessionId,
       output: this.resolveOutput(state, content),
       toolCalls: state.toolCalls,
+      usage: state.usage,
     };
   }
 

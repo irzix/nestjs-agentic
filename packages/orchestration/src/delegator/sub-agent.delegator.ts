@@ -126,6 +126,7 @@ export class SubAgentDelegator {
       },
     };
 
+    const startTime = Date.now();
     try {
       const runResult = await this.runner.run(task.agentName, {
         sessionId: subSessionId,
@@ -148,6 +149,14 @@ export class SubAgentDelegator {
         status: 'success',
         response: runResult.output || '',
         toolCount: runResult.toolCalls?.length || 0,
+        tokens: runResult.usage
+          ? {
+              inputTokens: runResult.usage.inputTokens ?? 0,
+              outputTokens: runResult.usage.outputTokens ?? 0,
+              totalTokens: runResult.usage.totalTokens ?? 0,
+            }
+          : undefined,
+        durationMs: Date.now() - startTime,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -157,6 +166,7 @@ export class SubAgentDelegator {
         response: '',
         toolCount: 0,
         error: message || 'Sub-agent execution error',
+        durationMs: Date.now() - startTime,
       };
     }
   }

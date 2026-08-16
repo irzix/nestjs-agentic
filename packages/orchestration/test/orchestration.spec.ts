@@ -6,6 +6,7 @@ import {
   AgentResult,
   AgentRunner,
   InMemoryApprovalStore,
+  InMemoryStateStore,
   LocalToolProvider,
   ModelAdapter,
   ModelRequest,
@@ -21,6 +22,8 @@ import {
   CapabilityNarrowingPolicy,
   MaxDelegationDepthExceededError,
   ParallelSubAgentRunner,
+  RefinementCheckpointNotFoundError,
+  RefinementCheckpointVersionError,
   RefinementLoopRunner,
   SubAgentDelegator,
 } from '../src';
@@ -116,17 +119,28 @@ export async function runOrchestrationTests() {
         await new Promise((r) => setTimeout(r, 300));
       }
 
+      const usage = lastUserMsg.includes('Heavy Token Task')
+        ? { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 }
+        : { inputTokens: 50, outputTokens: 25, totalTokens: 75 };
+
+      if (lastUserMsg.includes('Slow Refinement Round')) {
+        await new Promise((r) => setTimeout(r, 120));
+      }
+
       if (lastUserMsg.includes('Refinement Feedback')) {
-        return { content: 'Draft v2 perfectly refined' };
+        return { content: 'Draft v2 perfectly refined', usage };
+      }
+      if (lastUserMsg.includes('Add executive summary')) {
+        return { content: 'Draft v3 with executive summary and perfect tone', usage };
       }
       if (lastUserMsg === 'Perform SubTask A') {
-        return { content: 'Task A Completed Successfully' };
+        return { content: 'Task A Completed Successfully', usage };
       }
       if (lastUserMsg === 'Perform SubTask B') {
-        return { content: 'Task B Completed Successfully' };
+        return { content: 'Task B Completed Successfully', usage };
       }
       if (lastUserMsg === 'Draft initial report') {
-        return { content: 'Draft v1 containing errors' };
+        return { content: 'Draft v1 containing errors', usage };
       }
 
       // Tool invocation triggers
@@ -136,9 +150,10 @@ export async function runOrchestrationTests() {
           return {
             content: 'Checking balance...',
             toolCalls: [{ id: 'call_bal_1', name: 'getBalance', args: {} }],
+            usage,
           };
         }
-        return { content: `Balance retrieved: ${lastToolMsg.content}` };
+        return { content: `Balance retrieved: ${lastToolMsg.content}`, usage };
       }
 
       if (lastUserMsg.includes('Call transferFunds')) {
@@ -149,9 +164,10 @@ export async function runOrchestrationTests() {
             toolCalls: [
               { id: 'call_tx_1', name: 'transferFunds', args: { amount: 500, recipient: 'vendor_x' } },
             ],
+            usage,
           };
         }
-        return { content: `Transfer result: ${lastToolMsg.content}` };
+        return { content: `Transfer result: ${lastToolMsg.content}`, usage };
       }
 
       if (lastUserMsg.includes('Call auditLogs')) {
@@ -160,12 +176,13 @@ export async function runOrchestrationTests() {
           return {
             content: 'Auditing logs...',
             toolCalls: [{ id: 'call_audit_1', name: 'auditLogs', args: {} }],
+            usage,
           };
         }
-        return { content: `Audit result: ${lastToolMsg.content}` };
+        return { content: `Audit result: ${lastToolMsg.content}`, usage };
       }
 
-      return { content: `Processed ${lastUserMsg}` };
+      return { content: `Processed ${lastUserMsg}`, usage };
     },
   };
 
@@ -737,6 +754,265 @@ export async function runOrchestrationTests() {
     );
     assert(financeTools.transfers.length === 0, 'Side effect never executed');
     console.log('    ✓ Blacklist precedence over whitelist verified');
+  }
+
+  // =========================================================================
+  // TEST 17: Automatic Refinement Loop Checkpointing in StateStore
+  // =========================================================================
+  {
+    console.log('  - Test 17: Automatic Refinement Loop Checkpointing in StateStore');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: () => Promise.resolve(false), // Loop reaches maxIterations
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_ckpt_auto',
+      traceId: 'trace_ckpt_auto',
+      security: { tenantId: 'tenant_ckpt_1' },
+    };
+
+    const result = await loopRunner.runLoop(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Draft initial report' },
+      () => 'Refinement Feedback: Improve further',
+    );
+
+    assert(result.iterations === 3, 'Executed all 3 iterations');
+    assert(result.satisfied === false, 'Termination unsatisfied as configured');
+    assert(result.terminationReason === 'max_iterations', 'Termination reason is max_iterations');
+
+    // Verify checkpoint exists in stateStore
+    const checkpoint = await loopRunner.recoverLatestCheckpoint(parentContext, 'writer_agent');
+    assert(checkpoint !== null, 'Checkpoint was successfully saved in StateStore');
+    assert(checkpoint!.iteration === 2, 'Latest in-flight checkpoint was for iteration 2');
+    assert(checkpoint!.history.length === 2, 'Checkpoint contains history up to iteration 2');
+    assert(checkpoint!.totalTokens > 0, 'Checkpoint contains accumulated token usage');
+    console.log('    ✓ Automatic refinement checkpointing verified');
+  }
+
+  // =========================================================================
+  // TEST 18: Resume Refinement Loop from Checkpoint Across Restarts
+  // =========================================================================
+  {
+    console.log('  - Test 18: Resume Refinement Loop from Checkpoint Across Restarts');
+    const stateStore = new InMemoryStateStore();
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_resume_1',
+      traceId: 'trace_resume',
+      security: { tenantId: 'tenant_resume' },
+    };
+
+    // 1. Instance A executes iteration 1 and crashes
+    const instanceA = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    // Run iteration 1 and simulate interruption
+    await instanceA.runLoop(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Draft initial report' },
+      () => 'Refinement Feedback: Improve language',
+    );
+
+    const savedCheckpoint = await instanceA.recoverLatestCheckpoint(parentContext, 'writer_agent');
+    assert(savedCheckpoint !== null, 'Saved checkpoint found');
+
+    // 2. Instance B boots up with fresh runner and resumes from checkpoint
+    const instanceB = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: (res) => Promise.resolve(res.response.includes('perfectly refined')),
+    });
+
+    const resumedResult = await instanceB.resumeLoop(
+      parentContext,
+      savedCheckpoint!,
+      () => 'Refinement Feedback: Final polish',
+    );
+
+    assert(resumedResult.satisfied === true, 'Resumed loop satisfied quality goal');
+    assert(resumedResult.iterations >= 2, 'Resumed loop finished remaining iterations');
+    assert(resumedResult.finalResponse.includes('perfectly refined'), 'Final output matches expected quality');
+    console.log('    ✓ Resumed refinement loop from checkpoint verified');
+  }
+
+  // =========================================================================
+  // TEST 19: Cumulative Token Budget Enforcement (maxTotalTokens)
+  // =========================================================================
+  {
+    console.log('  - Test 19: Cumulative Token Budget Enforcement (maxTotalTokens)');
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 5,
+      budget: {
+        maxTotalTokens: 100, // 75 tokens per iteration -> exceeds limit on iteration 2
+      },
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_token_budget',
+      traceId: 'trace_tbudget',
+      security: { tenantId: 'tenant_budget' },
+    };
+
+    const result = await loopRunner.runLoop(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Draft initial report' },
+      () => 'Refinement Feedback: Try again',
+    );
+
+    assert(result.terminationReason === 'budget_exceeded', 'Loop terminated with budget_exceeded reason');
+    assert(result.satisfied === false, 'Loop not satisfied due to budget exhaustion');
+    assert(result.totalTokens >= 100, 'Total tokens exceeded configured budget limit');
+    assert(result.iterations < 5, 'Loop halted before maxIterations');
+    console.log('    ✓ Token budget limit enforcement verified');
+  }
+
+  // =========================================================================
+  // TEST 20: Cumulative Duration Budget Enforcement (maxTotalTimeMs)
+  // =========================================================================
+  {
+    console.log('  - Test 20: Cumulative Duration Budget Enforcement (maxTotalTimeMs)');
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 5,
+      budget: {
+        maxTotalTimeMs: 150, // 120ms per round -> exceeds on round 2
+      },
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_time_budget',
+      traceId: 'trace_time_budget',
+      security: { tenantId: 'tenant_budget' },
+    };
+
+    const result = await loopRunner.runLoop(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Slow Refinement Round 1' },
+      () => 'Slow Refinement Round 2',
+    );
+
+    assert(result.terminationReason === 'budget_exceeded', 'Terminated due to duration budget limit');
+    assert(result.totalDurationMs >= 150, 'Total duration recorded accurately');
+    console.log('    ✓ Duration budget limit enforcement verified');
+  }
+
+  // =========================================================================
+  // TEST 21: Structured SatisfactionResult with Dynamic Evaluator Feedback
+  // =========================================================================
+  {
+    console.log('  - Test 21: Structured SatisfactionResult with Dynamic Evaluator Feedback');
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      satisfactionFn: (res, iter) => {
+        if (iter === 1) {
+          return {
+            satisfied: false,
+            score: 0.65,
+            feedback: 'Add executive summary', // Dynamic prompt for iteration 2
+            reason: 'Missing executive summary section',
+          };
+        }
+        return {
+          satisfied: true,
+          score: 0.98,
+          reason: 'Complete with executive summary',
+        };
+      },
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_eval_feedback',
+      traceId: 'trace_eval_f',
+      security: { tenantId: 'tenant_eval' },
+    };
+
+    const result = await loopRunner.runLoop(parentContext, {
+      agentName: 'writer_agent',
+      message: 'Draft initial report',
+    });
+
+    assert(result.satisfied === true, 'Loop satisfied via evaluator');
+    assert(result.terminationReason === 'satisfied', 'Termination reason is satisfied');
+    assert(result.iterations === 2, 'Completed exactly in 2 iterations');
+    assert(result.finalResponse.includes('executive summary'), 'Iteration 2 used dynamic evaluator feedback');
+    console.log('    ✓ Structured SatisfactionResult dynamic feedback verified');
+  }
+
+  // =========================================================================
+  // TEST 22: Automatic Checkpoint Cleanup upon Satisfied Completion
+  // =========================================================================
+  {
+    console.log('  - Test 22: Automatic Checkpoint Cleanup upon Satisfied Completion');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: () => Promise.resolve(true), // Satisfied immediately on round 1
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_ckpt_clean',
+      traceId: 'trace_clean',
+      security: { tenantId: 'tenant_clean' },
+    };
+
+    const result = await loopRunner.runLoop(parentContext, {
+      agentName: 'writer_agent',
+      message: 'Draft initial report',
+    });
+
+    assert(result.satisfied === true, 'Loop completed with satisfaction');
+    const checkpoint = await loopRunner.recoverLatestCheckpoint(parentContext, 'writer_agent');
+    assert(checkpoint === null, 'Checkpoint was deleted from StateStore upon satisfied completion');
+    console.log('    ✓ Checkpoint cleanup on completion verified');
+  }
+
+  // =========================================================================
+  // TEST 23: Checkpoint Schema Version Validation
+  // =========================================================================
+  {
+    console.log('  - Test 23: Checkpoint Schema Version Validation');
+    const loopRunner = new RefinementLoopRunner(runner);
+    const parentContext: AgentContext = {
+      sessionId: 'sess_version_err',
+      traceId: 'trace_v_err',
+      security: { tenantId: 'tenant_v' },
+    };
+
+    const invalidCheckpoint = {
+      version: 99, // Incompatible version
+      parentSessionId: 'sess_version_err',
+      agentName: 'writer_agent',
+      iteration: 1,
+      maxIterations: 3,
+      history: [],
+      totalTokens: 50,
+      totalDurationMs: 100,
+      currentMessage: 'msg',
+      savedAt: new Date().toISOString(),
+    } as never;
+
+    let versionErrorCaught = false;
+    try {
+      await loopRunner.resumeLoop(parentContext, invalidCheckpoint);
+    } catch (err) {
+      if (err instanceof RefinementCheckpointVersionError) {
+        versionErrorCaught = true;
+        assert(err.version === 99, 'Caught invalid version');
+        assert(err.supportedVersion === 1, 'Expected version 1');
+      }
+    }
+
+    assert(versionErrorCaught, 'RefinementCheckpointVersionError thrown on invalid version');
+    console.log('    ✓ Checkpoint schema version validation verified');
   }
 
   console.log('🎉 All Orchestration Unit & Security Tests Passed!\n');
