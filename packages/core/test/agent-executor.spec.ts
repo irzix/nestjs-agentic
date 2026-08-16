@@ -617,15 +617,26 @@ export async function runAgentExecutorTests() {
     model
       .whenAsked('Process multi-step order')
       .callTool('lookupOrder', { orderId: '42' })
-      .reply('Resumed successfully.');
+      .reply('All orders processed after resume.');
 
-    const { runner } = createHarness(model);
+    const { runner, tools } = createHarness(model);
 
-    // Resume from capturedCheckpoint
+    // Initial tool call count is 0 on fresh runner
+    assert(tools.lookupCalls === 0, 'Test 16a: No tools executed yet on fresh runner');
+
+    // Resume from capturedCheckpoint which already ran lookupOrder('42') and lookupOrder('43')
     const resumedResult = await runner.resumeCheckpoint('support', capturedCheckpoint);
     assert(
-      resumedResult.output.includes('looked up') || resumedResult.output.length > 0,
-      'Test 16a: Final model answer returned from resumed turn',
+      tools.lookupCalls === 0,
+      'Test 16b: Previous tools were not re-executed upon resuming from checkpoint',
+    );
+    assert(
+      resumedResult.output === 'All orders processed after resume.',
+      'Test 16c: Final model answer returned from resumed turn',
+    );
+    assert(
+      resumedResult.toolCalls.length === 0,
+      'Test 16d: Resumed turn only recorded newly executed tool calls',
     );
   } catch (err: any) {
     assert(false, 'Test 16: Checkpoint Resumption', err.message);

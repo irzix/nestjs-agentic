@@ -35,10 +35,11 @@ import type {
   ToolExecutionResult,
 } from '../interfaces';
 import { APPROVAL_CHECKPOINT_VERSION } from '../interfaces';
-import type {
-  ExecutionLimits,
-  InFlightCheckpoint,
-  ToolErrorHandling,
+import {
+  DEFAULT_CHECKPOINT_TTL_SECONDS,
+  type ExecutionLimits,
+  type InFlightCheckpoint,
+  type ToolErrorHandling,
 } from '../interfaces/execution.interface';
 import type { ModelMessage } from '../interfaces/model.interface';
 import {
@@ -83,6 +84,11 @@ export interface AgenticModuleOptions {
    * decision via its own `ttlSeconds`. Unset means approvals never expire.
    */
   approvalTtlSeconds?: number;
+  /**
+   * Default lifetime in seconds for in-flight execution checkpoints stored in StateStore.
+   * Default: 86400 (24 hours).
+   */
+  checkpointTtlSeconds?: number;
   /**
    * Recording behavior for the audit trail. Only takes effect when at least one
    * `AuditSink` is registered through the `AUDIT_SINKS` token.
@@ -619,7 +625,14 @@ export class AgentRunner {
     const dummyContext: AgentContext = {
       sessionId,
       traceId: 'recovery',
-      security: { tenantId: options?.context?.tenantId },
+      security: {
+        userId: options?.context?.userId,
+        tenantId: options?.context?.tenantId,
+        roles: options?.context?.roles,
+        permissions: options?.context?.permissions,
+      },
+      data: options?.context?.data,
+      signal: options?.signal,
     };
 
     const latestKey = `checkpoint:latest:${this.sessionKey(dummyContext)}`;
@@ -642,10 +655,11 @@ export class AgentRunner {
     const baseKey = this.sessionKey(context);
     const executionKey = `checkpoint:${baseKey}:${checkpoint.executionId}`;
     const latestKey = `checkpoint:latest:${baseKey}`;
+    const ttl = this.options.checkpointTtlSeconds ?? DEFAULT_CHECKPOINT_TTL_SECONDS;
 
     try {
-      await store.set(executionKey, checkpoint);
-      await store.set(latestKey, checkpoint);
+      await store.set(executionKey, checkpoint, ttl);
+      await store.set(latestKey, checkpoint, ttl);
     } catch {
       // Best-effort in-flight persistence
     }

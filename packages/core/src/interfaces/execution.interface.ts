@@ -49,6 +49,9 @@ export type ExecutionLimitKind =
 /** Schema version for in-flight execution checkpoints. */
 export const INFLIGHT_CHECKPOINT_VERSION = 1;
 
+/** Default time-to-live for stored in-flight execution checkpoints (24 hours). */
+export const DEFAULT_CHECKPOINT_TTL_SECONDS = 86400;
+
 /**
  * Durable snapshot of an in-flight agent execution recorded after each model/tool iteration round.
  *
