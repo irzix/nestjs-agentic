@@ -278,18 +278,20 @@ Connection ready.`;
     };
     circularObj.self = circularObj;
 
-    // 11a: SecretRedactionPolicy handles circular reference without infinite loop
+    // 11a: SecretRedactionPolicy handles circular reference without infinite loop and without leaking original object
     const redactResult = await redactionPolicy.evaluateOutput(dummyCtx, 'getGraph', circularObj);
     assert(redactResult.decision === 'sanitize', 'Test 11a: Circular object is processed safely without stack overflow');
     if (redactResult.decision === 'sanitize') {
       const sanitized = redactResult.sanitizedResult as any;
       assert(sanitized.apiKey === '[REDACTED_SECRET]', 'Test 11b: Secret key in circular object is masked');
-      assert(sanitized.self === circularObj, 'Test 11c: Circular reference is preserved without infinite loop');
+      assert(sanitized.self === sanitized, 'Test 11c: Circular reference points strictly to sanitized clone');
+      assert(sanitized.self.apiKey === '[REDACTED_SECRET]', 'Test 11d: Nested circular access is also masked');
+      assert(sanitized !== circularObj, 'Test 11e: Sanitized object does not retain reference to original unredacted object');
     }
 
     // 11b: CanaryDetectionPolicy handles circular reference without infinite loop
     const canaryResult = await canaryPolicy.evaluateOutput(dummyCtx, 'getGraph', circularObj);
-    assert(canaryResult.decision === 'allow', 'Test 11d: Canary detection processes circular object without loop');
+    assert(canaryResult.decision === 'allow', 'Test 11f: Canary detection processes circular object without loop');
   } catch (err: any) {
     assert(false, 'Test 11: Circular Reference Traversal Protection', err.message);
   }

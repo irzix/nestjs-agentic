@@ -22,6 +22,9 @@ export interface SecretRedactionPolicyOptions {
  * API tokens, JWTs, private keys, and database connection strings from tool output
  * before it is returned to the model reasoning loop.
  *
+ * Preserves circular object graph structures safely using WeakMap clone mapping,
+ * ensuring no references to unredacted original objects are leaked.
+ *
  * @see Greshake et al. (USENIX Security 2023, arXiv:2302.12173)
  * @see Rebedea et al. (NVIDIA NeMo Guardrails, arXiv:2310.10501)
  *
@@ -48,7 +51,7 @@ export class SecretRedactionPolicy implements ToolPolicy {
     /AKIA[0-9A-Z]{16}/g,
     // JWT Tokens
     /eyJ[a-zA-Z0-9_\-]{10,}\.eyJ[a-zA-Z0-9_\-]{10,}\.[a-zA-Z0-9_\-]+/g,
-    // PEM Private Keys (Fixed character class range: [ A-Z0-9_-])
+    // PEM Private Keys
     /-----BEGIN[ A-Z0-9_-]*PRIVATE KEY-----[\s\S]*?-----END[ A-Z0-9_-]*PRIVATE KEY-----/g,
     // Database Connection Strings with Passwords
     /(?:postgres|postgresql|mongodb|mysql|redis):\/\/[^:\s]+:[^@\s]+@[^\s"'<>]+/gi,
@@ -105,7 +108,7 @@ export class SecretRedactionPolicy implements ToolPolicy {
       () => {
         modified = true;
       },
-      new WeakSet<object>(),
+      new WeakMap<object, unknown>(),
       0,
     );
 
@@ -119,7 +122,7 @@ export class SecretRedactionPolicy implements ToolPolicy {
   private redactUnknown(
     value: unknown,
     onModified: () => void,
-    seen: WeakSet<object>,
+    seenMap: WeakMap<object, unknown>,
     depth: number,
   ): unknown {
     if (depth > this.maxDepth) {
@@ -131,25 +134,31 @@ export class SecretRedactionPolicy implements ToolPolicy {
     }
 
     if (typeof value === 'object' && value !== null) {
-      if (seen.has(value)) {
-        return value;
+      // If we've already created a sanitized node for this original object, return it
+      if (seenMap.has(value as object)) {
+        return seenMap.get(value as object);
       }
-      seen.add(value);
+
+      // Create placeholder (array or object) and store before recursing into children
+      const placeholder: any = Array.isArray(value) ? [] : {};
+      seenMap.set(value as object, placeholder);
 
       if (Array.isArray(value)) {
-        return value.map((item) => this.redactUnknown(item, onModified, seen, depth + 1));
+        for (const item of value) {
+          placeholder.push(this.redactUnknown(item, onModified, seenMap, depth + 1));
+        }
+        return placeholder;
       }
 
-      const sanitizedObj: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
         if (this.sensitiveKeys.has(k) && typeof v === 'string') {
-          sanitizedObj[k] = this.maskPlaceholder;
+          placeholder[k] = this.maskPlaceholder;
           onModified();
         } else {
-          sanitizedObj[k] = this.redactUnknown(v, onModified, seen, depth + 1);
+          placeholder[k] = this.redactUnknown(v, onModified, seenMap, depth + 1);
         }
       }
-      return sanitizedObj;
+      return placeholder;
     }
 
     return value;
