@@ -5,14 +5,17 @@ import {
   ApprovalTranscriptMissingError,
   ExecutionCancelledError,
   ExecutionLimitExceededError,
+  InFlightCheckpointVersionError,
   RuntimeNotConfiguredError,
   ToolValidationError,
 } from '../errors';
 import {
   DEFAULT_EXECUTION_LIMITS,
   DEFAULT_TOOL_ERROR_HANDLING,
+  INFLIGHT_CHECKPOINT_VERSION,
   type ExecutionLimitKind,
   type ExecutionLimits,
+  type InFlightCheckpoint,
   type ToolErrorHandling,
 } from '../interfaces/execution.interface';
 import {
@@ -63,6 +66,11 @@ export interface AgentExecutionInput {
    * durable before the caller can learn the `approvalId` and settle it.
    */
   onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
+  /**
+   * Receives an in-flight checkpoint after each model/tool iteration round,
+   * enabling process restart recovery and mid-loop resumption.
+   */
+  onCheckpoint?(checkpoint: InFlightCheckpoint): void | Promise<void>;
 }
 
 /** Fields shared by a fresh turn and a resumed one. */
@@ -95,6 +103,18 @@ export interface AgentResumeInput extends ExecutorRequestContext {
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
   /** Checkpoints a resumed turn that suspends again on a further approval. */
   onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
+  onCheckpoint?(checkpoint: InFlightCheckpoint): void | Promise<void>;
+}
+
+/** Input for continuing a turn directly from an in-flight checkpoint snapshot. */
+export interface AgentResumeCheckpointInput extends ExecutorRequestContext {
+  checkpoint: InFlightCheckpoint;
+  instructions?: string;
+  limits?: ExecutionLimits;
+  toolErrorHandling?: ToolErrorHandling;
+  onTranscript?(messages: ModelMessage[]): void | Promise<void>;
+  onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
+  onCheckpoint?(checkpoint: InFlightCheckpoint): void | Promise<void>;
 }
 
 /** Payload reported to the model, and recorded, when a tool throws. */
@@ -158,6 +178,7 @@ export class AgentExecutor {
       toolErrorHandling,
       input.onTranscript,
       input.onSuspend,
+      input.onCheckpoint,
     );
   }
 
@@ -175,6 +196,7 @@ export class AgentExecutor {
       toolErrorHandling,
       input.onTranscript,
       input.onSuspend,
+      input.onCheckpoint,
     );
   }
 
@@ -199,6 +221,7 @@ export class AgentExecutor {
       toolErrorHandling,
       input.onTranscript,
       input.onSuspend,
+      input.onCheckpoint,
     );
   }
 
@@ -217,6 +240,49 @@ export class AgentExecutor {
       toolErrorHandling,
       input.onTranscript,
       input.onSuspend,
+      input.onCheckpoint,
+    );
+  }
+
+  /**
+   * Resumes an execution turn directly from an InFlightCheckpoint snapshot.
+   */
+  async resumeCheckpoint(input: AgentResumeCheckpointInput): Promise<AgentResult> {
+    const adapter = this.requireAdapter();
+    const limits = this.resolveLimits(input.limits);
+    const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
+    const state = this.createCheckpointState(input);
+
+    return this.runToCompletion(
+      adapter,
+      input,
+      state,
+      limits,
+      toolErrorHandling,
+      input.onTranscript,
+      input.onSuspend,
+      input.onCheckpoint,
+    );
+  }
+
+  /** Streaming counterpart of {@link resumeCheckpoint}. */
+  async *resumeCheckpointStream(
+    input: AgentResumeCheckpointInput,
+  ): AsyncIterable<AgentStreamEvent> {
+    const adapter = this.requireAdapter();
+    const limits = this.resolveLimits(input.limits);
+    const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
+    const state = this.createCheckpointState(input);
+
+    yield* this.streamToCompletion(
+      adapter,
+      input,
+      state,
+      limits,
+      toolErrorHandling,
+      input.onTranscript,
+      input.onSuspend,
+      input.onCheckpoint,
     );
   }
 
@@ -228,6 +294,7 @@ export class AgentExecutor {
     toolErrorHandling: ToolErrorHandling,
     onTranscript: AgentExecutionInput['onTranscript'],
     onSuspend: AgentExecutionInput['onSuspend'],
+    onCheckpoint?: AgentExecutionInput['onCheckpoint'],
   ): Promise<AgentResult> {
     const scope = this.createScope(requestCtx.signal, limits.timeoutMs);
 
@@ -257,6 +324,9 @@ export class AgentExecutor {
           await this.publishTranscript(onTranscript, state, response.content);
           return result;
         }
+
+        // Checkpoint in-flight state after each intermediate tool round
+        await this.publishInFlightCheckpoint(onCheckpoint, state, requestCtx.sessionId);
       }
     } finally {
       scope.dispose();
@@ -271,6 +341,7 @@ export class AgentExecutor {
     toolErrorHandling: ToolErrorHandling,
     onTranscript: AgentExecutionInput['onTranscript'],
     onSuspend: AgentExecutionInput['onSuspend'],
+    onCheckpoint?: AgentExecutionInput['onCheckpoint'],
   ): AsyncIterable<AgentStreamEvent> {
     const scope = this.createScope(requestCtx.signal, limits.timeoutMs);
 
@@ -325,6 +396,9 @@ export class AgentExecutor {
           yield { type: 'complete', sessionId: requestCtx.sessionId, output };
           return;
         }
+
+        // Checkpoint in-flight state after each intermediate stream round
+        await this.publishInFlightCheckpoint(onCheckpoint, state, requestCtx.sessionId);
       }
     } finally {
       scope.dispose();
@@ -705,6 +779,47 @@ export class AgentExecutor {
     }
 
     await onTranscript(messages);
+  }
+
+  private createCheckpointState(input: AgentResumeCheckpointInput): ExecutionState {
+    if (input.checkpoint.version !== INFLIGHT_CHECKPOINT_VERSION) {
+      throw new InFlightCheckpointVersionError(
+        input.checkpoint.executionId,
+        input.checkpoint.version,
+        INFLIGHT_CHECKPOINT_VERSION,
+      );
+    }
+
+    return {
+      executionId: input.checkpoint.executionId,
+      messages: [...input.checkpoint.messages],
+      toolCalls: [],
+      usage: { ...input.checkpoint.usage },
+      toolCallCount: input.checkpoint.toolCallCount,
+      iteration: input.checkpoint.iteration,
+      suspended: false,
+    };
+  }
+
+  private async publishInFlightCheckpoint(
+    onCheckpoint: AgentExecutionInput['onCheckpoint'],
+    state: ExecutionState,
+    sessionId: string,
+  ): Promise<void> {
+    if (!onCheckpoint) return;
+
+    const checkpoint: InFlightCheckpoint = {
+      version: INFLIGHT_CHECKPOINT_VERSION,
+      executionId: state.executionId,
+      sessionId,
+      iteration: state.iteration,
+      messages: [...state.messages],
+      usage: { ...state.usage },
+      toolCallCount: state.toolCallCount,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await onCheckpoint(checkpoint);
   }
 
   private toResult(

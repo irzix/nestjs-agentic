@@ -139,3 +139,28 @@ export class ApprovalCheckpointVersionError extends AgenticError {
     );
   }
 }
+
+/**
+ * Raised when an in-flight execution checkpoint carries an unsupported schema version.
+ */
+export class InFlightCheckpointVersionError extends AgenticError {
+  constructor(
+    readonly executionId: string,
+    readonly found: number,
+    readonly supported: number,
+  ) {
+    super(
+      `Execution checkpoint "${executionId}" has version ${found}, but this ` +
+        `release supports version ${supported}. The checkpoint cannot be resumed safely.`,
+    );
+  }
+}
+
+/**
+ * Raised when attempting to recover an execution from a checkpoint that does not exist.
+ */
+export class CheckpointNotFoundError extends AgenticError {
+  constructor(readonly identifier: string) {
+    super(`Execution checkpoint "${identifier}" was not found or has expired.`);
+  }
+}
