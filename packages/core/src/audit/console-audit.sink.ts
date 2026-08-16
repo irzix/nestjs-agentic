@@ -29,6 +29,8 @@ function summarize(event: AuditEvent): string {
   switch (event.type) {
     case 'tool_policy_decision':
       return `${event.toolName} ${event.decision} by ${event.policyName}`;
+    case 'tool_output_policy_decision':
+      return `${event.toolName} output ${event.decision} by ${event.policyName}`;
     case 'approval_requested':
       return `${event.toolName} approval ${event.approvalId}`;
     case 'approval_settled':
