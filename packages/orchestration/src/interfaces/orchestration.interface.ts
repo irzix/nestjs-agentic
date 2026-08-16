@@ -120,6 +120,9 @@ export interface RefinementLoopCheckpoint {
   /** Checkpoint schema version. */
   version: 1;
 
+  /** Monotonically increasing sequence number for optimistic concurrency. */
+  checkpointSequence: number;
+
   /** Parent session identifier. */
   parentSessionId: string;
 
@@ -146,6 +149,9 @@ export interface RefinementLoopCheckpoint {
 
   /** Prompt message prepared for the next iteration. */
   currentMessage: string;
+
+  /** Source indicating where the feedback for the next iteration originated. */
+  feedbackSource: 'provider' | 'evaluator' | 'default';
 
   /** ISO timestamp when the checkpoint was saved. */
   savedAt: string;
@@ -206,6 +212,12 @@ export interface RefinementLoopOptions {
 
   /** Checkpoint TTL in seconds when saving to stateStore. Default: `86400` (24h). */
   checkpointTtlSeconds?: number;
+
+  /** Checkpoint TTL in seconds when saving failed/aborted loop checkpoints. Default: `3600` (1h). */
+  errorCheckpointTtlSeconds?: number;
+
+  /** Lock TTL in seconds to prevent concurrent executions of the same loop. Default: `60` (1 min). */
+  lockTtlSeconds?: number;
 
   /** Custom satisfaction evaluator returning boolean or structured SatisfactionResult. */
   satisfactionFn?: (

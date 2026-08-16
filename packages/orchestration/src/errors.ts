@@ -69,6 +69,26 @@ export class RefinementBudgetExceededError extends OrchestrationError {
 }
 
 /**
+ * Thrown when attempting to run or resume a refinement loop that is already locked and running by another worker.
+ */
+export class RefinementLoopAlreadyRunningError extends OrchestrationError {
+  constructor(public readonly sessionId: string, public readonly agentName: string) {
+    super(
+      `Refinement loop for session "${sessionId}" and agent "${agentName}" is currently locked and active in another process.`,
+    );
+  }
+}
+
+/**
+ * Thrown when resuming a checkpoint that requires a feedback provider function but none was provided.
+ */
+export class MissingFeedbackProviderError extends OrchestrationError {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+/**
  * Thrown when a requested refinement loop checkpoint is not found in the StateStore.
  */
 export class RefinementCheckpointNotFoundError extends OrchestrationError {

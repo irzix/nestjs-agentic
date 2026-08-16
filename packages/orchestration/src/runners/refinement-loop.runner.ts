@@ -1,7 +1,9 @@
 import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
 import {
+  MissingFeedbackProviderError,
   RefinementBudgetExceededError,
   RefinementCheckpointVersionError,
+  RefinementLoopAlreadyRunningError,
 } from '../errors';
 import type {
   RefinementLoopBudget,
@@ -16,7 +18,7 @@ import { SubAgentDelegator } from '../delegator/sub-agent.delegator';
 
 /**
  * Runner service for executing supervisor-worker iterative refinement loops with feedback evaluation,
- * versioned session memory, token/duration budget guardrails, and persistent checkpointing.
+ * versioned session memory, token/duration budget guardrails, distributed lock protection, and persistent checkpointing.
  */
 export class RefinementLoopRunner {
   private readonly delegator: SubAgentDelegator;
@@ -32,6 +34,8 @@ export class RefinementLoopRunner {
       budget: options?.budget,
       stateStore: options?.stateStore,
       checkpointTtlSeconds: options?.checkpointTtlSeconds ?? 86400,
+      errorCheckpointTtlSeconds: options?.errorCheckpointTtlSeconds ?? 3600,
+      lockTtlSeconds: options?.lockTtlSeconds ?? 60,
     };
   }
 
@@ -44,6 +48,42 @@ export class RefinementLoopRunner {
   }
 
   /**
+   * Generates a unique concurrency lock key scoped by tenant, session, and agent name.
+   */
+  private getLockKey(parentContext: AgentContext, agentName: string): string {
+    const tenantId = parentContext.security.tenantId ?? 'default';
+    return `agentic:${tenantId}:refinement:${parentContext.sessionId}:${agentName}:lock`;
+  }
+
+  /**
+   * Acquires a distributed execution lease to prevent race conditions during concurrent loop execution or resumption.
+   */
+  private async acquireLock(parentContext: AgentContext, agentName: string): Promise<string | null> {
+    if (!this.options.stateStore) return null;
+    const lockKey = this.getLockKey(parentContext, agentName);
+    const existing = await this.options.stateStore.get<string>(lockKey);
+    if (existing) {
+      throw new RefinementLoopAlreadyRunningError(parentContext.sessionId, agentName);
+    }
+    const lockId = Math.random().toString(36).substring(2, 15);
+    await this.options.stateStore.set(lockKey, lockId, this.options.lockTtlSeconds ?? 60);
+    return lockId;
+  }
+
+  /**
+   * Releases the concurrency execution lease upon completion or failure.
+   */
+  private async releaseLock(parentContext: AgentContext, agentName: string): Promise<void> {
+    if (!this.options.stateStore) return;
+    const lockKey = this.getLockKey(parentContext, agentName);
+    try {
+      await this.options.stateStore.delete(lockKey);
+    } catch {
+      // Graceful error suppression during lock release
+    }
+  }
+
+  /**
    * Runs an iterative refinement loop with feedback evaluation until satisfaction condition is met,
    * maxIterations is reached, or token/duration budgets are exhausted.
    */
@@ -52,14 +92,20 @@ export class RefinementLoopRunner {
     initialTask: SubAgentTask,
     feedbackProviderFn?: (lastResult: SubAgentResult, iteration: number) => Promise<string> | string,
   ): Promise<RefinementLoopResult> {
-    return this.execute(parentContext, initialTask, {
-      startIteration: 0,
-      startMessage: initialTask.message,
-      initialHistory: [],
-      initialTokens: 0,
-      initialDurationMs: 0,
-      feedbackProviderFn,
-    });
+    await this.acquireLock(parentContext, initialTask.agentName);
+    try {
+      return await this.execute(parentContext, initialTask, {
+        startIteration: 0,
+        startMessage: initialTask.message,
+        initialHistory: [],
+        initialTokens: 0,
+        initialDurationMs: 0,
+        initialSequence: 0,
+        feedbackProviderFn,
+      });
+    } finally {
+      await this.releaseLock(parentContext, initialTask.agentName);
+    }
   }
 
   /**
@@ -74,19 +120,32 @@ export class RefinementLoopRunner {
       throw new RefinementCheckpointVersionError(checkpoint.version, 1);
     }
 
-    const task: SubAgentTask = {
-      agentName: checkpoint.agentName,
-      message: checkpoint.currentMessage,
-    };
+    if (checkpoint.feedbackSource === 'provider' && !feedbackProviderFn) {
+      throw new MissingFeedbackProviderError(
+        `Refinement loop checkpoint for session "${parentContext.sessionId}" was created with a custom feedbackProviderFn. ` +
+          `You must provide a feedbackProviderFn when resuming this loop.`,
+      );
+    }
 
-    return this.execute(parentContext, task, {
-      startIteration: checkpoint.iteration,
-      startMessage: checkpoint.currentMessage,
-      initialHistory: [...checkpoint.history],
-      initialTokens: checkpoint.totalTokens,
-      initialDurationMs: checkpoint.totalDurationMs,
-      feedbackProviderFn,
-    });
+    await this.acquireLock(parentContext, checkpoint.agentName);
+    try {
+      const task: SubAgentTask = {
+        agentName: checkpoint.agentName,
+        message: checkpoint.currentMessage,
+      };
+
+      return await this.execute(parentContext, task, {
+        startIteration: checkpoint.iteration,
+        startMessage: checkpoint.currentMessage,
+        initialHistory: [...checkpoint.history],
+        initialTokens: checkpoint.totalTokens,
+        initialDurationMs: checkpoint.totalDurationMs,
+        initialSequence: checkpoint.checkpointSequence ?? 0,
+        feedbackProviderFn,
+      });
+    } finally {
+      await this.releaseLock(parentContext, checkpoint.agentName);
+    }
   }
 
   /**
@@ -116,6 +175,7 @@ export class RefinementLoopRunner {
       initialHistory: SubAgentResult[];
       initialTokens: number;
       initialDurationMs: number;
+      initialSequence: number;
       feedbackProviderFn?: (lastResult: SubAgentResult, iteration: number) => Promise<string> | string;
     },
   ): Promise<RefinementLoopResult> {
@@ -123,6 +183,7 @@ export class RefinementLoopRunner {
     let currentMessage = state.startMessage;
     let accumulatedTokens = state.initialTokens;
     let accumulatedDurationMs = state.initialDurationMs;
+    let sequence = state.initialSequence;
     let iteration = state.startIteration;
     let satisfied = false;
     let terminationReason: RefinementLoopResult['terminationReason'] = 'max_iterations';
@@ -149,9 +210,34 @@ export class RefinementLoopRunner {
 
       iteration++;
 
+      // Calculate remaining budget limits to bound the sub-agent execution dynamically
+      let roundLimits = initialTask.narrowing?.limits;
+      if (this.options.budget?.maxTotalTokens) {
+        const remainingTokens = Math.max(0, this.options.budget.maxTotalTokens - accumulatedTokens);
+        roundLimits = {
+          ...roundLimits,
+          maxTotalTokens: roundLimits?.maxTotalTokens
+            ? Math.min(roundLimits.maxTotalTokens, remainingTokens)
+            : remainingTokens,
+        };
+      }
+      if (this.options.budget?.maxTotalTimeMs) {
+        const remainingTimeMs = Math.max(0, this.options.budget.maxTotalTimeMs - accumulatedDurationMs);
+        roundLimits = {
+          ...roundLimits,
+          timeoutMs: roundLimits?.timeoutMs
+            ? Math.min(roundLimits.timeoutMs, remainingTimeMs)
+            : remainingTimeMs,
+        };
+      }
+
       const task: SubAgentTask = {
         ...initialTask,
         message: currentMessage,
+        narrowing: {
+          ...initialTask.narrowing,
+          limits: roundLimits,
+        },
       };
 
       const result = await this.delegator.delegate(
@@ -167,16 +253,25 @@ export class RefinementLoopRunner {
 
       if (result.status !== 'success') {
         terminationReason = 'error';
-        // Persist checkpoint on failure for debugging/recovery
+        sequence++;
+        // Persist checkpoint on failure with shorter error TTL for debugging/recovery
         if (this.options.stateStore) {
-          await this.saveCheckpoint(checkpointKey, parentContext, initialTask.agentName, {
-            iteration,
-            maxIter,
-            history,
-            accumulatedTokens,
-            accumulatedDurationMs,
-            currentMessage,
-          });
+          await this.saveCheckpoint(
+            checkpointKey,
+            parentContext,
+            initialTask.agentName,
+            {
+              iteration,
+              maxIter,
+              history,
+              accumulatedTokens,
+              accumulatedDurationMs,
+              currentMessage,
+              feedbackSource: 'default',
+              sequence,
+            },
+            this.options.errorCheckpointTtlSeconds ?? 3600,
+          );
         }
         break;
       }
@@ -222,24 +317,51 @@ export class RefinementLoopRunner {
       }
 
       if (iteration < maxIter) {
+        let feedbackSource: 'provider' | 'evaluator' | 'default' = 'default';
         if (nextFeedback) {
           currentMessage = nextFeedback;
+          feedbackSource = 'evaluator';
         } else if (state.feedbackProviderFn) {
           currentMessage = await state.feedbackProviderFn(result, iteration);
+          feedbackSource = 'provider';
         } else {
-          currentMessage = `Refinement Feedback (Iteration ${iteration}): Please improve the quality of your previous output: "${result.response}"`;
+          feedbackSource = 'default';
+          const scoreInfo = result.score !== undefined
+            ? ` (Score: ${(result.score * 100).toFixed(1)}% / Threshold: ${((this.options.qualityThreshold ?? 0.85) * 100).toFixed(1)}%)`
+            : '';
+          const prevSnippet = result.response.length > 300
+            ? `${result.response.substring(0, 300)}...`
+            : result.response;
+
+          currentMessage =
+            `Refinement Feedback (Iteration ${iteration}/${maxIter}):\n` +
+            `Your previous output did not meet the required quality criteria${scoreInfo}.\n` +
+            `Please revise and improve the response by addressing:\n` +
+            `1. Accuracy, completeness, and adherence to domain standards.\n` +
+            `2. Structural clarity and actionable details.\n\n` +
+            `Previous output to improve:\n` +
+            `"""\n${prevSnippet}\n"""`;
         }
 
+        sequence++;
         // Persist checkpoint for in-flight iteration
         if (this.options.stateStore) {
-          await this.saveCheckpoint(checkpointKey, parentContext, initialTask.agentName, {
-            iteration,
-            maxIter,
-            history,
-            accumulatedTokens,
-            accumulatedDurationMs,
-            currentMessage,
-          });
+          await this.saveCheckpoint(
+            checkpointKey,
+            parentContext,
+            initialTask.agentName,
+            {
+              iteration,
+              maxIter,
+              history,
+              accumulatedTokens,
+              accumulatedDurationMs,
+              currentMessage,
+              feedbackSource,
+              sequence,
+            },
+            this.options.checkpointTtlSeconds,
+          );
         }
       }
     }
@@ -269,11 +391,15 @@ export class RefinementLoopRunner {
       accumulatedTokens: number;
       accumulatedDurationMs: number;
       currentMessage: string;
+      feedbackSource: 'provider' | 'evaluator' | 'default';
+      sequence: number;
     },
+    ttlSeconds?: number,
   ): Promise<void> {
     if (!this.options.stateStore) return;
     const checkpoint: RefinementLoopCheckpoint = {
       version: 1,
+      checkpointSequence: state.sequence,
       parentSessionId: parentContext.sessionId,
       tenantId: parentContext.security.tenantId,
       agentName,
@@ -283,8 +409,9 @@ export class RefinementLoopRunner {
       totalTokens: state.accumulatedTokens,
       totalDurationMs: state.accumulatedDurationMs,
       currentMessage: state.currentMessage,
+      feedbackSource: state.feedbackSource,
       savedAt: new Date().toISOString(),
     };
-    await this.options.stateStore.set(key, checkpoint, this.options.checkpointTtlSeconds);
+    await this.options.stateStore.set(key, checkpoint, ttlSeconds ?? this.options.checkpointTtlSeconds);
   }
 }
