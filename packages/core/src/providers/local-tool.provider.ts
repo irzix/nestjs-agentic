@@ -120,7 +120,7 @@ export class LocalToolProvider {
       throw new ExecutionCancelledError();
     }
 
-    if (agentContext.deadline && Date.now() > agentContext.deadline.getTime()) {
+    if (isDeadlineExceeded(agentContext.deadline)) {
       throw new ExecutionLimitExceededError('timeout', 0);
     }
 
@@ -217,7 +217,7 @@ export class LocalToolProvider {
           throw new ExecutionCancelledError();
         }
 
-        if (agentContext.deadline && Date.now() > agentContext.deadline.getTime()) {
+        if (isDeadlineExceeded(agentContext.deadline)) {
           throw new ExecutionLimitExceededError('timeout', 0);
         }
 
@@ -415,4 +415,14 @@ export class LocalToolProvider {
 
     return { success: true, data };
   }
+}
+
+/**
+ * Safely evaluates if a deadline timestamp has expired, supporting both Date objects
+ * and serialized ISO-8601 string representations.
+ */
+function isDeadlineExceeded(deadline?: Date | string | number): boolean {
+  if (!deadline) return false;
+  const time = deadline instanceof Date ? deadline.getTime() : new Date(deadline).getTime();
+  return !isNaN(time) && Date.now() > time;
 }
