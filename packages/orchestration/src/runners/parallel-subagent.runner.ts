@@ -1,6 +1,6 @@
-import type { AgentRunner } from '@nestjs-agentic/core';
+import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
 import type { ParallelRunnerOptions, SubAgentResult, SubAgentTask } from '../interfaces/orchestration.interface';
-import { ParentSecurityContext, SubAgentDelegator } from '../delegator/sub-agent.delegator';
+import { SubAgentDelegator } from '../delegator/sub-agent.delegator';
 
 /**
  * Result payload returned from a parallel sub-agent fan-out execution run.
@@ -26,11 +26,6 @@ export class ParallelSubAgentRunner {
   private readonly delegator: SubAgentDelegator;
   private readonly options: ParallelRunnerOptions;
 
-  /**
-   * Creates a new instance of ParallelSubAgentRunner.
-   * @param runner Core AgentRunner instance.
-   * @param options Configuration options for parallel execution.
-   */
   constructor(runner: AgentRunner, options?: ParallelRunnerOptions) {
     this.delegator = new SubAgentDelegator(runner);
     this.options = {
@@ -46,15 +41,9 @@ export class ParallelSubAgentRunner {
 
   /**
    * Executes multiple sub-agents in parallel and aggregates their responses based on the configured aggregation strategy.
-   *
-   * @param parentSessionId The parent session identifier.
-   * @param parentSecurityContext Inherited parent security context.
-   * @param tasks Array of sub-agent task definitions to run concurrently.
-   * @returns Promise resolving to the combined parallel execution result.
    */
   async runParallel(
-    parentSessionId: string,
-    parentSecurityContext: ParentSecurityContext,
+    parentContext: AgentContext,
     tasks: SubAgentTask[],
   ): Promise<ParallelRunResult> {
     if (!tasks || tasks.length === 0) {
@@ -148,7 +137,7 @@ export class ParallelSubAgentRunner {
 
         try {
           lastResult = await Promise.race([
-            this.delegator.delegate(parentSessionId, parentSecurityContext, task, undefined, activeSignal),
+            this.delegator.delegate(parentContext, task, undefined, activeSignal),
             timeoutPromise,
             abortPromise,
           ]);
@@ -213,24 +202,15 @@ export class ParallelSubAgentRunner {
 
         try {
           const fallbackResult = await Promise.race([
-            this.delegator.delegate(
-              parentSessionId,
-              parentSecurityContext,
-              fallbackTask,
-              undefined,
-              activeSignal,
-            ),
+            this.delegator.delegate(parentContext, fallbackTask, undefined, activeSignal),
             fallbackTimeoutPromise,
             fallbackAbortPromise,
           ]);
 
-          if (fallbackResult.status === 'success') {
-            return {
-              ...fallbackResult,
-              response: `[Fallback Agent ${this.options.fallbackAgentName}]: ${fallbackResult.response}`,
-            };
-          }
-          lastResult = fallbackResult;
+          return {
+            ...fallbackResult,
+            agentName: `${task.agentName} (fallback: ${this.options.fallbackAgentName})`,
+          };
         } finally {
           if (fallbackTimer) clearTimeout(fallbackTimer);
           if (activeSignal && fallbackAbortHandler) {
@@ -239,42 +219,87 @@ export class ParallelSubAgentRunner {
         }
       }
 
-      return lastResult!;
+      return (
+        lastResult || {
+          agentName: task.agentName,
+          status: 'failed',
+          response: '',
+          toolCount: 0,
+          error: 'Sub-agent failed all execution attempts',
+        }
+      );
     };
 
-    const results = await mapConcurrent(
-      tasks,
-      this.options.maxConcurrency,
-      this.options.signal,
-      (t) => executeTaskWithRetryAndFallback(t),
-    );
+    // Execute with optional maxConcurrency limit
+    const results: SubAgentResult[] = [];
+    const maxConcurrency = this.options.maxConcurrency;
+
+    if (maxConcurrency && maxConcurrency > 0 && maxConcurrency < tasks.length) {
+      let activeIndex = 0;
+      const executing: Promise<void>[] = [];
+
+      const runWorker = async () => {
+        while (activeIndex < tasks.length) {
+          const currentIndex = activeIndex++;
+          const task = tasks[currentIndex];
+          results[currentIndex] = await executeTaskWithRetryAndFallback(task);
+        }
+      };
+
+      const workerCount = Math.min(maxConcurrency, tasks.length);
+      for (let i = 0; i < workerCount; i++) {
+        executing.push(runWorker());
+      }
+
+      await Promise.all(executing);
+    } else {
+      const taskPromises = tasks.map((task) => executeTaskWithRetryAndFallback(task));
+      const settledResults = await Promise.all(taskPromises);
+      results.push(...settledResults);
+    }
+
     const successCount = results.filter((r) => r.status === 'success').length;
-    const failedCount = results.length - successCount;
+    const failedCount = results.filter((r) => r.status !== 'success').length;
 
     let combinedResponse = '';
-
     if (this.options.customMergerFn) {
       combinedResponse = await this.options.customMergerFn(results);
-    } else if (this.options.aggregationStrategy === 'firstSuccess') {
-      const first = results.find((r) => r.status === 'success');
-      combinedResponse = first?.response || '';
-    } else if (this.options.aggregationStrategy === 'consensusMerge') {
-      const validResults = results.filter((r) => r.status === 'success');
-      if (validResults.length === 0) {
-        combinedResponse = 'All sub-agents failed to return valid results.';
-      } else {
-        validResults.sort((a, b) => (b.score || 0) - (a.score || 0));
-        combinedResponse = validResults.map((r) => `[${r.agentName}]: ${r.response}`).join('\n\n');
-      }
     } else {
-      combinedResponse = results
-        .map((r) => {
-          if (r.status === 'success') {
-            return `[${r.agentName} SUCCESS]: ${r.response}`;
+      switch (this.options.aggregationStrategy) {
+        case 'firstSuccess': {
+          const firstSuccess = results.find((r) => r.status === 'success');
+          combinedResponse = firstSuccess
+            ? firstSuccess.response
+            : results.map((r) => `[${r.agentName} Error: ${r.error}]`).join('\n');
+          break;
+        }
+        case 'consensusMerge': {
+          const successful = results.filter((r) => r.status === 'success');
+          if (successful.length === 0) {
+            combinedResponse = 'No sub-agents completed successfully.';
+          } else {
+            combinedResponse = successful
+              .map((r) => {
+                const confidence = r.score !== undefined ? ` (Score: ${r.score})` : '';
+                return `### [SubAgent: ${r.agentName}${confidence}]\n${r.response}`;
+              })
+              .join('\n\n');
           }
-          return `[${r.agentName} FAILED]: ${r.error}`;
-        })
-        .join('\n\n');
+          break;
+        }
+        case 'allSettled':
+        default: {
+          combinedResponse = results
+            .map((r) => {
+              if (r.status === 'success') {
+                return `### [SubAgent: ${r.agentName} - SUCCESS]\n${r.response}`;
+              }
+              return `### [SubAgent: ${r.agentName} - FAILED]\nError: ${r.error}`;
+            })
+            .join('\n\n');
+          break;
+        }
+      }
     }
 
     return {
@@ -285,42 +310,3 @@ export class ParallelSubAgentRunner {
     };
   }
 }
-
-/**
- * Runs tasks with a maximum concurrency limit and cancellation awareness.
- */
-async function mapConcurrent<T, R>(
-  items: T[],
-  concurrency: number | undefined,
-  signal: AbortSignal | undefined,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  if (!concurrency || concurrency >= items.length || concurrency < 1) {
-    return Promise.all(items.map(fn));
-  }
-
-  const results: R[] = new Array(items.length);
-  let currentIndex = 0;
-
-  const workers = Array.from({ length: concurrency }, async () => {
-    while (currentIndex < items.length) {
-      if (signal?.aborted) {
-        break;
-      }
-      const index = currentIndex++;
-      results[index] = await fn(items[index]);
-    }
-  });
-
-  await Promise.all(workers);
-
-  // Fill in any unstarted tasks due to abort
-  for (let i = 0; i < items.length; i++) {
-    if (results[i] === undefined) {
-      results[i] = (await fn(items[i])) as R;
-    }
-  }
-
-  return results;
-}
-

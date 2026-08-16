@@ -1,6 +1,6 @@
-import type { AgentRunner } from '@nestjs-agentic/core';
+import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
 import type { RefinementLoopOptions, SubAgentResult, SubAgentTask } from '../interfaces/orchestration.interface';
-import { ParentSecurityContext, SubAgentDelegator } from '../delegator/sub-agent.delegator';
+import { SubAgentDelegator } from '../delegator/sub-agent.delegator';
 
 /**
  * Result payload returned from an iterative refinement loop run.
@@ -26,11 +26,6 @@ export class RefinementLoopRunner {
   private readonly delegator: SubAgentDelegator;
   private readonly options: RefinementLoopOptions;
 
-  /**
-   * Creates a new instance of RefinementLoopRunner.
-   * @param runner Core AgentRunner instance.
-   * @param options Configuration options for refinement loop execution.
-   */
   constructor(runner: AgentRunner, options?: RefinementLoopOptions) {
     this.delegator = new SubAgentDelegator(runner);
     this.options = {
@@ -43,16 +38,9 @@ export class RefinementLoopRunner {
 
   /**
    * Runs an iterative refinement loop with feedback evaluation until satisfaction condition is met or maxIterations is reached.
-   *
-   * @param parentSessionId Parent session identifier.
-   * @param parentSecurityContext Inherited parent security context.
-   * @param initialTask Initial sub-agent task payload.
-   * @param feedbackProviderFn Optional function providing feedback instructions for subsequent iterations.
-   * @returns Promise resolving to the final refinement loop result.
    */
   async runLoop(
-    parentSessionId: string,
-    parentSecurityContext: ParentSecurityContext,
+    parentContext: AgentContext,
     initialTask: SubAgentTask,
     feedbackProviderFn?: (lastResult: SubAgentResult, iteration: number) => Promise<string> | string,
   ): Promise<RefinementLoopResult> {
@@ -76,8 +64,7 @@ export class RefinementLoopRunner {
       };
 
       const result = await this.delegator.delegate(
-        parentSessionId,
-        parentSecurityContext,
+        parentContext,
         task,
         iteration,
         activeSignal,
@@ -89,7 +76,7 @@ export class RefinementLoopRunner {
       }
 
       if (this.options.satisfactionFn) {
-        satisfied = await this.options.satisfactionFn!(result, iteration);
+        satisfied = await this.options.satisfactionFn(result, iteration);
       } else if (result.score !== undefined && this.options.qualityThreshold !== undefined) {
         satisfied = result.score >= this.options.qualityThreshold;
       } else {
@@ -100,19 +87,21 @@ export class RefinementLoopRunner {
         break;
       }
 
-      if (feedbackProviderFn) {
-        const feedback = await feedbackProviderFn(result, iteration);
-        currentMessage = `${initialTask.message}\n\n[Previous Attempt #${iteration} Output]:\n${result.response}\n\n[Refinement Feedback]:\n${feedback}`;
-      } else {
-        currentMessage = `${initialTask.message}\n\n[Previous Attempt #${iteration} Output]:\n${result.response}\n\nPlease refine and improve the response.`;
+      if (iteration < maxIter) {
+        if (feedbackProviderFn) {
+          currentMessage = await feedbackProviderFn(result, iteration);
+        } else {
+          currentMessage = `Refinement Feedback (Iteration ${iteration}): Please improve the quality of your previous output: "${result.response}"`;
+        }
       }
     }
 
-    const lastResult = history[history.length - 1];
+    const lastSuccess = [...history].reverse().find((r) => r.status === 'success');
+    const finalResponse = lastSuccess ? lastSuccess.response : (history[history.length - 1]?.error || '');
 
     return {
-      finalResponse: lastResult?.response || '',
-      iterations: iteration,
+      finalResponse,
+      iterations: history.length,
       satisfied,
       history,
     };
