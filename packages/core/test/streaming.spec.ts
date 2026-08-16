@@ -86,10 +86,23 @@ export async function runStreamingTests() {
       events.push(event);
     }
 
-    assert(events.length >= 3, 'Test 1a: Stream emitted multiple structured events');
-    assert(events[0].type === 'tool_start', 'Test 1b: First event is "tool_start"');
-    assert(events[1].type === 'tool_result', 'Test 1c: Second event is "tool_result"');
-    assert(events[events.length - 1].type === 'complete', 'Test 1d: Final event is "complete"');
+    assert(events.length >= 6, 'Test 1a: Stream emitted complete ReAct lifecycle event sequence');
+    assert(events[0].type === 'tool_start', 'Test 1b: First event is "tool_start" for backwards compatibility');
+    assert(events[1].type === 'action_call', 'Test 1c: Second event is ReAct "action_call"');
+    assert((events[1] as any).toolName === 'mockTool', 'Test 1d: "action_call" carries toolName');
+    assert(events[2].type === 'tool_result', 'Test 1e: Third event is "tool_result"');
+    assert(events[3].type === 'action_observation', 'Test 1f: Fourth event is ReAct "action_observation"');
+    
+    const finalAnswerIdx = events.findIndex((e) => e.type === 'final_answer');
+    const completeIdx = events.findIndex((e) => e.type === 'complete');
+    assert(finalAnswerIdx !== -1, 'Test 1g: "final_answer" event is emitted');
+    assert(completeIdx !== -1, 'Test 1h: "complete" event is emitted');
+    assert(finalAnswerIdx < completeIdx, 'Test 1i: "final_answer" precedes "complete"');
+    assert((events[finalAnswerIdx] as any).sessionId === 'sess_stream_1', 'Test 1j: "final_answer" includes sessionId');
+    assert(events[events.length - 1].type === 'complete', 'Test 1k: Final event is "complete"');
+    assert(Boolean((events[0] as any).id), 'Test 1l: "tool_start" carries correlation id');
+    assert((events[0] as any).id === (events[1] as any).id, 'Test 1m: "tool_start" and "action_call" share identical correlation id for deduplication');
+    assert((events[2] as any).id === (events[3] as any).id, 'Test 1n: "tool_result" and "action_observation" share identical correlation id for deduplication');
   } catch (err: any) {
     assert(false, 'Test 1: AgentRunner runStream Event Emitting', err.message);
   }

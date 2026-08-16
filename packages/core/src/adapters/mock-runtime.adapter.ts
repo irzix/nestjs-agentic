@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import type { AgentResult, AgentRunInput, AgentStreamEvent, RuntimeAdapter } from '../interfaces';
 
 interface ToolScenario {
@@ -65,29 +66,36 @@ export class MockRuntimeAdapter implements RuntimeAdapter {
         );
       }
 
-      yield { type: 'tool_start', toolName: scenario.toolName, args: scenario.args };
+      const callId = `call_${randomUUID().slice(0, 8)}`;
 
-      const result = await tool.execute({ args: scenario.args });
+      yield { type: 'tool_start', id: callId, toolName: scenario.toolName, args: scenario.args };
+      yield { type: 'action_call', id: callId, toolName: scenario.toolName, args: scenario.args };
+
+      const result = await tool.execute({ args: scenario.args, toolCallId: callId });
 
       if (!result.success && result.status === 'pending_approval') {
         yield {
           type: 'approval_required',
+          id: callId,
           toolName: scenario.toolName,
           approvalId: result.approvalId,
           reason: result.reason,
         };
       } else {
-        yield { type: 'tool_result', toolName: scenario.toolName, result };
+        yield { type: 'tool_result', id: callId, toolName: scenario.toolName, result };
+        yield { type: 'action_observation', id: callId, toolName: scenario.toolName, result };
       }
 
       const text = `Mock executed tool "${scenario.toolName}"`;
       yield { type: 'token', text };
+      yield { type: 'final_answer', sessionId: input.sessionId, output: text };
       yield { type: 'complete', sessionId: input.sessionId, output: text };
       return;
     }
 
     const text = `Mock response: "${input.message}"`;
     yield { type: 'token', text };
+    yield { type: 'final_answer', sessionId: input.sessionId, output: text };
     yield { type: 'complete', sessionId: input.sessionId, output: text };
   }
 }

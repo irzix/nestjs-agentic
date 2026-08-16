@@ -152,6 +152,7 @@ export class LangGraphRuntimeAdapter implements RuntimeAdapter {
       const mockArgs: Record<string, unknown> = { query: input.message };
 
       yield { type: 'tool_start', toolName: resolvedTool.name, args: mockArgs, id: callId } as any;
+      yield { type: 'action_call', toolName: resolvedTool.name, args: mockArgs, id: callId } as any;
 
       const result = await resolvedTool.execute({ args: mockArgs });
 
@@ -165,11 +166,13 @@ export class LangGraphRuntimeAdapter implements RuntimeAdapter {
         } as any;
       } else {
         yield { type: 'tool_result', toolName: resolvedTool.name, result, id: callId } as any;
+        yield { type: 'action_observation', toolName: resolvedTool.name, result, id: callId } as any;
       }
 
       executedToolCalls.push({ toolName: resolvedTool.name, args: mockArgs, result });
     }
 
+    yield { type: 'final_answer', sessionId: input.sessionId, output: '' } as any;
     yield { type: 'complete', sessionId: input.sessionId, output: '' };
   }
 }
