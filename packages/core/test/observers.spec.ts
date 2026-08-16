@@ -5,6 +5,7 @@ import {
   AgentObserver,
   AgentResult,
   AgentRunner,
+  AgentStreamEvent,
   AgenticModule,
   InMemoryAgentObserver,
   ModelAdapter,
@@ -125,13 +126,14 @@ export async function runObserversTests() {
     assert(inMemoryObserver.toolCallEvents.length === 1, 'Should emit 1 onToolCall');
     assert(inMemoryObserver.toolCallEvents[0].toolName === 'calculate', 'Tool name should match');
     assert(
-      (inMemoryObserver.toolCallEvents[0].args as any).expression === '2 + 2',
+      (inMemoryObserver.toolCallEvents[0].args as Record<string, unknown>).expression === '2 + 2',
       'Tool args should match',
     );
 
     assert(inMemoryObserver.toolResultEvents.length === 1, 'Should emit 1 onToolResult');
+    const toolResult = inMemoryObserver.toolResultEvents[0].result as { data?: { result?: number } };
     assert(
-      (inMemoryObserver.toolResultEvents[0].result as any).data?.result === 4,
+      toolResult?.data?.result === 4,
       'Tool result should match',
     );
     assert(
@@ -302,7 +304,7 @@ export async function runObserversTests() {
     }).compile();
 
     const runner = moduleRef.get(AgentRunner);
-    const events: any[] = [];
+    const events: AgentStreamEvent[] = [];
     for await (const event of runner.runStream('MathAgent', {
       sessionId: 'session_stream_obs',
       message: 'Solve stream',

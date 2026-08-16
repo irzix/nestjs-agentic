@@ -170,13 +170,19 @@ export class AgentRunner {
 
   private getNotifier(): ObserverNotifier {
     const fromOptions = this.options.observers ?? [];
-    const fromInjected = Array.isArray(this.injectedObservers)
-      ? (this.injectedObservers as any).flat(Infinity)
-      : this.injectedObservers
-        ? [this.injectedObservers]
-        : [];
+    const fromInjected: AgentObserver[] = [];
+    if (this.injectedObservers) {
+      const collect = (item: unknown): void => {
+        if (Array.isArray(item)) {
+          item.forEach(collect);
+        } else if (item && typeof item === 'object') {
+          fromInjected.push(item as AgentObserver);
+        }
+      };
+      collect(this.injectedObservers);
+    }
     const all = [...fromOptions, ...fromInjected];
-    const unique = Array.from(new Set(all.filter(Boolean)));
+    const unique = Array.from(new Set(all.filter((o): o is AgentObserver => Boolean(o))));
     return new ObserverNotifier(unique);
   }
 
@@ -650,10 +656,15 @@ export class AgentRunner {
         const res = await adapter.execute(adapterInput);
         for (const toolCall of res.toolCalls) {
           const callId = `call_${randomUUID().slice(0, 8)}`;
+          const toolResult: ToolExecutionResult =
+            toolCall.result && typeof toolCall.result === 'object' && 'success' in toolCall.result
+              ? (toolCall.result as ToolExecutionResult)
+              : { success: true, data: toolCall.result };
+
           yield { type: 'tool_start', id: callId, toolName: toolCall.toolName, args: toolCall.args };
           yield { type: 'action_call', id: callId, toolName: toolCall.toolName, args: toolCall.args };
-          yield { type: 'tool_result', id: callId, toolName: toolCall.toolName, result: toolCall.result as any };
-          yield { type: 'action_observation', id: callId, toolName: toolCall.toolName, result: toolCall.result as any };
+          yield { type: 'tool_result', id: callId, toolName: toolCall.toolName, result: toolResult };
+          yield { type: 'action_observation', id: callId, toolName: toolCall.toolName, result: toolResult };
         }
         yield { type: 'token', text: res.output };
         yield { type: 'final_answer', sessionId: res.sessionId, output: res.output, usage: res.usage };
