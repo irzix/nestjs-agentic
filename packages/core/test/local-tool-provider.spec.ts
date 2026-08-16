@@ -233,6 +233,60 @@ export async function runLocalToolProviderTests() {
     assert(false, 'Test 5: Output Rails (evaluateOutput hook)', err.message);
   }
 
+  // TEST 6: Tool Cancellation and Deadline Propagation
+  try {
+    const controller = new AbortController();
+    const deadline = new Date(Date.now() + 5000);
+    const cancellableContext: AgentContext = {
+      ...agentContext,
+      signal: controller.signal,
+      deadline,
+    };
+
+    @ToolSet({ name: 'cancellable-tools' })
+    class CancellableTools {
+      @Tool({ description: 'Tool reading context signal and deadline' })
+      async checkCancellation(@Context() ctx: AgentContext) {
+        return {
+          hasSignal: Boolean(ctx.signal),
+          isAborted: ctx.signal?.aborted ?? false,
+          hasDeadline: Boolean(ctx.deadline),
+        };
+      }
+    }
+
+    const cancelProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      discovery,
+      moduleRef as unknown as ModuleRef,
+    );
+
+    const tools = cancelProvider.buildTools([new CancellableTools()], cancellableContext, 'TestAgent');
+    const tool = tools.find((t) => t.name === 'checkCancellation');
+
+    const exec1 = await tool?.execute({ args: {} });
+    assert(exec1?.success === true, 'Test 6a: Tool executed with context signal');
+    assert((exec1 as any)?.data?.hasSignal === true, 'Test 6b: Context signal was propagated');
+    assert((exec1 as any)?.data?.hasDeadline === true, 'Test 6c: Context deadline was propagated');
+
+    // Abort controller
+    controller.abort();
+    const exec2 = await tool?.execute({ args: {} });
+    assert(exec2?.success === false, 'Test 6d: Aborted signal blocked tool execution');
+    assert((exec2 as any)?.status === 'denied', 'Test 6e: Aborted tool returns denied status');
+
+    const approvedExec = await cancelProvider.invokeApprovedTool(
+      [new CancellableTools()],
+      'checkCancellation',
+      {},
+      cancellableContext,
+    );
+    assert(approvedExec.success === false, 'Test 6f: invokeApprovedTool respects aborted signal');
+  } catch (err: any) {
+    assert(false, 'Test 6: Tool Cancellation and Deadline Propagation', err.message);
+  }
+
   console.log(`\n  📊 Step 2 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 2 Unit Tests Failed');

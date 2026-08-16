@@ -111,6 +111,10 @@ export class LocalToolProvider {
     args: Record<string, unknown>,
     agentContext: AgentContext,
   ): Promise<ToolExecutionResult> {
+    if (agentContext.signal?.aborted) {
+      return { success: false, status: 'denied', reason: 'Execution cancelled by AbortSignal' };
+    }
+
     const tool = this.discoverToolByName(toolSetTokensOrInstances, toolName);
     if (!tool) {
       throw new ApprovalToolNotFoundError(toolName);
@@ -200,6 +204,10 @@ export class LocalToolProvider {
         args: Record<string, unknown>;
         toolCallId?: string;
       }): Promise<ToolExecutionResult> => {
+        if (agentContext.signal?.aborted) {
+          return { success: false, status: 'denied', reason: 'Execution cancelled by AbortSignal' };
+        }
+
         const idempotencyKey =
           (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
         if (idempotencyKey && this.idempotencyStore) {

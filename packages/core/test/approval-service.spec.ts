@@ -523,6 +523,63 @@ export async function runApprovalServiceTests() {
     assert(false, 'Test 7: Unsupported checkpoint version is refused', err.message);
   }
 
+  // TEST 8: Approval Cancellation Support (AbortSignal)
+  try {
+    const { ExecutionCancelledError, LocalToolProvider, ToolDiscoveryService } =
+      await import('../src');
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+    const runner = new AgentRunner(
+      [],
+      undefined,
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(new MockModelAdapter()),
+      new InMemorySessionStore(),
+      approvalStore,
+    );
+    const approvals = new ApprovalService(approvalStore, runner);
+
+    await approvalStore.save({
+      id: 'apr_cancel_test',
+      agentName: 'banker',
+      toolName: 'transferMoney',
+      args: { amount: 100 },
+      context: { sessionId: 'sess_cancel', traceId: 't_c', security: {} } as any,
+      reason: 'Need approval',
+      createdAt: new Date(),
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+
+    let abortErr: unknown;
+    try {
+      await approvals.approve('apr_cancel_test', { signal: controller.signal });
+    } catch (err) {
+      abortErr = err;
+    }
+
+    assert(
+      abortErr instanceof ExecutionCancelledError,
+      'Test 8a: ApprovalService.approve throws ExecutionCancelledError when aborted',
+    );
+
+    const untouched = await approvalStore.get('apr_cancel_test');
+    assert(
+      Boolean(untouched),
+      'Test 8b: Aborted approval was not claimed or consumed from store',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 8: Approval Cancellation Support', err.message);
+  }
+
   console.log(`\n  📊 Step 3 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 3 Unit Tests Failed');

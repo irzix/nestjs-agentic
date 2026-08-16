@@ -30,4 +30,10 @@ export interface AgentContext {
 
   /** Arbitrary key-value bag for passing custom data into tool handlers. */
   data?: Record<string, unknown>;
+
+  /** Cancellation signal owned by the executor or caller. Tool handlers and policies should honor it. */
+  signal?: AbortSignal;
+
+  /** Absolute deadline timestamp after which the current execution turn will time out. */
+  deadline?: Date;
 }

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { APPROVAL_STORE } from '../constants';
-import { ApprovalExpiredError, ApprovalNotFoundError } from '../errors';
+import { ApprovalExpiredError, ApprovalNotFoundError, ExecutionCancelledError } from '../errors';
 import { auditEnvelope } from '../interfaces';
 import type { ApprovalStore, AuditActor, PendingApproval } from '../interfaces';
 import type { AgentResult } from '../interfaces';
@@ -94,6 +94,10 @@ export class ApprovalService {
     decision: { approved: true } | { approved: false; reason?: string },
     options?: SettleApprovalOptions,
   ): Promise<AgentResult | ToolExecutionResult> {
+    if (options?.signal?.aborted) {
+      throw new ExecutionCancelledError();
+    }
+
     const claimed = await this.store.claim(approvalId);
 
     if (!claimed) {
