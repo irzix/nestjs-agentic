@@ -22,6 +22,18 @@ export class InMemoryStateStore implements StateStore {
     this.storage.set(key, { value, expiresAt });
   }
 
+  async setIfNotExists<T = unknown>(key: string, value: T, ttlSeconds?: number): Promise<boolean> {
+    const entry = this.storage.get(key);
+    if (entry) {
+      if (!entry.expiresAt || Date.now() <= entry.expiresAt) {
+        return false;
+      }
+    }
+    const expiresAt = ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined;
+    this.storage.set(key, { value, expiresAt });
+    return true;
+  }
+
   async delete(key: string): Promise<void> {
     this.storage.delete(key);
   }

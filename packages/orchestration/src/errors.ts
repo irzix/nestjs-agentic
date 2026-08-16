@@ -107,3 +107,19 @@ export class RefinementCheckpointVersionError extends OrchestrationError {
     );
   }
 }
+
+/**
+ * Thrown when an optimistic concurrency control conflict occurs while writing a refinement loop checkpoint.
+ */
+export class RefinementCheckpointConflictError extends OrchestrationError {
+  constructor(
+    public readonly checkpointKey: string,
+    public readonly attemptedSequence: number,
+    public readonly currentSequence: number,
+  ) {
+    super(
+      `Refinement checkpoint conflict for "${checkpointKey}": Cannot write checkpoint sequence ${attemptedSequence} ` +
+        `when existing sequence is already ${currentSequence}.`,
+    );
+  }
+}

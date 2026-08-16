@@ -23,6 +23,7 @@ import {
   MaxDelegationDepthExceededError,
   MissingFeedbackProviderError,
   ParallelSubAgentRunner,
+  RefinementCheckpointConflictError,
   RefinementCheckpointNotFoundError,
   RefinementCheckpointVersionError,
   RefinementLoopAlreadyRunningError,
@@ -1169,6 +1170,122 @@ export async function runOrchestrationTests() {
     assert(checkpoint !== null, 'Checkpoint exists');
     assert(checkpoint!.checkpointSequence >= 2, 'checkpointSequence is monotonically positive');
     console.log('    ✓ Checkpoint sequence incrementation verified');
+  }
+
+  // =========================================================================
+  // TEST 28: Atomic Lock Acquisition via StateStore.setIfNotExists
+  // =========================================================================
+  {
+    console.log('  - Test 28: Atomic Lock Acquisition via StateStore.setIfNotExists');
+    const stateStore = new InMemoryStateStore();
+    const key = 'test:atomic:lock';
+
+    const first = await stateStore.setIfNotExists(key, 'lock_1', 60);
+    assert(first === true, 'First setIfNotExists succeeds');
+
+    const second = await stateStore.setIfNotExists(key, 'lock_2', 60);
+    assert(second === false, 'Second setIfNotExists fails atomically');
+
+    await stateStore.delete(key);
+    const third = await stateStore.setIfNotExists(key, 'lock_3', 60);
+    assert(third === true, 'setIfNotExists succeeds after key deletion');
+    console.log('    ✓ Atomic setIfNotExists behavior verified');
+  }
+
+  // =========================================================================
+  // TEST 29: Safe Lock Release (Owner Verification)
+  // =========================================================================
+  {
+    console.log('  - Test 29: Safe Lock Release (Owner Verification)');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, { stateStore });
+    const parentContext: AgentContext = {
+      sessionId: 'sess_safe_release',
+      traceId: 'trace_safe_rel',
+      security: { tenantId: 'tenant_rel' },
+    };
+
+    // Simulate process A holding lock
+    const lockKey = `agentic:tenant_rel:refinement:sess_safe_release:writer_agent:lock`;
+    await stateStore.set(lockKey, 'owner_lock_A', 60);
+
+    // Simulate process B attempting to release process A's lock with wrong lockId
+    await (loopRunner as unknown as { releaseLock: (ctx: AgentContext, agent: string, lockId: string) => Promise<void> })
+      .releaseLock(parentContext, 'writer_agent', 'wrong_lock_B');
+
+    const currentLock = await stateStore.get<string>(lockKey);
+    assert(currentLock === 'owner_lock_A', 'Process A lock was NOT deleted by Process B');
+
+    // Process A releases with correct lockId
+    await (loopRunner as unknown as { releaseLock: (ctx: AgentContext, agent: string, lockId: string) => Promise<void> })
+      .releaseLock(parentContext, 'writer_agent', 'owner_lock_A');
+
+    const releasedLock = await stateStore.get<string>(lockKey);
+    assert(releasedLock === null, 'Process A lock was successfully deleted by owner');
+    console.log('    ✓ Safe owner-verified lock release verified');
+  }
+
+  // =========================================================================
+  // TEST 30: OCC Sequence Enforcement (RefinementCheckpointConflictError)
+  // =========================================================================
+  {
+    console.log('  - Test 30: OCC Sequence Enforcement (RefinementCheckpointConflictError)');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, { stateStore });
+    const parentContext: AgentContext = {
+      sessionId: 'sess_occ_test',
+      traceId: 'trace_occ',
+      security: { tenantId: 'tenant_occ' },
+    };
+
+    const checkpointKey = `agentic:tenant_occ:refinement:sess_occ_test:writer_agent:checkpoint`;
+
+    // Save checkpoint sequence 5
+    await stateStore.set(checkpointKey, {
+      version: 1,
+      checkpointSequence: 5,
+      parentSessionId: 'sess_occ_test',
+      agentName: 'writer_agent',
+      iteration: 2,
+      maxIterations: 3,
+      history: [],
+      totalTokens: 100,
+      totalDurationMs: 200,
+      currentMessage: 'msg',
+      feedbackSource: 'default',
+      savedAt: new Date().toISOString(),
+    });
+
+    // Attempt to write an older or equal sequence (e.g. sequence 4)
+    let conflictCaught = false;
+    try {
+      await (loopRunner as unknown as {
+        saveCheckpoint: (
+          key: string,
+          ctx: AgentContext,
+          agent: string,
+          state: unknown,
+        ) => Promise<void>;
+      }).saveCheckpoint(checkpointKey, parentContext, 'writer_agent', {
+        iteration: 2,
+        maxIter: 3,
+        history: [],
+        accumulatedTokens: 80,
+        accumulatedDurationMs: 150,
+        currentMessage: 'stale msg',
+        feedbackSource: 'default',
+        sequence: 4, // Stale sequence
+      });
+    } catch (err) {
+      if (err instanceof RefinementCheckpointConflictError) {
+        conflictCaught = true;
+        assert(err.attemptedSequence === 4, 'Attempted sequence matches 4');
+        assert(err.currentSequence === 5, 'Current sequence matches 5');
+      }
+    }
+
+    assert(conflictCaught, 'RefinementCheckpointConflictError thrown on stale sequence write');
+    console.log('    ✓ OCC checkpoint sequence conflict detection verified');
   }
 
   console.log('🎉 All Orchestration Unit & Security Tests Passed!\n');

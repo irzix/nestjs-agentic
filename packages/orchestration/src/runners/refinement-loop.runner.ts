@@ -2,6 +2,7 @@ import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
 import {
   MissingFeedbackProviderError,
   RefinementBudgetExceededError,
+  RefinementCheckpointConflictError,
   RefinementCheckpointVersionError,
   RefinementLoopAlreadyRunningError,
 } from '../errors';
@@ -56,28 +57,47 @@ export class RefinementLoopRunner {
   }
 
   /**
-   * Acquires a distributed execution lease to prevent race conditions during concurrent loop execution or resumption.
+   * Atomically acquires a distributed execution lease to prevent race conditions during concurrent loop execution or resumption.
    */
   private async acquireLock(parentContext: AgentContext, agentName: string): Promise<string | null> {
     if (!this.options.stateStore) return null;
     const lockKey = this.getLockKey(parentContext, agentName);
+    const lockId = Math.random().toString(36).substring(2, 15);
+    const lockTtl = this.options.lockTtlSeconds ?? 60;
+
+    // Use atomic setIfNotExists (SETNX / INSERT ON CONFLICT) if supported by StateStore
+    if (this.options.stateStore.setIfNotExists) {
+      const acquired = await this.options.stateStore.setIfNotExists(lockKey, lockId, lockTtl);
+      if (!acquired) {
+        throw new RefinementLoopAlreadyRunningError(parentContext.sessionId, agentName);
+      }
+      return lockId;
+    }
+
+    // Fallback for custom StateStore implementations lacking setIfNotExists
     const existing = await this.options.stateStore.get<string>(lockKey);
     if (existing) {
       throw new RefinementLoopAlreadyRunningError(parentContext.sessionId, agentName);
     }
-    const lockId = Math.random().toString(36).substring(2, 15);
-    await this.options.stateStore.set(lockKey, lockId, this.options.lockTtlSeconds ?? 60);
+    await this.options.stateStore.set(lockKey, lockId, lockTtl);
     return lockId;
   }
 
   /**
-   * Releases the concurrency execution lease upon completion or failure.
+   * Safely releases the concurrency execution lease, ensuring it only deletes the key if owned by this process.
    */
-  private async releaseLock(parentContext: AgentContext, agentName: string): Promise<void> {
-    if (!this.options.stateStore) return;
+  private async releaseLock(
+    parentContext: AgentContext,
+    agentName: string,
+    lockId: string | null,
+  ): Promise<void> {
+    if (!this.options.stateStore || !lockId) return;
     const lockKey = this.getLockKey(parentContext, agentName);
     try {
-      await this.options.stateStore.delete(lockKey);
+      const current = await this.options.stateStore.get<string>(lockKey);
+      if (current === lockId) {
+        await this.options.stateStore.delete(lockKey);
+      }
     } catch {
       // Graceful error suppression during lock release
     }
@@ -92,7 +112,7 @@ export class RefinementLoopRunner {
     initialTask: SubAgentTask,
     feedbackProviderFn?: (lastResult: SubAgentResult, iteration: number) => Promise<string> | string,
   ): Promise<RefinementLoopResult> {
-    await this.acquireLock(parentContext, initialTask.agentName);
+    const lockId = await this.acquireLock(parentContext, initialTask.agentName);
     try {
       return await this.execute(parentContext, initialTask, {
         startIteration: 0,
@@ -104,7 +124,7 @@ export class RefinementLoopRunner {
         feedbackProviderFn,
       });
     } finally {
-      await this.releaseLock(parentContext, initialTask.agentName);
+      await this.releaseLock(parentContext, initialTask.agentName, lockId);
     }
   }
 
@@ -127,7 +147,7 @@ export class RefinementLoopRunner {
       );
     }
 
-    await this.acquireLock(parentContext, checkpoint.agentName);
+    const lockId = await this.acquireLock(parentContext, checkpoint.agentName);
     try {
       const task: SubAgentTask = {
         agentName: checkpoint.agentName,
@@ -144,7 +164,7 @@ export class RefinementLoopRunner {
         feedbackProviderFn,
       });
     } finally {
-      await this.releaseLock(parentContext, checkpoint.agentName);
+      await this.releaseLock(parentContext, checkpoint.agentName, lockId);
     }
   }
 
@@ -397,6 +417,17 @@ export class RefinementLoopRunner {
     ttlSeconds?: number,
   ): Promise<void> {
     if (!this.options.stateStore) return;
+
+    // Optimistic Concurrency Control (OCC) check: forbid overwriting a higher sequence checkpoint
+    const existing = await this.options.stateStore.get<RefinementLoopCheckpoint>(key);
+    if (
+      existing &&
+      existing.checkpointSequence !== undefined &&
+      existing.checkpointSequence >= state.sequence
+    ) {
+      throw new RefinementCheckpointConflictError(key, state.sequence, existing.checkpointSequence);
+    }
+
     const checkpoint: RefinementLoopCheckpoint = {
       version: 1,
       checkpointSequence: state.sequence,
