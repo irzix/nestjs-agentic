@@ -6,5 +6,20 @@ export { RedisStateStore, GenericRedisClient, RedisStateStoreOptions } from './r
 export { RedisApprovalStore, RedisApprovalStoreOptions } from './redis-approval.store';
 export { RedisSessionStore, RedisSessionStoreOptions } from './redis-session.store';
 export { RedisIdempotencyStore, RedisIdempotencyStoreOptions } from './redis-idempotency.store';
-
-
+export {
+  PostgresStateStore,
+  GenericPostgresClient,
+  PostgresStateStoreOptions,
+} from './postgres-state.store';
+export {
+  PostgresSessionStore,
+  PostgresSessionStoreOptions,
+} from './postgres-session.store';
+export {
+  PostgresApprovalStore,
+  PostgresApprovalStoreOptions,
+} from './postgres-approval.store';
+export {
+  PostgresIdempotencyStore,
+  PostgresIdempotencyStoreOptions,
+} from './postgres-idempotency.store';
