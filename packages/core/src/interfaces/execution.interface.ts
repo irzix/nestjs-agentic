@@ -1,3 +1,5 @@
+import type { ModelMessage, ModelUsage } from './model.interface';
+
 /**
  * Bounds applied to a single agent turn.
  *
@@ -43,3 +45,41 @@ export type ExecutionLimitKind =
   | 'max_tool_calls'
   | 'timeout'
   | 'max_total_tokens';
+
+/** Schema version for in-flight execution checkpoints. */
+export const INFLIGHT_CHECKPOINT_VERSION = 1;
+
+/** Default time-to-live for stored in-flight execution checkpoints (24 hours). */
+export const DEFAULT_CHECKPOINT_TTL_SECONDS = 86400;
+
+/**
+ * Durable snapshot of an in-flight agent execution recorded after each model/tool iteration round.
+ *
+ * Allows turns interrupted by process restarts, node crashes, or unhandled exceptions to be
+ * recovered and resumed from their last known consistent state without re-executing previous tool side effects.
+ */
+export interface InFlightCheckpoint {
+  /** Schema version of this checkpoint record. */
+  version: number;
+
+  /** Unique execution identifier for the turn. */
+  executionId: string;
+
+  /** Session identifier for the conversation. */
+  sessionId: string;
+
+  /** Current iteration index (1-based) completed when checkpoint was captured. */
+  iteration: number;
+
+  /** Conversation history accumulated up to this checkpoint (including system, user, assistant, and tool messages). */
+  messages: ModelMessage[];
+
+  /** Cumulative token usage recorded up to this round. */
+  usage: ModelUsage;
+
+  /** Cumulative tool call count executed up to this round. */
+  toolCallCount: number;
+
+  /** ISO-8601 timestamp when this checkpoint was recorded. */
+  updatedAt: string;
+}

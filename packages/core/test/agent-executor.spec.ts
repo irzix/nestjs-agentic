@@ -568,6 +568,159 @@ export async function runAgentExecutorTests() {
     assert(false, 'Test 14: Streaming tool errors', err.message);
   }
 
+  // TEST 15: In-Flight Checkpointing Captures Intermediate Tool Rounds
+  let capturedCheckpoint: any;
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Process multi-step order')
+      .callTool('lookupOrder', { orderId: '42' })
+      .callTool('lookupOrder', { orderId: '43' })
+      .reply('All orders looked up successfully.');
+
+    const { runner } = createHarness(model);
+    const checkpoints: any[] = [];
+
+    const executor = new AgentExecutor(model);
+    const prepared = runner.prepare('support', {
+      sessionId: 'sess_15_executor',
+      message: 'Process multi-step order',
+    });
+
+    await executor.execute({
+      sessionId: 'sess_15_executor',
+      message: 'Process multi-step order',
+      model: prepared.model,
+      tools: prepared.tools,
+      instructions: prepared.config.instructions,
+      onCheckpoint: (cp) => {
+        checkpoints.push(cp);
+      },
+    });
+
+    assert(checkpoints.length >= 1, 'Test 15a: In-flight checkpoint emitted after intermediate round');
+    capturedCheckpoint = checkpoints[0];
+    assert(capturedCheckpoint.version === 1, 'Test 15b: Checkpoint carries version 1');
+    assert(capturedCheckpoint.iteration >= 1, 'Test 15c: Iteration index recorded');
+    assert(Array.isArray(capturedCheckpoint.messages), 'Test 15d: Accumulated messages captured');
+    assert(
+      capturedCheckpoint.messages.some((m: any) => m.role === 'tool'),
+      'Test 15e: Tool results preserved in checkpoint',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 15: In-Flight Checkpoint Capture', err.message);
+  }
+
+  // TEST 16: Resume Directly from In-Flight Checkpoint Without Re-executing Previous Tools
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Process multi-step order')
+      .callTool('lookupOrder', { orderId: '42' })
+      .reply('All orders processed after resume.');
+
+    const { runner, tools } = createHarness(model);
+
+    // Initial tool call count is 0 on fresh runner
+    assert(tools.lookupCalls === 0, 'Test 16a: No tools executed yet on fresh runner');
+
+    // Resume from capturedCheckpoint which already ran lookupOrder('42') and lookupOrder('43')
+    const resumedResult = await runner.resumeCheckpoint('support', capturedCheckpoint);
+    assert(
+      tools.lookupCalls === 0,
+      'Test 16b: Previous tools were not re-executed upon resuming from checkpoint',
+    );
+    assert(
+      resumedResult.output === 'All orders processed after resume.',
+      'Test 16c: Final model answer returned from resumed turn',
+    );
+    assert(
+      resumedResult.toolCalls.length === 0,
+      'Test 16d: Resumed turn only recorded newly executed tool calls',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 16: Checkpoint Resumption', err.message);
+  }
+
+  // TEST 17: InFlightCheckpointVersionError On Unsupported Schema Version
+  try {
+    const { InFlightCheckpointVersionError } = await import('../src');
+    const model = new MockModelAdapter();
+    const { runner } = createHarness(model);
+
+    const badCheckpoint = {
+      ...capturedCheckpoint,
+      version: 999,
+    };
+
+    let caughtErr: unknown;
+    try {
+      await runner.resumeCheckpoint('support', badCheckpoint);
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    assert(
+      caughtErr instanceof InFlightCheckpointVersionError,
+      'Test 17a: Throws InFlightCheckpointVersionError for unsupported version',
+    );
+    assert(
+      (caughtErr as any)?.found === 999,
+      'Test 17b: Error carries found version',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 17: Checkpoint Version Validation', err.message);
+  }
+
+  // TEST 18: Durable Recovery from StateStore (recoverLatestCheckpoint)
+  try {
+    const { InMemoryStateStore } = await import('../src');
+    const stateStore = new InMemoryStateStore();
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Multi-step with state store')
+      .callTool('lookupOrder', { orderId: '100' })
+      .reply('Finished.');
+
+    const tools = new OrderTools();
+    const approvalStore = new InMemoryApprovalStore();
+    const localToolProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      new ToolDiscoveryService(),
+      moduleRef,
+    );
+
+    const runner = new AgentRunner(
+      [new SupportAgent(tools)],
+      undefined,
+      {
+        defaultModel: { provider: 'mock', model: 'deterministic' },
+        stateStore,
+      },
+      localToolProvider,
+      moduleRef,
+      new AgentExecutor(model),
+      undefined,
+      undefined,
+      stateStore,
+    );
+
+    await runner.run('support', {
+      sessionId: 'sess_18_recovery',
+      message: 'Multi-step with state store',
+    });
+
+    const latest = await stateStore.get<any>('checkpoint:latest:sess_18_recovery');
+    assert(latest !== null && latest !== undefined, 'Test 18a: Latest checkpoint saved to StateStore');
+    assert(latest.version === 1, 'Test 18b: StateStore checkpoint has version 1');
+
+    const recovered = await runner.recoverLatestCheckpoint('support', 'sess_18_recovery');
+    assert(recovered.output === 'Finished.', 'Test 18c: recoverLatestCheckpoint succeeded');
+  } catch (err: any) {
+    assert(false, 'Test 18: StateStore Checkpoint Recovery', err.message);
+  }
+
   console.log(`\n  📊 Step 7 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 7 Unit Tests Failed');

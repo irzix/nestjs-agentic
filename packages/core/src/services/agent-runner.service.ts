@@ -12,6 +12,7 @@ import {
 import {
   ApprovalCheckpointVersionError,
   ApprovalTranscriptMissingError,
+  CheckpointNotFoundError,
   ExecutionCancelledError,
   RuntimeNotConfiguredError,
 } from '../errors';
@@ -34,9 +35,11 @@ import type {
   ToolExecutionResult,
 } from '../interfaces';
 import { APPROVAL_CHECKPOINT_VERSION } from '../interfaces';
-import type {
-  ExecutionLimits,
-  ToolErrorHandling,
+import {
+  DEFAULT_CHECKPOINT_TTL_SECONDS,
+  type ExecutionLimits,
+  type InFlightCheckpoint,
+  type ToolErrorHandling,
 } from '../interfaces/execution.interface';
 import type { ModelMessage } from '../interfaces/model.interface';
 import {
@@ -49,7 +52,7 @@ import {
 import { trimHistory, withoutSystemMessages } from '../utils/session-history';
 import type { ModelAdapter } from '../interfaces/model.interface';
 
-import type { StateStore } from '../interfaces/state-store.interface';
+import { STATE_STORE, type StateStore } from '../interfaces/state-store.interface';
 import { AgentExecutor } from './agent-executor.service';
 
 export interface AgenticModuleOptions {
@@ -81,6 +84,11 @@ export interface AgenticModuleOptions {
    * decision via its own `ttlSeconds`. Unset means approvals never expire.
    */
   approvalTtlSeconds?: number;
+  /**
+   * Default lifetime in seconds for in-flight execution checkpoints stored in StateStore.
+   * Default: 86400 (24 hours).
+   */
+  checkpointTtlSeconds?: number;
   /**
    * Recording behavior for the audit trail. Only takes effect when at least one
    * `AuditSink` is registered through the `AUDIT_SINKS` token.
@@ -117,8 +125,20 @@ export interface RunInput {
   signal?: AbortSignal;
 }
 
+export interface ResumeCheckpointOptions {
+  signal?: AbortSignal;
+  limits?: ExecutionLimits;
+  context?: RunInput['context'];
+}
+
+export interface RecoverCheckpointOptions {
+  signal?: AbortSignal;
+  limits?: ExecutionLimits;
+  context?: RunInput['context'];
+}
+
 /** Everything resolved from registration before a turn is executed. */
-interface PreparedRun {
+export interface PreparedRun {
   config: AgentConfig;
   model: ModelConfig;
   context: AgentContext;
@@ -138,6 +158,7 @@ export class AgentRunner {
     @Optional() private readonly executor?: AgentExecutor,
     @Optional() @Inject(SESSION_STORE) private readonly sessionStore?: SessionStore,
     @Optional() @Inject(APPROVAL_STORE) private readonly approvalStore?: ApprovalStore,
+    @Optional() @Inject(STATE_STORE) private readonly stateStore?: StateStore,
   ) {}
 
   /**
@@ -261,6 +282,7 @@ export class AgentRunner {
       limits: config.limits ?? this.options.limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       signal: options?.signal,
+      onCheckpoint: (checkpoint) => this.saveInFlightCheckpoint(pending.context, checkpoint),
       onTranscript: store
         ? (messages) => this.saveHistory(pending.context, messages)
         : undefined,
@@ -373,7 +395,7 @@ export class AgentRunner {
    * Resolves the registered agent, builds its execution context, and turns its
    * declared tool sets into policy-guarded closures.
    */
-  private prepare(agentName: string, input: RunInput): PreparedRun {
+  prepare(agentName: string, input: RunInput): PreparedRun {
     const agent = this.getAgentMap().get(agentName);
 
     if (!agent) {
@@ -450,6 +472,8 @@ export class AgentRunner {
         toolErrorHandling: prepared.toolErrorHandling,
         signal: input.signal,
         history: withHistory ? await this.loadHistory(prepared.context) : undefined,
+        onCheckpoint: (checkpoint) =>
+          this.saveInFlightCheckpoint(prepared.context, checkpoint),
         onTranscript: withHistory
           ? (messages) => this.saveHistory(prepared.context, messages)
           : undefined,
@@ -485,6 +509,8 @@ export class AgentRunner {
         toolErrorHandling: prepared.toolErrorHandling,
         signal: input.signal,
         history: withHistory ? await this.loadHistory(prepared.context) : undefined,
+        onCheckpoint: (checkpoint) =>
+          this.saveInFlightCheckpoint(prepared.context, checkpoint),
         onTranscript: withHistory
           ? (messages) => this.saveHistory(prepared.context, messages)
           : undefined,
@@ -518,5 +544,124 @@ export class AgentRunner {
     yield { type: 'token', text: res.output };
     yield { type: 'final_answer', sessionId: res.sessionId, output: res.output, usage: res.usage };
     yield { type: 'complete', sessionId: res.sessionId, output: res.output };
+  }
+
+  /**
+   * Resumes an interrupted agent execution turn directly from an InFlightCheckpoint snapshot.
+   */
+  async resumeCheckpoint(
+    agentName: string,
+    checkpoint: InFlightCheckpoint,
+    options?: ResumeCheckpointOptions,
+  ): Promise<AgentResult> {
+    const agent = this.getAgentMap().get(agentName);
+    if (!agent) {
+      throw new Error(`Agent "${agentName}" is not registered.`);
+    }
+
+    if (!this.executor?.isAvailable()) {
+      throw new RuntimeNotConfiguredError();
+    }
+
+    const config = agent.define();
+    const limits = options?.limits ?? config.limits ?? this.options.limits;
+    const deadline =
+      limits?.timeoutMs !== undefined ? new Date(Date.now() + limits.timeoutMs) : undefined;
+
+    const context: AgentContext = {
+      sessionId: checkpoint.sessionId,
+      traceId: randomUUID(),
+      security: {
+        userId: options?.context?.userId,
+        tenantId: options?.context?.tenantId,
+        roles: options?.context?.roles,
+        permissions: options?.context?.permissions,
+      },
+      data: options?.context?.data,
+      signal: options?.signal,
+      deadline,
+    };
+
+    const tools = this.localToolProvider.buildTools(
+      config.tools,
+      context,
+      agentName,
+      this.options.approvalTtlSeconds,
+    );
+
+    const sessionStore = this.resolveSessionStore();
+
+    return this.executor.resumeCheckpoint({
+      sessionId: checkpoint.sessionId,
+      checkpoint,
+      model: config.model ?? this.options.defaultModel,
+      tools,
+      instructions: config.instructions,
+      traceId: context.traceId,
+      limits,
+      toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
+      signal: options?.signal,
+      onCheckpoint: (cp) => this.saveInFlightCheckpoint(context, cp),
+      onTranscript: sessionStore
+        ? (messages) => this.saveHistory(context, messages)
+        : undefined,
+      onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+    });
+  }
+
+  /**
+   * Recovers and resumes the latest in-flight checkpoint recorded for a given session.
+   */
+  async recoverLatestCheckpoint(
+    agentName: string,
+    sessionId: string,
+    options?: RecoverCheckpointOptions,
+  ): Promise<AgentResult> {
+    const store = this.options.stateStore ?? this.stateStore;
+    if (!store) {
+      throw new CheckpointNotFoundError(`latest:${sessionId} (no StateStore configured)`);
+    }
+
+    const dummyContext: AgentContext = {
+      sessionId,
+      traceId: 'recovery',
+      security: {
+        userId: options?.context?.userId,
+        tenantId: options?.context?.tenantId,
+        roles: options?.context?.roles,
+        permissions: options?.context?.permissions,
+      },
+      data: options?.context?.data,
+      signal: options?.signal,
+    };
+
+    const latestKey = `checkpoint:latest:${this.sessionKey(dummyContext)}`;
+    const checkpoint = await store.get<InFlightCheckpoint>(latestKey);
+
+    if (!checkpoint) {
+      throw new CheckpointNotFoundError(latestKey);
+    }
+
+    return this.resumeCheckpoint(agentName, checkpoint, options);
+  }
+
+  private async saveInFlightCheckpoint(
+    context: AgentContext,
+    checkpoint: InFlightCheckpoint,
+  ): Promise<void> {
+    const store = this.options.stateStore ?? this.stateStore;
+    if (!store) return;
+
+    const baseKey = this.sessionKey(context);
+    const executionKey = `checkpoint:${baseKey}:${checkpoint.executionId}`;
+    const latestKey = `checkpoint:latest:${baseKey}`;
+    const ttl = this.options.checkpointTtlSeconds ?? DEFAULT_CHECKPOINT_TTL_SECONDS;
+
+    try {
+      await store.set(executionKey, checkpoint, ttl);
+      await store.set(latestKey, checkpoint, ttl);
+    } catch {
+      // Best-effort in-flight persistence
+    }
   }
 }
