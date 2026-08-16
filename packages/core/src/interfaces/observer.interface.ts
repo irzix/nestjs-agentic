@@ -9,6 +9,8 @@ export interface AgentStartEvent {
   agentName: string;
   sessionId: string;
   traceId: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   tenantId?: string;
   userId?: string;
   message?: string;
@@ -23,6 +25,8 @@ export interface AgentEndEvent {
   agentName: string;
   sessionId: string;
   traceId: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   tenantId?: string;
   result: AgentResult;
   durationMs: number;
@@ -38,6 +42,8 @@ export interface ModelRequestEvent {
   agentName: string;
   sessionId: string;
   traceId: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   model: ModelConfig;
   roundIndex: number;
   messages: ModelMessage[];
@@ -51,6 +57,8 @@ export interface ModelResponseEvent {
   agentName: string;
   sessionId: string;
   traceId: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   model: ModelConfig;
   roundIndex: number;
   response: ModelResponse;
@@ -66,6 +74,8 @@ export interface ToolCallEvent {
   agentName: string;
   sessionId: string;
   traceId: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   toolName: string;
   toolCallId: string;
   args: Record<string, unknown>;
@@ -79,6 +89,8 @@ export interface ToolResultEvent {
   agentName: string;
   sessionId: string;
   traceId: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   toolName: string;
   toolCallId: string;
   result: unknown;
@@ -93,6 +105,8 @@ export interface AgentErrorEvent {
   agentName: string;
   sessionId: string;
   traceId: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   error: Error;
   durationMs: number;
   timestamp: Date;

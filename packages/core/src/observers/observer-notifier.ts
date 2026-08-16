@@ -9,6 +9,20 @@ import type {
   ToolResultEvent,
 } from '../interfaces/observer.interface';
 
+type ObserverMethod<K extends keyof AgentObserver> = NonNullable<AgentObserver[K]>;
+
+/**
+ * Options configuring observer event dispatching.
+ */
+export interface ObserverNotifierOptions {
+  /**
+   * Sampling rate between 0.0 (0%) and 1.0 (100%).
+   * Controls what fraction of execution turns emit telemetry events.
+   * Defaults to 1.0 (all turns are observed).
+   */
+  samplingRate?: number;
+}
+
 /**
  * Dispatches runtime observer lifecycle hooks with complete error isolation.
  * Observers are executed concurrently using Promise.allSettled so that a slow or
@@ -16,9 +30,17 @@ import type {
  */
 export class ObserverNotifier {
   private readonly observers: AgentObserver[];
+  private readonly samplingRate: number;
+  private readonly isSampled: boolean;
 
-  constructor(observers: AgentObserver[] = []) {
+  constructor(
+    observers: AgentObserver[] = [],
+    options: ObserverNotifierOptions = {},
+  ) {
     this.observers = observers.filter(Boolean);
+    const rate = options.samplingRate ?? 1.0;
+    this.samplingRate = Math.max(0, Math.min(1, rate));
+    this.isSampled = this.samplingRate >= 1.0 || Math.random() < this.samplingRate;
   }
 
   get length(): number {
@@ -26,7 +48,7 @@ export class ObserverNotifier {
   }
 
   get isEnabled(): boolean {
-    return this.observers.length > 0;
+    return this.observers.length > 0 && this.isSampled;
   }
 
   async notifyAgentStart(event: AgentStartEvent): Promise<void> {
@@ -66,13 +88,13 @@ export class ObserverNotifier {
 
   private async dispatch<K extends keyof AgentObserver>(
     hook: K,
-    event: Parameters<NonNullable<AgentObserver[K]>>[0],
+    event: Parameters<ObserverMethod<K>>[0],
   ): Promise<void> {
     const tasks = this.observers.map(async (observer) => {
-      const fn = observer[hook];
+      const fn = observer[hook] as ObserverMethod<K> | undefined;
       if (typeof fn === 'function') {
         try {
-          await (fn as (e: unknown) => unknown).call(observer, event);
+          await fn.call(observer, event as never);
         } catch (err: unknown) {
           if (process.env.OBSERVER_LOG_DEBUG === 'true') {
             console.warn(`[ObserverNotifier] Error in ${hook}:`, err);

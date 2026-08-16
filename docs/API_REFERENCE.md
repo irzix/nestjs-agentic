@@ -1100,12 +1100,79 @@ interface AgentObserver {
 
 ### Built-in Observers
 
-- **`OpenTelemetryGenAiObserver`**: Standardizes runtime telemetry on official [CNCF OpenTelemetry Semantic Conventions for Generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.agent.*`, `gen_ai.tool.*`).
-- **`InMemoryAgentObserver`**: Collects typed lifecycle event records in-memory for testing, inspection, and local debugging.
+- **`OpenTelemetryGenAiObserver`**: Standardizes runtime telemetry on official [CNCF OpenTelemetry Semantic Conventions for Generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.agent.*`, `gen_ai.tool.*`, `gen_ai.parent_trace.id`, `gen_ai.root_trace.id`).
+- **`StructuredLogObserver`**: Formats structured JSON lifecycle logs for NestJS Logger, Winston, Pino, and Datadog.
+- **`InMemoryAgentObserver`**: Collects typed lifecycle event records in-memory for testing, inspection, and local debugging with configurable `maxEvents` FIFO bounds.
 
-### Registration
+### Usage Examples
 
-Observers can be registered globally via `AgenticModule.forRoot({ observers: [...] })` or by providing the `AGENT_OBSERVERS` multi-provider token. Observer callbacks run concurrently with complete error isolation (`Promise.allSettled`), guaranteeing that monitoring exceptions never disrupt agent execution.
+#### 1. Simple Console / Terminal Logger
+```typescript
+import { AgentObserver, AgentStartEvent, AgentEndEvent, ToolCallEvent } from '@nestjs-agentic/core';
+
+export class ConsoleAgentObserver implements AgentObserver {
+  onAgentStart(event: AgentStartEvent) {
+    console.log(`🚀 [Agent] ${event.agentName} started turn (session: ${event.sessionId}, trace: ${event.traceId})`);
+  }
+
+  onToolCall(event: ToolCallEvent) {
+    console.log(`🔧 [Tool] ${event.toolName} invoked with:`, event.args);
+  }
+
+  onAgentEnd(event: AgentEndEvent) {
+    console.log(`✅ [Agent] ${event.agentName} finished in ${event.durationMs}ms (total tokens: ${event.totalTokensUsed ?? 'N/A'})`);
+  }
+}
+```
+
+#### 2. Prometheus / OpenMetrics Collector
+```typescript
+import { AgentObserver, AgentEndEvent, ToolResultEvent } from '@nestjs-agentic/core';
+import { Counter, Histogram } from 'prom-client';
+
+const agentDuration = new Histogram({
+  name: 'agent_turn_duration_seconds',
+  help: 'Duration of agent execution turns in seconds',
+  labelNames: ['agent', 'tenant'],
+});
+
+const tokenConsumption = new Counter({
+  name: 'agent_tokens_total',
+  help: 'Total tokens consumed across model interactions',
+  labelNames: ['agent'],
+});
+
+export class PrometheusAgentObserver implements AgentObserver {
+  onAgentEnd(event: AgentEndEvent) {
+    agentDuration.labels(event.agentName, event.tenantId ?? 'default').observe(event.durationMs / 1000);
+    if (event.totalTokensUsed) {
+      tokenConsumption.labels(event.agentName).inc(event.totalTokensUsed);
+    }
+  }
+}
+```
+
+#### 3. Structured Logging with Pino / Winston
+```typescript
+import { AgentObserver, StructuredLogObserver } from '@nestjs-agentic/core';
+
+// Uses default structured JSON logger or pass custom Winston/Pino logger
+const loggerObserver = new StructuredLogObserver({
+  logger: {
+    log: (msg, ctx) => pinoLogger.info(ctx, msg),
+    error: (msg, trace, ctx) => pinoLogger.error({ ...ctx, trace }, msg),
+    warn: (msg, ctx) => pinoLogger.warn(ctx, msg),
+    debug: (msg, ctx) => pinoLogger.debug(ctx, msg),
+  },
+});
+```
+
+### Registration & Sampling Rate
+
+Observers can be registered globally via `AgenticModule.forRoot({ observers: [...], samplingRate: 0.1 })` or by providing the `AGENT_OBSERVERS` multi-provider token.
+
+- `samplingRate`: Optional float between `0.0` (0%) and `1.0` (100%) to sample high-volume turns. Defaults to `1.0`.
+- Observer callbacks run concurrently with complete error isolation (`Promise.allSettled`), guaranteeing that monitoring exceptions never disrupt agent execution.
 
 ## Injection Tokens
 

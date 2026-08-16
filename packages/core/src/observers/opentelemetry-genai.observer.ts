@@ -30,6 +30,12 @@ export interface OpenTelemetryGenAiObserverOptions {
    * Custom callback or tracer exporter to receive formatted OpenTelemetry GenAI records.
    */
   exporter?: (record: OpenTelemetryGenAiRecord) => Promise<void> | void;
+
+  /**
+   * Maximum number of formatted records retained in `records` array for inspection.
+   * Default: 1000
+   */
+  maxRecords?: number;
 }
 
 /**
@@ -42,10 +48,12 @@ export interface OpenTelemetryGenAiObserverOptions {
 export class OpenTelemetryGenAiObserver implements AgentObserver {
   private readonly defaultSystem: string;
   private readonly exporter: (record: OpenTelemetryGenAiRecord) => Promise<void> | void;
+  private readonly maxRecords: number;
   readonly records: OpenTelemetryGenAiRecord[] = [];
 
   constructor(options?: OpenTelemetryGenAiObserverOptions) {
     this.defaultSystem = options?.system ?? 'nestjs-agentic';
+    this.maxRecords = options?.maxRecords ?? 1000;
     this.exporter = options?.exporter ?? ((record) => {
       if (process.env.OTEL_LOG_DEBUG === 'true') {
         console.debug('[OTel GenAI Observer]', JSON.stringify(record));
@@ -64,6 +72,8 @@ export class OpenTelemetryGenAiObserver implements AgentObserver {
       'gen_ai.trace.id': event.traceId,
     };
 
+    if (event.parentTraceId) attributes['gen_ai.parent_trace.id'] = event.parentTraceId;
+    if (event.rootTraceId) attributes['gen_ai.root_trace.id'] = event.rootTraceId;
     if (event.tenantId) attributes['gen_ai.tenant.id'] = event.tenantId;
     if (event.userId) attributes['gen_ai.user.id'] = event.userId;
 
@@ -85,6 +95,8 @@ export class OpenTelemetryGenAiObserver implements AgentObserver {
       'gen_ai.duration_ms': event.durationMs,
     };
 
+    if (event.parentTraceId) attributes['gen_ai.parent_trace.id'] = event.parentTraceId;
+    if (event.rootTraceId) attributes['gen_ai.root_trace.id'] = event.rootTraceId;
     if (event.tenantId) attributes['gen_ai.tenant.id'] = event.tenantId;
     if (event.totalTokensUsed !== undefined) {
       attributes['gen_ai.usage.total_tokens'] = event.totalTokensUsed;
@@ -110,6 +122,9 @@ export class OpenTelemetryGenAiObserver implements AgentObserver {
       'gen_ai.request.messages_count': event.messages.length,
     };
 
+    if (event.parentTraceId) attributes['gen_ai.parent_trace.id'] = event.parentTraceId;
+    if (event.rootTraceId) attributes['gen_ai.root_trace.id'] = event.rootTraceId;
+
     await this.emit({
       name: `model request ${event.model.model}`,
       attributes,
@@ -128,6 +143,9 @@ export class OpenTelemetryGenAiObserver implements AgentObserver {
       'gen_ai.agent.round_index': event.roundIndex,
       'gen_ai.duration_ms': event.durationMs,
     };
+
+    if (event.parentTraceId) attributes['gen_ai.parent_trace.id'] = event.parentTraceId;
+    if (event.rootTraceId) attributes['gen_ai.root_trace.id'] = event.rootTraceId;
 
     if (event.usage) {
       if (event.usage.inputTokens !== undefined) {
@@ -166,6 +184,9 @@ export class OpenTelemetryGenAiObserver implements AgentObserver {
       'gen_ai.tool.call_id': event.toolCallId,
     };
 
+    if (event.parentTraceId) attributes['gen_ai.parent_trace.id'] = event.parentTraceId;
+    if (event.rootTraceId) attributes['gen_ai.root_trace.id'] = event.rootTraceId;
+
     await this.emit({
       name: `tool call ${event.toolName}`,
       attributes,
@@ -184,6 +205,9 @@ export class OpenTelemetryGenAiObserver implements AgentObserver {
       'gen_ai.tool.call_id': event.toolCallId,
       'gen_ai.duration_ms': event.durationMs,
     };
+
+    if (event.parentTraceId) attributes['gen_ai.parent_trace.id'] = event.parentTraceId;
+    if (event.rootTraceId) attributes['gen_ai.root_trace.id'] = event.rootTraceId;
 
     await this.emit({
       name: `tool result ${event.toolName}`,
@@ -205,6 +229,9 @@ export class OpenTelemetryGenAiObserver implements AgentObserver {
       'gen_ai.duration_ms': event.durationMs,
     };
 
+    if (event.parentTraceId) attributes['gen_ai.parent_trace.id'] = event.parentTraceId;
+    if (event.rootTraceId) attributes['gen_ai.root_trace.id'] = event.rootTraceId;
+
     await this.emit({
       name: `agent error ${event.agentName}`,
       attributes,
@@ -215,6 +242,10 @@ export class OpenTelemetryGenAiObserver implements AgentObserver {
 
   private async emit(record: OpenTelemetryGenAiRecord): Promise<void> {
     this.records.push(record);
+    if (this.records.length > this.maxRecords) {
+      this.records.shift();
+    }
+
     try {
       await Promise.resolve(this.exporter(record));
     } catch (err: unknown) {

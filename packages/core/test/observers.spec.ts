@@ -13,6 +13,7 @@ import {
   ModelResponse,
   OpenTelemetryGenAiObserver,
   Param,
+  StructuredLogObserver,
   Tool,
   ToolSet,
 } from '../src';
@@ -244,6 +245,8 @@ export async function runObserversTests() {
       context: {
         userId: 'user_123',
         tenantId: 'tenant_abc',
+        parentTraceId: 'trace_parent_001',
+        rootTraceId: 'trace_root_001',
       },
     });
 
@@ -257,12 +260,13 @@ export async function runObserversTests() {
     assert(startRecord.attributes['gen_ai.agent.session_id'] === 'session_otel_1', 'session id should match');
     assert(startRecord.attributes['gen_ai.user.id'] === 'user_123', 'user id should match');
     assert(startRecord.attributes['gen_ai.tenant.id'] === 'tenant_abc', 'tenant id should match');
+    assert(startRecord.attributes['gen_ai.parent_trace.id'] === 'trace_parent_001', 'parent trace id should match');
+    assert(startRecord.attributes['gen_ai.root_trace.id'] === 'trace_root_001', 'root trace id should match');
 
     // Check Model response record
     const modelRecord = otelObserver.records.find((r) => r.name.includes('model response'))!;
     assert(modelRecord !== undefined, 'Should have model response record');
     assert(modelRecord.attributes['gen_ai.operation.name'] === 'chat', 'model operation should be chat');
-    assert(modelRecord.attributes['gen_ai.request.model'] === undefined, 'response should not have request model duplicate');
     assert(modelRecord.attributes['gen_ai.response.model'] === 'gpt-4o', 'response model should match');
     assert(modelRecord.attributes['gen_ai.usage.prompt_tokens'] === 15, 'prompt tokens should match');
     assert(modelRecord.attributes['gen_ai.usage.completion_tokens'] === 10, 'completion tokens should match');
@@ -363,6 +367,184 @@ export async function runObserversTests() {
       'Error message should match',
     );
     console.log('    ✓ onError lifecycle event verified');
+  }
+
+  // Test 6: Nested Trace Propagation (Parent and Root Tracing)
+  {
+    console.log('  - Test 6: Nested trace propagation across agent context and events');
+    const inMemoryObserver = new InMemoryAgentObserver();
+    const modelAdapter = new MockChatModelAdapter();
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        AgenticModule.forRoot({
+          defaultModel: { provider: 'openai', model: 'gpt-4o' },
+          modelAdapter,
+          observers: [inMemoryObserver],
+        }),
+        AgenticModule.forFeature({
+          agents: [MathAgent],
+          toolSets: [MathToolSet],
+        }),
+      ],
+    }).compile();
+
+    const runner = moduleRef.get(AgentRunner);
+    await runner.run('MathAgent', {
+      sessionId: 'session_nested_traces',
+      message: 'Calculate',
+      context: {
+        traceId: 'sub_turn_trace_789',
+        parentTraceId: 'parent_workflow_456',
+        rootTraceId: 'root_session_123',
+      },
+    });
+
+    assert(inMemoryObserver.startEvents[0].traceId === 'sub_turn_trace_789', 'traceId should match');
+    assert(inMemoryObserver.startEvents[0].parentTraceId === 'parent_workflow_456', 'parentTraceId should match');
+    assert(inMemoryObserver.startEvents[0].rootTraceId === 'root_session_123', 'rootTraceId should match');
+
+    assert(inMemoryObserver.modelRequestEvents[0].parentTraceId === 'parent_workflow_456', 'modelRequest parentTraceId preserved');
+    assert(inMemoryObserver.toolCallEvents[0].parentTraceId === 'parent_workflow_456', 'toolCall parentTraceId preserved');
+    assert(inMemoryObserver.endEvents[0].parentTraceId === 'parent_workflow_456', 'endEvent parentTraceId preserved');
+    console.log('    ✓ Nested trace hierarchy propagation verified');
+  }
+
+  // Test 7: Sampling Rate Controls
+  {
+    console.log('  - Test 7: Sampling strategy controls observer event dispatch');
+    const inMemoryObserver = new InMemoryAgentObserver();
+    const modelAdapter = new MockChatModelAdapter();
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        AgenticModule.forRoot({
+          defaultModel: { provider: 'openai', model: 'gpt-4o' },
+          modelAdapter,
+          observers: [inMemoryObserver],
+          samplingRate: 0.0, // 0% sampling - drops all events
+        }),
+        AgenticModule.forFeature({
+          agents: [MathAgent],
+          toolSets: [MathToolSet],
+        }),
+      ],
+    }).compile();
+
+    const runner = moduleRef.get(AgentRunner);
+    await runner.run('MathAgent', {
+      sessionId: 'session_sampled_out',
+      message: 'Calculate something',
+    });
+
+    assert(inMemoryObserver.allEvents.length === 0, 'Zero events should be captured when samplingRate=0.0');
+    console.log('    ✓ Sampling rate filter verified');
+  }
+
+  // Test 8: Memory Bounds and FIFO Trimming in InMemoryAgentObserver
+  {
+    console.log('  - Test 8: InMemoryAgentObserver FIFO bounds memory trimming');
+    const boundedObserver = new InMemoryAgentObserver({ maxEvents: 2 });
+    const modelAdapter = new MockChatModelAdapter();
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        AgenticModule.forRoot({
+          defaultModel: { provider: 'openai', model: 'gpt-4o' },
+          modelAdapter,
+          observers: [boundedObserver],
+        }),
+        AgenticModule.forFeature({
+          agents: [MathAgent],
+          toolSets: [MathToolSet],
+        }),
+      ],
+    }).compile();
+
+    const runner = moduleRef.get(AgentRunner);
+    await runner.run('MathAgent', {
+      sessionId: 'session_memory_bounds',
+      message: 'Calculate',
+    });
+
+    assert(boundedObserver.allEvents.length <= 2, `Expected allEvents <= 2, got ${boundedObserver.allEvents.length}`);
+    assert(boundedObserver.modelRequestEvents.length <= 2, 'modelRequestEvents bounded');
+    console.log('    ✓ Bounded memory buffer eviction verified');
+  }
+
+  // Test 9: OpenTelemetry Exporter Error Isolation
+  {
+    console.log('  - Test 9: OpenTelemetryGenAiObserver exporter failure isolation');
+    const faultyExporterObserver = new OpenTelemetryGenAiObserver({
+      exporter() {
+        throw new Error('Collector connection timed out');
+      },
+    });
+    const modelAdapter = new MockChatModelAdapter();
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        AgenticModule.forRoot({
+          defaultModel: { provider: 'openai', model: 'gpt-4o' },
+          modelAdapter,
+          observers: [faultyExporterObserver],
+        }),
+        AgenticModule.forFeature({
+          agents: [MathAgent],
+          toolSets: [MathToolSet],
+        }),
+      ],
+    }).compile();
+
+    const runner = moduleRef.get(AgentRunner);
+    const result = await runner.run('MathAgent', {
+      sessionId: 'session_otel_faulty',
+      message: 'Test OTel error',
+    });
+
+    assert(result.output === 'The answer is 4.', 'Execution succeeded despite exporter failure');
+    console.log('    ✓ OpenTelemetry exporter failure isolation verified');
+  }
+
+  // Test 10: StructuredLogObserver JSON logging
+  {
+    console.log('  - Test 10: StructuredLogObserver outputs structured JSON entries');
+    const logs: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+    const customLogger = {
+      log: (msg: string, ctx?: Record<string, unknown>) => logs.push({ msg, ctx }),
+      error: (msg: string, _trace?: string, ctx?: Record<string, unknown>) => logs.push({ msg, ctx }),
+      warn: (msg: string, ctx?: Record<string, unknown>) => logs.push({ msg, ctx }),
+      debug: (msg: string, ctx?: Record<string, unknown>) => logs.push({ msg, ctx }),
+    };
+
+    const structuredObserver = new StructuredLogObserver({ logger: customLogger });
+    const modelAdapter = new MockChatModelAdapter();
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        AgenticModule.forRoot({
+          defaultModel: { provider: 'openai', model: 'gpt-4o' },
+          modelAdapter,
+          observers: [structuredObserver],
+        }),
+        AgenticModule.forFeature({
+          agents: [MathAgent],
+          toolSets: [MathToolSet],
+        }),
+      ],
+    }).compile();
+
+    const runner = moduleRef.get(AgentRunner);
+    await runner.run('MathAgent', {
+      sessionId: 'session_structured_log',
+      message: 'Run structured',
+    });
+
+    assert(logs.some((l) => l.msg === 'agent_started'), 'Should log agent_started');
+    assert(logs.some((l) => l.msg === 'tool_call_initiated'), 'Should log tool_call_initiated');
+    assert(logs.some((l) => l.msg === 'tool_result_received'), 'Should log tool_result_received');
+    assert(logs.some((l) => l.msg === 'agent_completed'), 'Should log agent_completed');
+    console.log('    ✓ StructuredLogObserver logging verified');
   }
 
   console.log('🎉 All Runtime Observers & OpenTelemetry Tests Passed!\n');

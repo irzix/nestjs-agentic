@@ -18,8 +18,14 @@ export type AnyObserverEvent =
   | { type: 'tool_result'; event: ToolResultEvent }
   | { type: 'agent_error'; event: AgentErrorEvent };
 
+export interface InMemoryAgentObserverOptions {
+  /** Maximum number of records to retain per event array to prevent memory leaks. Defaults to 1000. */
+  maxEvents?: number;
+}
+
 /**
  * In-memory AgentObserver implementation for testing, validation, and local inspection.
+ * Includes configurable maximum event bounds with FIFO eviction.
  */
 export class InMemoryAgentObserver implements AgentObserver {
   readonly startEvents: AgentStartEvent[] = [];
@@ -31,39 +37,45 @@ export class InMemoryAgentObserver implements AgentObserver {
   readonly errorEvents: AgentErrorEvent[] = [];
   readonly allEvents: AnyObserverEvent[] = [];
 
+  readonly maxEvents: number;
+
+  constructor(options: InMemoryAgentObserverOptions = {}) {
+    this.maxEvents = options.maxEvents ?? 1000;
+  }
+
   onAgentStart(event: AgentStartEvent): void {
-    this.startEvents.push(event);
-    this.allEvents.push({ type: 'agent_start', event });
+    this.pushEvent(this.startEvents, event);
+    this.pushEvent(this.allEvents, { type: 'agent_start', event });
   }
 
   onAgentEnd(event: AgentEndEvent): void {
-    this.endEvents.push(event);
-    this.allEvents.push({ type: 'agent_end', event });
+    this.pushEvent(this.endEvents, event);
+    this.pushEvent(this.allEvents, { type: 'agent_end', event });
   }
 
   onModelRequest(event: ModelRequestEvent): void {
-    this.modelRequestEvents.push(event);
-    this.allEvents.push({ type: 'model_request', event });
+    this.pushEvent(this.modelRequestEvents, event);
+    this.pushEvent(this.allEvents, { type: 'model_request', event });
   }
 
   onModelResponse(event: ModelResponseEvent): void {
-    this.modelResponseEvents.push(event);
-    this.allEvents.push({ type: 'model_response', event });
+    this.pushEvent(this.modelResponseEvents, event);
+    this.pushEvent(this.allEvents, { type: 'model_response', event });
   }
 
   onToolCall(event: ToolCallEvent): void {
-    this.toolCallEvents.push(event);
-    this.allEvents.push({ type: 'tool_call', event });
+    this.pushEvent(this.toolCallEvents, event);
+    this.pushEvent(this.allEvents, { type: 'tool_call', event });
   }
 
   onToolResult(event: ToolResultEvent): void {
-    this.toolResultEvents.push(event);
-    this.allEvents.push({ type: 'tool_result', event });
+    this.pushEvent(this.toolResultEvents, event);
+    this.pushEvent(this.allEvents, { type: 'tool_result', event });
   }
 
   onError(event: AgentErrorEvent): void {
-    this.errorEvents.push(event);
-    this.allEvents.push({ type: 'agent_error', event });
+    this.pushEvent(this.errorEvents, event);
+    this.pushEvent(this.allEvents, { type: 'agent_error', event });
   }
 
   clear(): void {
@@ -75,5 +87,12 @@ export class InMemoryAgentObserver implements AgentObserver {
     this.toolResultEvents.length = 0;
     this.errorEvents.length = 0;
     this.allEvents.length = 0;
+  }
+
+  private pushEvent<T>(arr: T[], item: T): void {
+    arr.push(item);
+    if (arr.length > this.maxEvents) {
+      arr.shift();
+    }
   }
 }

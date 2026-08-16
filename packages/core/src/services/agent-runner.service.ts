@@ -106,6 +106,11 @@ export interface AgenticModuleOptions {
    * Optional runtime observers to receive lifecycle events, OpenTelemetry traces, and metrics.
    */
   observers?: AgentObserver[];
+  /**
+   * Sampling rate between 0.0 (0%) and 1.0 (100%) for observer telemetry dispatching.
+   * Default: 1.0
+   */
+  samplingRate?: number;
 }
 
 export interface RunInput {
@@ -117,6 +122,9 @@ export interface RunInput {
     roles?: string[];
     permissions?: string[];
     data?: Record<string, unknown>;
+    traceId?: string;
+    parentTraceId?: string;
+    rootTraceId?: string;
   };
   /** Overrides agent and module execution budgets for this run. */
   limits?: ExecutionLimits;
@@ -183,7 +191,7 @@ export class AgentRunner {
     }
     const all = [...fromOptions, ...fromInjected];
     const unique = Array.from(new Set(all.filter((o): o is AgentObserver => Boolean(o))));
-    return new ObserverNotifier(unique);
+    return new ObserverNotifier(unique, { samplingRate: this.options.samplingRate });
   }
 
   /**
@@ -438,9 +446,15 @@ export class AgentRunner {
     const deadline =
       limits?.timeoutMs !== undefined ? new Date(Date.now() + limits.timeoutMs) : undefined;
 
+    const traceId = input.context?.traceId ?? randomUUID();
+    const parentTraceId = input.context?.parentTraceId;
+    const rootTraceId = input.context?.rootTraceId ?? (parentTraceId ? undefined : traceId);
+
     const context: AgentContext = {
       sessionId: input.sessionId,
-      traceId: randomUUID(),
+      traceId,
+      parentTraceId,
+      rootTraceId,
       security: {
         userId: input.context?.userId,
         tenantId: input.context?.tenantId,
@@ -492,6 +506,8 @@ export class AgentRunner {
       agentName,
       sessionId: prepared.context.sessionId,
       traceId: prepared.context.traceId,
+      parentTraceId: prepared.context.parentTraceId,
+      rootTraceId: prepared.context.rootTraceId,
       tenantId: prepared.context.security.tenantId,
       userId: prepared.context.security.userId,
       message: input.message,
@@ -513,6 +529,8 @@ export class AgentRunner {
           tools: prepared.tools,
           instructions: prepared.config.instructions,
           traceId: prepared.context.traceId,
+          parentTraceId: prepared.context.parentTraceId,
+          rootTraceId: prepared.context.rootTraceId,
           limits: prepared.limits,
           toolErrorHandling: prepared.toolErrorHandling,
           signal: input.signal,
@@ -542,6 +560,8 @@ export class AgentRunner {
         agentName,
         sessionId: prepared.context.sessionId,
         traceId: prepared.context.traceId,
+        parentTraceId: prepared.context.parentTraceId,
+        rootTraceId: prepared.context.rootTraceId,
         tenantId: prepared.context.security.tenantId,
         result,
         durationMs,
@@ -557,6 +577,8 @@ export class AgentRunner {
         agentName,
         sessionId: prepared.context.sessionId,
         traceId: prepared.context.traceId,
+        parentTraceId: prepared.context.parentTraceId,
+        rootTraceId: prepared.context.rootTraceId,
         error: err instanceof Error ? err : new Error(String(err)),
         durationMs,
         timestamp: new Date(),
@@ -575,6 +597,8 @@ export class AgentRunner {
       agentName,
       sessionId: prepared.context.sessionId,
       traceId: prepared.context.traceId,
+      parentTraceId: prepared.context.parentTraceId,
+      rootTraceId: prepared.context.rootTraceId,
       tenantId: prepared.context.security.tenantId,
       userId: prepared.context.security.userId,
       message: input.message,
@@ -597,6 +621,8 @@ export class AgentRunner {
           tools: prepared.tools,
           instructions: prepared.config.instructions,
           traceId: prepared.context.traceId,
+          parentTraceId: prepared.context.parentTraceId,
+          rootTraceId: prepared.context.rootTraceId,
           limits: prepared.limits,
           toolErrorHandling: prepared.toolErrorHandling,
           signal: input.signal,
@@ -631,6 +657,8 @@ export class AgentRunner {
           agentName,
           sessionId: prepared.context.sessionId,
           traceId: prepared.context.traceId,
+          parentTraceId: prepared.context.parentTraceId,
+          rootTraceId: prepared.context.rootTraceId,
           tenantId: prepared.context.security.tenantId,
           result,
           durationMs,

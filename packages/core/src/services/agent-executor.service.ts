@@ -48,6 +48,8 @@ export interface AgentExecutionInput {
   agentName?: string;
   instructions?: string;
   traceId?: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   /** Prior conversation messages to replay before the current user message. */
   history?: ModelMessage[];
   limits?: ExecutionLimits;
@@ -85,6 +87,8 @@ interface ExecutorRequestContext {
   tools: ResolvedTool[];
   agentName?: string;
   traceId?: string;
+  parentTraceId?: string;
+  rootTraceId?: string;
   signal?: AbortSignal;
   observerNotifier?: ObserverNotifier;
 }
@@ -185,6 +189,8 @@ export class AgentExecutor {
       model: input.model,
       tools: input.tools,
       traceId: input.traceId,
+      parentTraceId: (input as AgentExecutionInput).parentTraceId,
+      rootTraceId: (input as AgentExecutionInput).rootTraceId,
       signal: input.signal,
       agentName: input.agentName,
       observerNotifier,
@@ -325,8 +331,8 @@ export class AgentExecutor {
     state: ExecutionState,
     limits: ExecutionLimits,
     toolErrorHandling: ToolErrorHandling,
-    onTranscript: AgentExecutionInput['onTranscript'],
-    onSuspend: AgentExecutionInput['onSuspend'],
+    onTranscript?: AgentExecutionInput['onTranscript'],
+    onSuspend?: AgentExecutionInput['onSuspend'],
     onCheckpoint?: AgentExecutionInput['onCheckpoint'],
   ): Promise<AgentResult> {
     const scope = this.createScope(requestCtx.signal, limits.timeoutMs);
@@ -342,6 +348,8 @@ export class AgentExecutor {
           agentName: requestCtx.agentName ?? 'agent',
           sessionId: requestCtx.sessionId,
           traceId: requestCtx.traceId ?? state.executionId,
+          parentTraceId: requestCtx.parentTraceId,
+          rootTraceId: requestCtx.rootTraceId,
           model: requestCtx.model,
           roundIndex: state.iteration,
           messages: request.messages,
@@ -355,6 +363,8 @@ export class AgentExecutor {
           agentName: requestCtx.agentName ?? 'agent',
           sessionId: requestCtx.sessionId,
           traceId: requestCtx.traceId ?? state.executionId,
+          parentTraceId: requestCtx.parentTraceId,
+          rootTraceId: requestCtx.rootTraceId,
           model: requestCtx.model,
           roundIndex: state.iteration,
           response,
@@ -417,6 +427,8 @@ export class AgentExecutor {
           agentName: requestCtx.agentName ?? 'agent',
           sessionId: requestCtx.sessionId,
           traceId: requestCtx.traceId ?? state.executionId,
+          parentTraceId: requestCtx.parentTraceId,
+          rootTraceId: requestCtx.rootTraceId,
           model: requestCtx.model,
           roundIndex: state.iteration,
           messages: request.messages,
@@ -451,6 +463,8 @@ export class AgentExecutor {
           agentName: requestCtx.agentName ?? 'agent',
           sessionId: requestCtx.sessionId,
           traceId: requestCtx.traceId ?? state.executionId,
+          parentTraceId: requestCtx.parentTraceId,
+          rootTraceId: requestCtx.rootTraceId,
           model: requestCtx.model,
           roundIndex: state.iteration,
           response,
@@ -747,6 +761,8 @@ export class AgentExecutor {
         agentName: requestCtx.agentName ?? 'agent',
         sessionId: requestCtx.sessionId,
         traceId: requestCtx.traceId ?? state.executionId,
+        parentTraceId: requestCtx.parentTraceId,
+        rootTraceId: requestCtx.rootTraceId,
         toolName: tool.name,
         toolCallId: call.id,
         args: validation.args,
@@ -781,6 +797,8 @@ export class AgentExecutor {
           agentName: requestCtx.agentName ?? 'agent',
           sessionId: requestCtx.sessionId,
           traceId: requestCtx.traceId ?? state.executionId,
+          parentTraceId: requestCtx.parentTraceId,
+          rootTraceId: requestCtx.rootTraceId,
           toolName: tool.name,
           toolCallId: call.id,
           result: failure,
@@ -798,6 +816,8 @@ export class AgentExecutor {
         agentName: requestCtx.agentName ?? 'agent',
         sessionId: requestCtx.sessionId,
         traceId: requestCtx.traceId ?? state.executionId,
+        parentTraceId: requestCtx.parentTraceId,
+        rootTraceId: requestCtx.rootTraceId,
         toolName: tool.name,
         toolCallId: call.id,
         result,
