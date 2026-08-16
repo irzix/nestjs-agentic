@@ -27,11 +27,11 @@ export interface AstCodebaseSplitterOptions {
 }
 
 /**
- * Semantic AST Codebase Splitter.
+ * Production-grade AST Codebase Splitter.
  *
  * Deconstructs TypeScript and JavaScript source code into discrete,
  * syntactically valid semantic units (classes, interfaces, functions, types, enums, imports)
- * preserving decorator hierarchies, line boundaries, and dependency metadata without breaking logical blocks.
+ * preserving JSDoc comments, decorator hierarchies, line boundaries, and dependency metadata.
  *
  * @see Lewis et al. (NeurIPS 2020, arXiv:2005.11401)
  * @see Microsoft GraphRAG (Edge et al., arXiv:2404.16130)
@@ -40,6 +40,17 @@ export class AstCodebaseSplitter implements DocumentSplitter {
   private readonly maxChunkSize: number;
   private readonly minChunkSize: number;
   private readonly splitClassMethods: boolean;
+
+  // Pre-compiled static regular expressions for high-throughput scanning
+  private static readonly RE_INTERFACE = /^(?:export\s+)?interface\s+([A-Za-z0-9_$]+)/;
+  private static readonly RE_TYPE_ALIAS = /^(?:export\s+)?type\s+([A-Za-z0-9_$]+)\s*=/;
+  private static readonly RE_CLASS = /^(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z0-9_$]+)/;
+  private static readonly RE_FUNCTION = /^(?:export\s+)?(?:async\s+)?function\s*(?:\*\s*)?([A-Za-z0-9_$]+)?\s*\(/;
+  private static readonly RE_ENUM = /^(?:export\s+)?(?:const\s+)?enum\s+([A-Za-z0-9_$]+)/;
+  private static readonly RE_IMPORT_START = /^import\s+(?:type\s+)?(?:(?:\*\s+as\s+[A-Za-z0-9_$]+|\{[^}]*\}|[A-Za-z0-9_$,\s]+)\s+from\s+)?['"][^'"]+['"]/;
+  private static readonly RE_MODULE_SPECIFIER = /from\s+['"]([^'"]+)['"]|import\s*\(?['"]([^'"]+)['"]\)?/;
+  private static readonly RE_CLASS_MEMBER =
+    /^(?:@\w+(?:\([^)]*\))?\s+)*(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+|override\s+|abstract\s+|async\s+)*(?:get\s+|set\s+)?(?:constructor|#?[A-Za-z0-9_$]+)\s*(?:\(|=|\{)/;
 
   constructor(options?: AstCodebaseSplitterOptions) {
     this.maxChunkSize = options?.maxChunkSize ?? 1500;
@@ -89,19 +100,31 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       };
     };
 
-    // 1. Extract import block
+    // 1. Extract import block (single-line, multi-line, import type, dynamic imports)
     const importLines: string[] = [];
     let importStartLine = -1;
     let importEndLine = -1;
+    let inMultiLineImport = false;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const trimmed = line.trim();
 
-      if (trimmed.startsWith('import ') || (importLines.length > 0 && !trimmed.startsWith('export ') && !trimmed.startsWith('class ') && !trimmed.startsWith('interface ') && !trimmed.startsWith('@') && trimmed.includes('from '))) {
+      // Skip non-import lines and comment-only lines
+      if (trimmed.startsWith('//') || (trimmed.startsWith('/*') && !trimmed.includes('*/'))) {
+        continue;
+      }
+
+      if (trimmed.startsWith('import ') || trimmed.startsWith('import(') || inMultiLineImport) {
         if (importStartLine === -1) importStartLine = i + 1;
         importLines.push(line);
         importEndLine = i + 1;
+
+        if (trimmed.includes(';') || (trimmed.includes("from '") && trimmed.endsWith("';")) || (trimmed.includes('from "') && trimmed.endsWith('";'))) {
+          inMultiLineImport = false;
+        } else if (!trimmed.includes(';') && (trimmed.includes('{') || trimmed.includes('from'))) {
+          inMultiLineImport = true;
+        }
       }
     }
 
@@ -122,12 +145,25 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       const line = lines[idx];
       const trimmed = line.trim();
 
-      // Collect leading decorators and comments
-      let decoratorLines: string[] = [];
-      let declStartLine = idx + 1;
+      // Skip import lines and standalone blank lines
+      if (trimmed.startsWith('import ') || trimmed.length === 0) {
+        idx++;
+        continue;
+      }
 
-      while (idx < lines.length && (lines[idx].trim().startsWith('@') || lines[idx].trim().startsWith('//') || lines[idx].trim().startsWith('/*') || lines[idx].trim().startsWith('*'))) {
-        decoratorLines.push(lines[idx]);
+      // Collect leading JSDoc and decorators strictly bound to this declaration
+      const leadingLines: string[] = [];
+      const declStartLine = idx + 1;
+
+      while (
+        idx < lines.length &&
+        (lines[idx].trim().startsWith('@') ||
+          lines[idx].trim().startsWith('/**') ||
+          lines[idx].trim().startsWith('*') ||
+          lines[idx].trim().startsWith('*/') ||
+          lines[idx].trim().startsWith('//'))
+      ) {
+        leadingLines.push(lines[idx]);
         idx++;
       }
 
@@ -137,11 +173,11 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       const currentTrimmed = currentLine.trim();
 
       // Match Interface Declaration
-      const interfaceMatch = currentTrimmed.match(/^(?:export\s+)?interface\s+([A-Za-z0-9_$]+)/);
+      const interfaceMatch = currentTrimmed.match(AstCodebaseSplitter.RE_INTERFACE);
       if (interfaceMatch) {
         const interfaceName = interfaceMatch[1];
         const isExported = currentTrimmed.startsWith('export ');
-        const { blockContent, endLine, nextIdx } = this.extractBracedBlock(lines, idx, decoratorLines);
+        const { blockContent, endLine, nextIdx } = this.extractBracedBlock(lines, idx, leadingLines);
 
         chunks.push(
           createChunk(blockContent, 'interface', interfaceName, declStartLine, endLine, {
@@ -153,11 +189,11 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       }
 
       // Match Type Alias Declaration
-      const typeMatch = currentTrimmed.match(/^(?:export\s+)?type\s+([A-Za-z0-9_$]+)\s*=/);
+      const typeMatch = currentTrimmed.match(AstCodebaseSplitter.RE_TYPE_ALIAS);
       if (typeMatch) {
         const typeName = typeMatch[1];
         const isExported = currentTrimmed.startsWith('export ');
-        const { statementContent, endLine, nextIdx } = this.extractSemicolonStatement(lines, idx, decoratorLines);
+        const { statementContent, endLine, nextIdx } = this.extractSemicolonStatement(lines, idx, leadingLines);
 
         chunks.push(
           createChunk(statementContent, 'type', typeName, declStartLine, endLine, {
@@ -169,17 +205,17 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       }
 
       // Match Class Declaration
-      const classMatch = currentTrimmed.match(/^(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z0-9_$]+)/);
+      const classMatch = currentTrimmed.match(AstCodebaseSplitter.RE_CLASS);
       if (classMatch) {
         const className = classMatch[1];
         const isExported = currentTrimmed.startsWith('export ');
-        const { blockContent, endLine, nextIdx, bodyLines } = this.extractBracedBlock(lines, idx, decoratorLines);
+        const { blockContent, endLine, nextIdx, bodyLines } = this.extractBracedBlock(lines, idx, leadingLines);
 
         if (this.splitClassMethods && blockContent.length > this.maxChunkSize && bodyLines.length > 0) {
-          // Emit Class Header / Signature
-          const classHeader = `${decoratorLines.join('\n')}\n${currentTrimmed.split('{')[0].trim()} { ... }`.trim();
+          // Emit Class Signature Chunk
+          const classSignature = `${leadingLines.join('\n')}\n${currentTrimmed.split('{')[0].trim()} { ... }`.trim();
           chunks.push(
-            createChunk(classHeader, 'class', className, declStartLine, idx + 1, {
+            createChunk(classSignature, 'class', className, declStartLine, idx + 1, {
               exported: isExported,
               isClassSignature: true,
             }),
@@ -192,6 +228,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
               createChunk(m.content, 'function', `${className}.${m.name}`, m.startLine, m.endLine, {
                 parentClass: className,
                 exported: isExported,
+                isStatic: m.isStatic,
               }),
             );
           }
@@ -208,11 +245,11 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       }
 
       // Match Function Declaration
-      const funcMatch = currentTrimmed.match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/);
+      const funcMatch = currentTrimmed.match(AstCodebaseSplitter.RE_FUNCTION);
       if (funcMatch) {
-        const funcName = funcMatch[1];
+        const funcName = funcMatch[1] ?? 'anonymousFunction';
         const isExported = currentTrimmed.startsWith('export ');
-        const { blockContent, endLine, nextIdx } = this.extractBracedBlock(lines, idx, decoratorLines);
+        const { blockContent, endLine, nextIdx } = this.extractBracedBlock(lines, idx, leadingLines);
 
         chunks.push(
           createChunk(blockContent, 'function', funcName, declStartLine, endLine, {
@@ -224,11 +261,11 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       }
 
       // Match Enum Declaration
-      const enumMatch = currentTrimmed.match(/^(?:export\s+)?enum\s+([A-Za-z0-9_$]+)/);
+      const enumMatch = currentTrimmed.match(AstCodebaseSplitter.RE_ENUM);
       if (enumMatch) {
         const enumName = enumMatch[1];
         const isExported = currentTrimmed.startsWith('export ');
-        const { blockContent, endLine, nextIdx } = this.extractBracedBlock(lines, idx, decoratorLines);
+        const { blockContent, endLine, nextIdx } = this.extractBracedBlock(lines, idx, leadingLines);
 
         chunks.push(
           createChunk(blockContent, 'enum', enumName, declStartLine, endLine, {
@@ -248,11 +285,11 @@ export class AstCodebaseSplitter implements DocumentSplitter {
   private extractBracedBlock(
     lines: string[],
     startIdx: number,
-    decoratorLines: string[],
+    leadingLines: string[],
   ): { blockContent: string; endLine: number; nextIdx: number; bodyLines: string[] } {
     let braceCount = 0;
     let foundOpenBrace = false;
-    const blockLines: string[] = [...decoratorLines];
+    const blockLines: string[] = [...leadingLines];
     const bodyLines: string[] = [];
     let i = startIdx;
 
@@ -270,10 +307,10 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       }
 
       if (foundOpenBrace) {
-        if (braceCount > 0) {
-          bodyLines.push(line);
-        } else if (braceCount === 0) {
+        if (braceCount === 0) {
           break;
+        } else if (i !== startIdx) {
+          bodyLines.push(line);
         }
       }
     }
@@ -289,9 +326,9 @@ export class AstCodebaseSplitter implements DocumentSplitter {
   private extractSemicolonStatement(
     lines: string[],
     startIdx: number,
-    decoratorLines: string[],
+    leadingLines: string[],
   ): { statementContent: string; endLine: number; nextIdx: number } {
-    const stmtLines: string[] = [...decoratorLines];
+    const stmtLines: string[] = [...leadingLines];
     let i = startIdx;
 
     for (; i < lines.length; i++) {
@@ -309,29 +346,78 @@ export class AstCodebaseSplitter implements DocumentSplitter {
     };
   }
 
+  private static readonly RESERVED_KEYWORDS = new Set([
+    'class',
+    'interface',
+    'type',
+    'enum',
+    'export',
+    'import',
+    'return',
+    'if',
+    'else',
+    'for',
+    'while',
+    'switch',
+    'case',
+    'break',
+    'const',
+    'let',
+    'var',
+  ]);
+
   private splitClassMembers(
     bodyLines: string[],
     className: string,
     bodyStartLine: number,
     _isExported: boolean,
-  ): Array<{ name: string; content: string; startLine: number; endLine: number }> {
-    const members: Array<{ name: string; content: string; startLine: number; endLine: number }> = [];
+  ): Array<{ name: string; content: string; startLine: number; endLine: number; isStatic?: boolean }> {
+    const members: Array<{ name: string; content: string; startLine: number; endLine: number; isStatic?: boolean }> = [];
     let i = 0;
 
     while (i < bodyLines.length) {
       const line = bodyLines[i];
       const trimmed = line.trim();
 
+      // Skip comments or blank lines
+      if (trimmed.length === 0 || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+        i++;
+        continue;
+      }
+
+      // Check if it's a method/constructor/accessor/field
+      const isStatic = trimmed.startsWith('static ') || trimmed.includes(' static ');
       const memberMatch = trimmed.match(
-        /^(?:@\w+\(.*\)\s+)*(?:public\s+|private\s+|protected\s+)?(?:async\s+)?(?:get\s+|set\s+)?([A-Za-z0-9_$]+)\s*\(/,
+        /^(?:@\w+(?:\([^)]*\))?\s+)*(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+|override\s+|abstract\s+|async\s+)*(?:get\s+|set\s+)?(constructor|#?[A-Za-z0-9_$]+)/,
       );
 
       if (memberMatch) {
         const memberName = memberMatch[1];
+        if (AstCodebaseSplitter.RESERVED_KEYWORDS.has(memberName)) {
+          i++;
+          continue;
+        }
+
+        const mStartLine = bodyStartLine + i;
+
+        // Check if this is a simple field statement ending in semicolon without braces
+        if (trimmed.includes(';') && !trimmed.includes('{')) {
+          if (trimmed.length >= this.minChunkSize) {
+            members.push({
+              name: memberName,
+              content: `// Property in class ${className}\n${trimmed}`,
+              startLine: mStartLine,
+              endLine: mStartLine,
+              isStatic,
+            });
+          }
+          i++;
+          continue;
+        }
+
         let braceCount = 0;
         let foundOpen = false;
         const methodLines: string[] = [];
-        const mStartLine = bodyStartLine + i;
 
         for (; i < bodyLines.length; i++) {
           const mLine = bodyLines[i];
@@ -359,6 +445,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
             content: `// Method in class ${className}\n${content}`,
             startLine: mStartLine,
             endLine: mEndLine,
+            isStatic,
           });
         }
       }
@@ -370,12 +457,15 @@ export class AstCodebaseSplitter implements DocumentSplitter {
 
   private extractImportModuleNames(importLines: string[]): string[] {
     const modules: string[] = [];
-    const regex = /from\s+['"]([^'"]+)['"]/g;
     const text = importLines.join('\n');
+    const regex = new RegExp(AstCodebaseSplitter.RE_MODULE_SPECIFIER.source, 'g');
     let match;
+
     while ((match = regex.exec(text)) !== null) {
-      modules.push(match[1]);
+      const mod = match[1] ?? match[2];
+      if (mod) modules.push(mod);
     }
+
     return Array.from(new Set(modules));
   }
 }

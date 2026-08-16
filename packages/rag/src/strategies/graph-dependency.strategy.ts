@@ -1,4 +1,4 @@
-import type { KnowledgeGraphNode, KnowledgeGraphProvider } from '../interfaces/graph.interface';
+import type { KnowledgeGraphNode, KnowledgeGraphEdge, KnowledgeGraphProvider } from '../interfaces/graph.interface';
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 
 /**
@@ -37,6 +37,10 @@ export class GraphDependencyStrategy implements RAGStrategy {
   private readonly dependencyScoreBoost: number;
   private readonly extractSymbolsFn?: (query: string) => Promise<string[]> | string[];
 
+  // Token boundary regex to prevent false-positive substring matching (e.g., 'er' or 'import')
+  private static readonly RE_SCOPED_PACKAGE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/g;
+  private static readonly RE_IDENTIFIERS = /\b[A-Za-z_$][A-Za-z0-9_$.-]{2,}\b/g;
+
   constructor(options: GraphDependencyStrategyOptions) {
     this.graphProvider = options.graphProvider;
     this.maxDepth = options.maxDepth ?? 3;
@@ -63,12 +67,17 @@ export class GraphDependencyStrategy implements RAGStrategy {
 
     const dependencyFactLines = new Set<string>();
     const impactedEntities = new Set<string>();
+    const subGraphCache = new Map<string, { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] }>();
 
     for (const symbol of targetSymbols) {
       impactedEntities.add(symbol.toLowerCase());
 
       try {
-        const subGraph = await this.graphProvider.querySubGraph(symbol, this.maxDepth);
+        let subGraph = subGraphCache.get(symbol);
+        if (!subGraph) {
+          subGraph = await this.graphProvider.querySubGraph(symbol, this.maxDepth);
+          subGraphCache.set(symbol, subGraph);
+        }
 
         for (const node of subGraph.nodes) {
           impactedEntities.add(node.id.toLowerCase());
@@ -76,16 +85,19 @@ export class GraphDependencyStrategy implements RAGStrategy {
         }
 
         for (const edge of subGraph.edges) {
-          const source = subGraph.nodes.find((n) => n.id === edge.sourceId);
-          const target = subGraph.nodes.find((n) => n.id === edge.targetId);
+          const source = subGraph.nodes.find((n: KnowledgeGraphNode) => n.id === edge.sourceId);
+          const target = subGraph.nodes.find((n: KnowledgeGraphNode) => n.id === edge.targetId);
 
           const sourceLabel = source ? `${source.label} [${source.id}]` : edge.sourceId;
           const targetLabel = target ? `${target.label} [${target.id}]` : edge.targetId;
 
           dependencyFactLines.add(`• ${sourceLabel} --(${edge.relation})--> ${targetLabel}`);
         }
-      } catch {
-        // Fallback gracefully on graph retrieval errors
+      } catch (err: unknown) {
+        // Fallback gracefully on graph retrieval errors without breaking pipeline
+        if (process.env.RAG_LOG_DEBUG === 'true') {
+          console.debug(`[GraphDependencyStrategy] Failed to query sub-graph for symbol: ${symbol}`, err);
+        }
       }
     }
 
@@ -97,18 +109,25 @@ export class GraphDependencyStrategy implements RAGStrategy {
       `### Codebase Architecture & Dependency Graph Facts\n` +
       Array.from(dependencyFactLines).join('\n');
 
-    // Boost candidate chunks that match impacted dependency entities
+    // Word-boundary based candidate chunk score boosting to prevent false-positive substring hits
     let updatedChunks = context.chunks;
     const scoresMap = new Map<string, number>(context.scores);
 
     if (context.chunks && context.chunks.length > 0) {
       updatedChunks = context.chunks.map((chunk) => {
-        const contentLower = chunk.content.toLowerCase();
-        const filePath = (chunk.metadata.filePath as string)?.toLowerCase() ?? '';
-        let matched = false;
+        const content = typeof chunk.content === 'string' ? chunk.content : '';
+        const filePath = typeof chunk.metadata?.filePath === 'string' ? chunk.metadata.filePath : '';
+        const combinedText = `${content}\n${filePath}`.toLowerCase();
 
+        let matched = false;
         for (const entity of impactedEntities) {
-          if (contentLower.includes(entity) || filePath.includes(entity)) {
+          if (entity.length < 3) continue;
+
+          // Exact word/token matching
+          const escaped = entity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const wordRegex = new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, 'i');
+
+          if (wordRegex.test(combinedText)) {
             matched = true;
             break;
           }
@@ -146,23 +165,36 @@ export class GraphDependencyStrategy implements RAGStrategy {
       return this.extractSymbolsFn(query);
     }
 
-    const symbols: string[] = [];
-    const tokens = query
-      .split(/[\s,;]+/)
-      .map((t) => t.trim())
-      .filter((t) => t.length > 2);
+    const symbols = new Set<string>();
 
-    for (const token of tokens) {
-      if (this.graphProvider.searchNodes) {
-        const found = await this.graphProvider.searchNodes(token);
-        for (const n of found) {
-          symbols.push(n.id);
-        }
-      } else {
-        symbols.push(token);
+    // 1. Match scoped package names (e.g., @nestjs-agentic/core)
+    const scopedMatches = query.match(GraphDependencyStrategy.RE_SCOPED_PACKAGE) ?? [];
+    for (const match of scopedMatches) {
+      symbols.add(match);
+    }
+
+    // 2. Match individual identifier symbols
+    const identifierMatches = query.match(GraphDependencyStrategy.RE_IDENTIFIERS) ?? [];
+    for (const match of identifierMatches) {
+      if (!match.startsWith('@')) {
+        symbols.add(match);
       }
     }
 
-    return Array.from(new Set(symbols));
+    // 3. Fallback / supplementary check with graph node search
+    if (this.graphProvider.searchNodes) {
+      for (const sym of Array.from(symbols)) {
+        try {
+          const found = await this.graphProvider.searchNodes(sym);
+          for (const n of found) {
+            symbols.add(n.id);
+          }
+        } catch {
+          // Ignore search failures
+        }
+      }
+    }
+
+    return Array.from(symbols);
   }
 }
