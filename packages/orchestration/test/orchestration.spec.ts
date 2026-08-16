@@ -260,7 +260,7 @@ export async function runOrchestrationTests() {
       { agentName: 'agent_b', message: 'Perform SubTask B' },
     ];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
 
     assert(result.successCount === 2, 'ParallelSubAgentRunner executed all tasks in parallel');
     assert(result.results.length === 2, 'Returned results for all parallel sub-agents');
@@ -285,7 +285,7 @@ export async function runOrchestrationTests() {
     };
     const tasks = [{ agentName: 'agent_slow', message: 'Hanging Task That Times Out' }];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
 
     assert(result.failedCount === 1, 'ParallelSubAgentRunner caught timeout error');
     assert(result.results[0].error!.includes('timed out'), 'Error message specifies timeout duration');
@@ -309,7 +309,7 @@ export async function runOrchestrationTests() {
     };
     const tasks = [{ agentName: 'agent_slow', message: 'Hanging Task' }];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
     assert(result.successCount === 1, 'ParallelSubAgentRunner recovered via fallback agent');
     assert(result.results[0].agentName.includes('fallback: fallback_agent'), 'Result identifies fallback agent');
     console.log('    ✓ Fallback agent recovery verified');
@@ -330,7 +330,7 @@ export async function runOrchestrationTests() {
       traceId: 'trace_p5',
       security: { userId: 'usr_owner', tenantId: 'tenant_acme' },
     };
-    const result = await loopRunner.runLoop(
+    const result = await loopRunner.run(
       parentContext,
       { agentName: 'writer_agent', message: 'Draft initial report' },
       () => 'Refinement Feedback: Fix typos and polish language',
@@ -384,7 +384,7 @@ export async function runOrchestrationTests() {
       { agentName: 'agent_a', message: 'Task 4' },
     ];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
     assert(result.successCount === 4, 'All tasks completed successfully under bounded concurrency');
     assert(peakConcurrent === 2, `Concurrency limit respected (peak: ${peakConcurrent}, expected: 2)`);
     console.log('    ✓ Bounded concurrency pool verified');
@@ -409,7 +409,7 @@ export async function runOrchestrationTests() {
       { agentName: 'agent_b', message: 'Task 2' },
     ];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
     assert(result.failedCount === 2, 'Pre-aborted signal cancels all tasks immediately');
     assert(result.results[0].error!.includes('aborted'), 'Failure reason notes cancellation');
 
@@ -423,7 +423,7 @@ export async function runOrchestrationTests() {
     const startTime = Date.now();
     setTimeout(() => inFlightController.abort(), 20);
 
-    const inFlightResult = await inFlightRunner.runParallel(parentContext, [
+    const inFlightResult = await inFlightRunner.run(parentContext, [
       { agentName: 'agent_slow', message: 'Hanging Task' },
     ]);
     const duration = Date.now() - startTime;
@@ -774,7 +774,7 @@ export async function runOrchestrationTests() {
       security: { tenantId: 'tenant_ckpt_1' },
     };
 
-    const result = await loopRunner.runLoop(
+    const result = await loopRunner.run(
       parentContext,
       { agentName: 'writer_agent', message: 'Draft initial report' },
       () => 'Refinement Feedback: Improve further',
@@ -785,7 +785,7 @@ export async function runOrchestrationTests() {
     assert(result.terminationReason === 'max_iterations', 'Termination reason is max_iterations');
 
     // Verify checkpoint exists in stateStore
-    const checkpoint = await loopRunner.recoverLatestCheckpoint(parentContext, 'writer_agent');
+    const checkpoint = await loopRunner.getCheckpoint(parentContext, 'writer_agent');
     assert(checkpoint !== null, 'Checkpoint was successfully saved in StateStore');
     assert(checkpoint!.iteration === 2, 'Latest in-flight checkpoint was for iteration 2');
     assert(checkpoint!.history.length === 2, 'Checkpoint contains history up to iteration 2');
@@ -814,13 +814,13 @@ export async function runOrchestrationTests() {
     });
 
     // Run iteration 1 and simulate interruption
-    await instanceA.runLoop(
+    await instanceA.run(
       parentContext,
       { agentName: 'writer_agent', message: 'Draft initial report' },
       () => 'Refinement Feedback: Improve language',
     );
 
-    const savedCheckpoint = await instanceA.recoverLatestCheckpoint(parentContext, 'writer_agent');
+    const savedCheckpoint = await instanceA.getCheckpoint(parentContext, 'writer_agent');
     assert(savedCheckpoint !== null, 'Saved checkpoint found');
 
     // 2. Instance B boots up with fresh runner and resumes from checkpoint
@@ -830,7 +830,7 @@ export async function runOrchestrationTests() {
       satisfactionFn: (res) => Promise.resolve(res.response.includes('perfectly refined')),
     });
 
-    const resumedResult = await instanceB.resumeLoop(
+    const resumedResult = await instanceB.resume(
       parentContext,
       savedCheckpoint!,
       () => 'Refinement Feedback: Final polish',
@@ -861,7 +861,7 @@ export async function runOrchestrationTests() {
       security: { tenantId: 'tenant_budget' },
     };
 
-    const result = await loopRunner.runLoop(
+    const result = await loopRunner.run(
       parentContext,
       { agentName: 'writer_agent', message: 'Draft initial report' },
       () => 'Refinement Feedback: Try again',
@@ -893,7 +893,7 @@ export async function runOrchestrationTests() {
       security: { tenantId: 'tenant_budget' },
     };
 
-    const result = await loopRunner.runLoop(
+    const result = await loopRunner.run(
       parentContext,
       { agentName: 'writer_agent', message: 'Slow Refinement Round 1' },
       () => 'Slow Refinement Round 2',
@@ -934,7 +934,7 @@ export async function runOrchestrationTests() {
       security: { tenantId: 'tenant_eval' },
     };
 
-    const result = await loopRunner.runLoop(parentContext, {
+    const result = await loopRunner.run(parentContext, {
       agentName: 'writer_agent',
       message: 'Draft initial report',
     });
@@ -964,13 +964,13 @@ export async function runOrchestrationTests() {
       security: { tenantId: 'tenant_clean' },
     };
 
-    const result = await loopRunner.runLoop(parentContext, {
+    const result = await loopRunner.run(parentContext, {
       agentName: 'writer_agent',
       message: 'Draft initial report',
     });
 
     assert(result.satisfied === true, 'Loop completed with satisfaction');
-    const checkpoint = await loopRunner.recoverLatestCheckpoint(parentContext, 'writer_agent');
+    const checkpoint = await loopRunner.getCheckpoint(parentContext, 'writer_agent');
     assert(checkpoint === null, 'Checkpoint was deleted from StateStore upon satisfied completion');
     console.log('    ✓ Checkpoint cleanup on completion verified');
   }
@@ -1002,7 +1002,7 @@ export async function runOrchestrationTests() {
 
     let versionErrorCaught = false;
     try {
-      await loopRunner.resumeLoop(parentContext, invalidCheckpoint);
+      await loopRunner.resume(parentContext, invalidCheckpoint);
     } catch (err) {
       if (err instanceof RefinementCheckpointVersionError) {
         versionErrorCaught = true;

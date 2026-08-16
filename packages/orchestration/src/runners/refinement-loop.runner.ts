@@ -47,12 +47,12 @@ export class RefinementLoopRunner {
    * Runs an iterative refinement loop with feedback evaluation until satisfaction condition is met,
    * maxIterations is reached, or token/duration budgets are exhausted.
    */
-  async runLoop(
+  async run(
     parentContext: AgentContext,
     initialTask: SubAgentTask,
     feedbackProviderFn?: (lastResult: SubAgentResult, iteration: number) => Promise<string> | string,
   ): Promise<RefinementLoopResult> {
-    return this.executeLoopCore(parentContext, initialTask, {
+    return this.execute(parentContext, initialTask, {
       startIteration: 0,
       startMessage: initialTask.message,
       initialHistory: [],
@@ -65,7 +65,7 @@ export class RefinementLoopRunner {
   /**
    * Resumes an interrupted refinement loop directly from a saved RefinementLoopCheckpoint snapshot.
    */
-  async resumeLoop(
+  async resume(
     parentContext: AgentContext,
     checkpoint: RefinementLoopCheckpoint,
     feedbackProviderFn?: (lastResult: SubAgentResult, iteration: number) => Promise<string> | string,
@@ -79,7 +79,7 @@ export class RefinementLoopRunner {
       message: checkpoint.currentMessage,
     };
 
-    return this.executeLoopCore(parentContext, task, {
+    return this.execute(parentContext, task, {
       startIteration: checkpoint.iteration,
       startMessage: checkpoint.currentMessage,
       initialHistory: [...checkpoint.history],
@@ -90,9 +90,9 @@ export class RefinementLoopRunner {
   }
 
   /**
-   * Recovers the latest saved RefinementLoopCheckpoint for the given agent and session from StateStore.
+   * Recovers the saved RefinementLoopCheckpoint for the given agent and session from StateStore.
    */
-  async recoverLatestCheckpoint(
+  async getCheckpoint(
     parentContext: AgentContext,
     agentName: string,
   ): Promise<RefinementLoopCheckpoint | null> {
@@ -107,7 +107,7 @@ export class RefinementLoopRunner {
   /**
    * Core execution engine managing loop rounds, budget checks, evaluators, and checkpointing.
    */
-  private async executeLoopCore(
+  private async execute(
     parentContext: AgentContext,
     initialTask: SubAgentTask,
     state: {

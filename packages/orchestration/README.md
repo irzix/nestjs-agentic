@@ -82,7 +82,7 @@ const parallelRunner = new ParallelSubAgentRunner(runner, {
   fallbackAgentName: 'general_assistant', // Fallback on persistent failure
 });
 
-const runResult = await parallelRunner.runParallel(parentContext, [
+const runResult = await parallelRunner.run(parentContext, [
   { agentName: 'security_reviewer', message: codeDiffPrompt },
   { agentName: 'architecture_reviewer', message: codeDiffPrompt },
   { agentName: 'quality_reviewer', message: codeDiffPrompt },
@@ -124,7 +124,7 @@ const refinementRunner = new RefinementLoopRunner(runner, {
 });
 
 // Run loop with automatic checkpointing
-const loopResult = await refinementRunner.runLoop(parentContext, {
+const loopResult = await refinementRunner.run(parentContext, {
   agentName: 'copywriter_agent',
   message: 'Draft technical architecture RFC',
 });
@@ -132,9 +132,9 @@ const loopResult = await refinementRunner.runLoop(parentContext, {
 console.log(`Finished: ${loopResult.terminationReason} in ${loopResult.iterations} iterations (Tokens: ${loopResult.totalTokens})`);
 
 // Or recover and resume an in-flight loop across process restarts:
-const checkpoint = await refinementRunner.recoverLatestCheckpoint(parentContext, 'copywriter_agent');
+const checkpoint = await refinementRunner.getCheckpoint(parentContext, 'copywriter_agent');
 if (checkpoint) {
-  const resumedResult = await refinementRunner.resumeLoop(parentContext, checkpoint);
+  const resumedResult = await refinementRunner.resume(parentContext, checkpoint);
   console.log('Resumed Output:', resumedResult.finalResponse);
 }
 ```
