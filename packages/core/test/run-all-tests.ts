@@ -8,6 +8,7 @@ import { runConversationHistoryTests } from './conversation-history.spec';
 import { runIdempotencyTests } from './idempotency.spec';
 import { runLocalToolProviderTests } from './local-tool-provider.spec';
 import { runModelAdapterContractTests } from './model-adapter-contract.spec';
+import { runObserversTests } from './observers.spec';
 import { runPolicyTests } from './policies.spec';
 import { runPostgresStoresTests } from './postgres-stores.spec';
 import { runSessionStoreContractTests } from './session-store-contract.spec';
@@ -35,9 +36,10 @@ async function runAllCoreTests() {
     await runIdempotencyTests();
     await runAuditTrailTests();
     await runPostgresStoresTests();
+    await runObserversTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 15 CORE UNIT TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 16 CORE UNIT TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: any) {
     console.error('\n❌ TEST SUITE FAILURE:', err.message);

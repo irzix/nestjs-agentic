@@ -76,20 +76,22 @@ export function toOpenTelemetryGenAiAttributes(
   }
 
   // Map Model attributes if present
-  const anyEvent = event as any;
-  const modelName = anyEvent.model ?? anyEvent.genAiModel ?? anyEvent.requestModel;
+  const eventRecord = event as unknown as Record<string, unknown>;
+  const modelName = (eventRecord.model ?? eventRecord.genAiModel ?? eventRecord.requestModel) as string | undefined;
   if (modelName) {
     attributes[OpenTelemetryGenAiConventions.REQUEST_MODEL] = modelName;
     attributes[OpenTelemetryGenAiConventions.RESPONSE_MODEL] = modelName;
   }
 
   // Map Token Usage attributes if present
-  const usage = anyEvent.usage;
-  const inputTokens = usage?.inputTokens ?? usage?.promptTokens ?? anyEvent.promptTokens;
-  const outputTokens = usage?.outputTokens ?? usage?.completionTokens ?? anyEvent.completionTokens;
-  const totalTokens = usage?.totalTokens ?? anyEvent.totalTokens ?? (
+  const usageRecord = (eventRecord.usage && typeof eventRecord.usage === 'object')
+    ? (eventRecord.usage as Record<string, unknown>)
+    : undefined;
+  const inputTokens = (usageRecord?.inputTokens ?? usageRecord?.promptTokens ?? eventRecord.promptTokens) as number | undefined;
+  const outputTokens = (usageRecord?.outputTokens ?? usageRecord?.completionTokens ?? eventRecord.completionTokens) as number | undefined;
+  const totalTokens = (usageRecord?.totalTokens ?? eventRecord.totalTokens ?? (
     inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined
-  );
+  )) as number | undefined;
 
   if (inputTokens !== undefined) {
     attributes[OpenTelemetryGenAiConventions.USAGE_INPUT_TOKENS] = inputTokens;

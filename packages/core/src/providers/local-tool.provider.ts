@@ -171,14 +171,15 @@ export class LocalToolProvider {
     }
 
     let instance: object | undefined;
+    const Constructor = tokenOrInstance as new (...args: unknown[]) => object;
     try {
-      instance = this.moduleRef.get(tokenOrInstance as any, { strict: false });
+      instance = this.moduleRef.get(Constructor, { strict: false });
     } catch {
       instance = undefined;
     }
     if (!instance) {
       try {
-        instance = new (tokenOrInstance as any)();
+        instance = new Constructor();
       } catch {
         instance = undefined;
       }

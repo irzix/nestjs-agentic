@@ -89,7 +89,12 @@ export async function runIdempotencyStoreContract(
     };
     await store.save(updated);
     const loaded = await store.get(sample.key);
-    check(loaded?.result?.success === false && (loaded.result as any).status === 'denied', 'subsequent save() overwrites record');
+    check(
+      loaded?.result?.success === false &&
+        'status' in loaded.result &&
+        loaded.result.status === 'denied',
+      'subsequent save() overwrites record',
+    );
   }
 
   // 5. Mutation isolation
@@ -97,11 +102,15 @@ export async function runIdempotencyStoreContract(
     const store = await options.createStore();
     await store.save(sample);
     const loaded1 = await store.get(sample.key);
-    if (loaded1?.result) {
-      (loaded1.result as any).data = { mutated: true };
+    if (loaded1?.result && 'data' in loaded1.result) {
+      (loaded1.result as { data: Record<string, unknown> }).data = { mutated: true };
     }
     const loaded2 = await store.get(sample.key);
-    check((loaded2?.result as any)?.data?.txId === 'tx_123', 'modifying loaded record does not mutate store');
+    const loaded2Data =
+      loaded2?.result && 'data' in loaded2.result
+        ? (loaded2.result.data as Record<string, unknown>)
+        : undefined;
+    check(loaded2Data?.txId === 'tx_123', 'modifying loaded record does not mutate store');
   }
 
   if (log) {

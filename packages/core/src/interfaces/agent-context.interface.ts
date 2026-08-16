@@ -41,6 +41,12 @@ export interface AgentContext {
   /** Distributed trace identifier (e.g. OpenTelemetry, Langfuse, Jaeger). */
   traceId: string;
 
+  /** Trace identifier of the parent agent invocation when executed as a sub-agent or delegated task. */
+  parentTraceId?: string;
+
+  /** Root trace identifier of the topmost agent turn across all sub-agent and nested tool delegations. */
+  rootTraceId?: string;
+
   /** Arbitrary key-value bag for passing custom data into tool handlers. */
   data?: Record<string, unknown>;
 
