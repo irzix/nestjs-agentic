@@ -1,5 +1,22 @@
 # @nestjs-agentic/core
 
+## 0.7.0
+
+### Minor Changes
+
+- 73181d8: Add RedisSessionStore and SessionStore behavioral contract test suite.
+
+  - adds `RedisSessionStore` implementing `SessionStore` with optional key prefixing and TTL expiration for session records
+  - adds `runSessionStoreContract` behavioral test suite verifying serializability, mutation isolation, multi-tenant separation, and round-trip operations
+  - updates `InMemorySessionStore` to store serialized snapshots rather than live references, matching persistent store behavior in development
+
+- e0f6c3a: Add tool execution idempotency with IdempotencyStore, RedisIdempotencyStore, IdempotencyPolicy, and contract test suite.
+
+  - adds `IdempotencyStore` and `RedisIdempotencyStore` to cache and deduplicate side-effecting tool executions
+  - adds `IdempotencyPolicy` to validate and enforce presence of idempotency keys
+  - updates `LocalToolProvider` to automatically return cached tool results when an idempotency key is provided
+  - adds `runIdempotencyStoreContract` behavioral contract test suite
+
 ## 0.6.0
 
 ### Minor Changes
