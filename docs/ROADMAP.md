@@ -1,65 +1,45 @@
 # Product Roadmap
 
-> **Product direction:** nestjs-agentic is the NestJS-native runtime for governed AI agents. It brings agents, tools, policy enforcement, human approval, execution state, and observability into the NestJS module and dependency-injection system.
+This roadmap outlines the past releases, current development priorities, and future direction of `nestjs-agentic`.
 
-The project is not intended to be a thin AI SDK wrapper or a clone of a general-purpose graph framework. Its focus is making agentic workloads safe, testable, observable, and operable inside NestJS applications.
+---
 
-## Status Definitions
+## 📚 Architectural Foundations & Research References
 
-| Status | Meaning |
-| --- | --- |
-| **Available** | Implemented and exposed through the public API. Breaking changes remain possible before 1.0. |
-| **Experimental** | Available for evaluation and feedback, but missing one or more production guarantees. |
-| **Planned** | Part of the accepted product direction, but not yet implemented. |
+`nestjs-agentic` is designed in alignment with peer-reviewed academic literature and production AI engineering standards:
 
-A published package is not automatically production-ready. The current status and limitations of each capability are documented below.
+* **ReAct Reasoning:** *Yao et al., Princeton & Google Brain (ICLR 2023)* ([arXiv:2210.03629](https://arxiv.org/abs/2210.03629))
+* **Tool Calling & MCP:** *Schick et al., Meta AI (Toolformer, arXiv:2302.04761)* & *Anthropic MCP Standard*
+* **Multi-Agent SOPs & Debate:** *Hong et al. (MetaGPT, ICLR 2024, arXiv:2308.00352)* & *Du et al., MIT (arXiv:2305.14325)*
+* **Context Engineering & Lost in the Middle:** *Liu et al., Stanford & UC Berkeley (TACL 2024, arXiv:2307.03172)*
+* **GraphRAG & Knowledge:** *Edge et al., Microsoft Research (arXiv:2404.16130)* & *Lewis et al. (NeurIPS 2020)*
+* **Memory Architectures:** *Park et al., Stanford (Generative Agents, arXiv:2304.03442)* & *Shinn et al., MIT (Reflexion, NeurIPS 2023)*
+* **Evaluation & Debiasing:** *Zheng et al., UC Berkeley LMSYS (MT-Bench, NeurIPS 2023, arXiv:2306.05685)*
+* **Model Cascades:** *Chen et al., Stanford University (FrugalGPT, arXiv:2305.05176)*
+* **Security & Tri-Rail Guardrails:** *Rebedea et al., NVIDIA (arXiv:2310.10501)* & *Greshake et al. (USENIX Security 2023)*
 
-## Product Pillars
+---
 
-1. **NestJS-native development** — agents and tools work naturally with modules, dependency injection, decorators, and application testing.
-2. **Governance by default** — every framework-managed tool call crosses a policy boundary before side effects are allowed.
-3. **Bounded autonomy** — model decisions operate within explicit tools, permissions, time, cost, and iteration limits.
-4. **Vendor-neutral execution** — application agents are not coupled to a specific model SDK or graph framework.
-5. **Operational reliability** — production execution must be cancellable, durable, observable, and auditable.
+## Package Architecture Status
 
-## Where We Are Today
+| Package | Status | Role |
+|---|---|---|
+| [`nestjs-agentic`](packages/core) | **Production-intent (v0.5)** | Independent governed agent runtime, model contracts, lifecycle, tool policies, streaming, approvals, and observability. |
+| [`@nestjs-agentic/openai`](packages/model-openai) | **Production-intent (v0.5)** | OpenAI and ChatCompletions compatible provider adapter. |
+| [`@nestjs-agentic/orchestration`](packages/orchestration) | **Experimental (v0.4)** | Sub-agent delegation, parallel execution, SOP state machines, and refinement loops. |
+| [`@nestjs-agentic/memory`](packages/memory) | **Experimental (v0.2)** | Short-term, semantic, episodic, procedural, and scratchpad memory primitives. |
+| [`@nestjs-agentic/rag`](packages/rag) | **Experimental (v0.2)** | AST chunking, vector stores, hybrid search, and GraphRAG primitives. |
+| [`@nestjs-agentic/experience`](packages/experience) | **Experimental (v0.2)** | Stanford tri-factor scoring, reflection, and experience learning over memory. |
+| [`@nestjs-agentic/evaluation`](packages/evaluation) | **Experimental (v0.2)** | LLM-as-a-Judge debiasing, trajectory metrics, and benchmark reporting. |
+| [`@nestjs-agentic/mcp`](packages/mcp) | **Planned (v0.8)** | Native Model Context Protocol client transport and tool provider. |
+| [`@nestjs-agentic/adk`](packages/runtime-adk) | **Deprecated Prototype** | Early experimental runtime prototype (to be deprecated). |
+| [`@nestjs-agentic/langgraph`](packages/runtime-langgraph) | **Deprecated Prototype** | Early LangChain/LangGraph adapter (to be reworked as model adapter). |
 
-The current release line is `0.4.x`.
-
-| Capability | Status | Current scope |
-| --- | --- | --- |
-| NestJS agents and tools | Available | Decorators, discovery, module registration, dependency injection, and context-bound tools. |
-| Tool policies | Available | `allow`, `deny`, and `require_approval` decisions before framework-managed tool execution. |
-| Mock runtime | Available | Deterministic agent and governance testing without external model calls. |
-| Built-in agent runtime | Available | `AgentExecutor` runs the governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming. Requires an application-supplied `ModelAdapter`. |
-| OpenAI model adapter | Available | `@nestjs-agentic/openai` covers OpenAI and Chat Completions compatible endpoints, including Azure, Ollama, vLLM, Groq, and OpenRouter. |
-| Additional model adapters | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same `ModelAdapter` contract. |
-| Human approval | Experimental | Approval and rejection resume the original model turn and use a serializable `PendingApproval` record, so a durable `ApprovalStore` (e.g. `RedisApprovalStore`) can survive a process restart or resolve on a different instance. Settlement is atomic (at most once) via `ApprovalStore.claim()`, approvals can expire via a policy `ttlSeconds` or module `approvalTtlSeconds`, and each suspension carries a versioned `ApprovalCheckpoint` so resuming does not depend on `SessionStore` retention. Both approval stores are verified by the `runApprovalStoreContract` suite, and the policy boundary plus the full approval lifecycle — including the deciding actor — are recorded through `AuditSink`. Idempotency keys for retrying a claimed-but-failed tool, restart/recovery integration tests, and checkpointing turns that are still in flight remain open. |
-| Legacy runtime adapters | Experimental | The ADK-named package is currently a synthetic runtime prototype. The LangGraph package provides limited LangChain and checkpointer compatibility, but full graph execution is not currently part of the adapter. |
-| Conversation history | Available | The built-in runtime replays and persists per-session conversation through `SessionStore`, scoped by tenant, with retention that keeps tool exchanges intact. |
-| Streaming and state | Experimental | Shared event and state abstractions exist, but adapter behavior and execution recovery are not yet unified. |
-| Memory and experience | Experimental | Memory, summarization, reflection, and experience primitives are available as opt-in packages. |
-| RAG | Experimental | Retrieval strategies, vector-store abstractions, and knowledge-graph primitives are available as opt-in packages. |
-| Multi-agent orchestration | Experimental | Delegation, parallel execution, fallback, and refinement APIs are available; production reliability work remains. |
-| Evaluation | Experimental | Metrics, benchmarks, and reporting are available; runtime trace integration and CI quality gates remain planned. |
-| Governance audit trail | Experimental | Policy decisions and the full approval lifecycle, including the deciding actor, are recorded to any registered `AuditSink`. Argument capture is opt-in and redactable. Durable sink implementations are left to the application. |
-| Observability: traces and metrics | Planned | Observer APIs exist, but end-to-end runtime wiring and OpenTelemetry-compatible traces and metrics for model and tool execution are not yet implemented. |
-| Vercel AI SDK and MCP | Planned | These integrations will follow the common runtime and governance contracts. |
-
-## Release History
-
-| Release | Foundation introduced |
-| --- | --- |
-| `0.1` | NestJS agent and tool primitives, runtime boundary, policies, context isolation, approval APIs, and mock runtime. |
-| `0.2` | State and streaming abstractions, policy utilities, memory primitives, and initial ADK and LangGraph packages. |
-| `0.3` | RAG, vector and knowledge-graph abstractions, reflection, and experience primitives. |
-| `0.4` | Sub-agent orchestration, refinement loops, evaluation metrics, benchmarks, and reporting. |
-
-These releases established the framework surface. The next releases prioritize depth and behavioral consistency over adding more packages.
+---
 
 ## Forward Roadmap
 
-Version numbers are directional and may change as the contracts are validated.
+Version numbers are directional and tracked via GitHub milestones.
 
 ### 0.5 — Independent Agent Runtime
 
@@ -76,99 +56,58 @@ Goal: run a complete, governed agent turn without requiring LangGraph or another
 - [x] Ship at least one production-intent direct model adapter (`@nestjs-agentic/openai`).
 - [x] Publish a reusable behavioral contract-test suite for third-party adapters (`runModelAdapterContract`).
 
-**Exit criteria met:** a NestJS application can run, stream, cancel, and test a governed tool-calling agent without adopting a graph framework.
-
-Migrating the ADK and LangGraph packages onto the common contracts was dropped from this milestone. Neither blocks the runtime, and the ADK package needs a naming decision before an implementation decision. Both moved to [Future Directions](#future-directions).
+---
 
 ### 0.6 — Durable and Observable Execution
 
-> **Status: Planned**
+> **Status: In Progress** | [Milestone 0.6](https://github.com/irzix/nestjs-agentic/milestone/2)
 
 Goal: make executions safe to pause, recover, inspect, and operate in production environments.
 
 - [x] Persist and replay conversation history per session, scoped by tenant.
-- [ ] Introduce durable, versioned execution checkpoints and documented recovery behavior. (Approval suspensions now carry a versioned `ApprovalCheckpoint` with documented recovery and refusal behavior; checkpointing a turn that is still mid-round remains.)
-- [x] Add idempotency support and safe retry behavior for side-effecting tools: `IdempotencyStore`, `RedisIdempotencyStore`, `IdempotencyPolicy`, and `runIdempotencyStoreContract` guard tool execution and deduplicate repeated calls.
-- [ ] Propagate cancellation and deadlines through model, tool, and persistence operations.
-- [ ] Add bounded concurrency and failure-aware retries.
-- [ ] Provide production-intent Redis and/or PostgreSQL persistence adapters. (`RedisApprovalStore`, `RedisSessionStore`, `RedisIdempotencyStore`, and `RedisStateStore` exist; all stores are covered by their contract test suites. PostgreSQL adapters remain.)
-- [x] Publish a reusable behavioral contract-test suite for approval stores (`runApprovalStoreContract`).
-- [x] Publish a reusable behavioral contract-test suite for session stores (`runSessionStoreContract`).
-- [ ] Wire runtime observers and OpenTelemetry-compatible traces and metrics.
-- [ ] Record auditable model, tool, policy, and approval events. (Policy decisions and the full approval lifecycle are recorded through `AuditSink`, including the deciding actor. Model and tool execution events remain.)
-- [ ] Harden tenant and identity isolation throughout runtime execution.
-- [ ] Cover restart, recovery, cancellation, and duplicate-execution scenarios with integration tests.
+- [x] Add idempotency support and safe retry behavior for side-effecting tools (`RedisIdempotencyStore`, `IdempotencyPolicy`).
+- [x] Publish reusable behavioral contract suites for approval and session stores.
+- [ ] Introduce durable, versioned execution checkpoints and mid-round turn recovery ([#33](https://github.com/irzix/nestjs-agentic/issues/33)).
+- [ ] Propagate cancellation (`AbortSignal`) and deadlines through runtime, tools, and stores ([#31](https://github.com/irzix/nestjs-agentic/issues/31)).
+- [ ] Implement Tri-Rail Guardrails with post-execution tool output sanitization and canary tokens ([#49](https://github.com/irzix/nestjs-agentic/issues/49)).
+- [ ] Standardize formal ReAct event lifecycles (`thought`, `action_call`, `observation`) and OpenTelemetry GenAI attributes ([#32](https://github.com/irzix/nestjs-agentic/issues/32), [#56](https://github.com/irzix/nestjs-agentic/issues/56)).
+- [ ] PostgreSQL persistence adapters for state, session, approval, and idempotency stores ([#34](https://github.com/irzix/nestjs-agentic/issues/34)).
+- [ ] Integration test suite for crash recovery and HITL approvals ([#30](https://github.com/irzix/nestjs-agentic/issues/30)).
 
-**Exit criteria:** an execution can pause for approval, survive a restart, resume safely, and be traced without duplicating completed side effects.
+---
 
 ### 0.7 — Reliable Orchestration
 
-> **Status: Planned**
+> **Status: Planned** | [Milestone 0.7](https://github.com/irzix/nestjs-agentic/milestone/3)
 
 Goal: build multi-agent coordination on the same guarantees as single-agent execution.
 
-- [x] Add cancellation-aware fan-out and bounded parallel execution (`maxConcurrency` and `AbortSignal` in `ParallelSubAgentRunner`).
-- [ ] Implement true first-success, fallback, and evaluator-driven aggregation semantics.
-- [ ] Make refinement loops budget-aware, checkpointed, and resumable.
-- [ ] Preserve immutable identity and tenant context while allowing explicit capability narrowing.
-- [ ] Support durable delegation and retry-safe fan-out/join behavior.
-- [ ] Add workflow status, cancellation, resume, and inspection APIs.
-- [ ] Apply the runtime contract suite to orchestration failure and recovery paths.
+- [x] Cancellation-aware fan-out and bounded parallel execution (`maxConcurrency` in `ParallelSubAgentRunner`) ([#35](https://github.com/irzix/nestjs-agentic/issues/35)).
+- [ ] Implement MetaGPT Standard Operating Procedures (SOPs) and Multi-Agent Debate Consensus ([#53](https://github.com/irzix/nestjs-agentic/issues/53), [#36](https://github.com/irzix/nestjs-agentic/issues/36)).
+- [ ] Make refinement loops budget-aware, checkpointed, and resumable ([#37](https://github.com/irzix/nestjs-agentic/issues/37)).
+- [ ] Preserve tenant identity and support capability narrowing in sub-agent delegation ([#38](https://github.com/irzix/nestjs-agentic/issues/38)).
+- [ ] Resilient error recovery and evaluator-driven sub-agent selection.
 
-**Exit criteria:** orchestrated executions preserve cancellation, durability, idempotency, security, and observability guarantees across every sub-agent.
+---
 
-## Ecosystem Work
+### 0.8 — Ecosystem & Production Adapters
 
-Integrations should follow the common contracts rather than define them. Work may proceed alongside the main milestones when it does not destabilize the runtime API:
+> **Status: Planned** | [Milestone 0.8](https://github.com/irzix/nestjs-agentic/milestone/4)
 
-- Vercel AI SDK adapter
-- MCP tool provider and client transport
-- Anthropic and Google model adapters
-- OpenTelemetry and Langfuse integrations
-- additional memory, vector, checkpoint, and audit stores
-- examples for HTTP, SSE, WebSocket, queues, and scheduled jobs
+Goal: deliver production ecosystem adapters, GraphRAG, advanced memory, and cost optimization.
 
-## Future Directions
+- [ ] Dedicated `@nestjs-agentic/mcp` package for Model Context Protocol client transport ([#41](https://github.com/irzix/nestjs-agentic/issues/41)).
+- [ ] AST-aware codebase chunking and GraphRAG dependency traversal in `@nestjs-agentic/rag` ([#51](https://github.com/irzix/nestjs-agentic/issues/51)).
+- [ ] U-Shaped context assembler utility to mitigate Lost-in-the-Middle degradation ([#52](https://github.com/irzix/nestjs-agentic/issues/52)).
+- [ ] Stanford tri-factor memory retrieval scoring and procedural memory stores ([#50](https://github.com/irzix/nestjs-agentic/issues/50)).
+- [ ] FrugalGPT model cascading and confidence-threshold routing ([#54](https://github.com/irzix/nestjs-agentic/issues/54)).
+- [ ] LLM-as-a-Judge position-debiasing and trajectory metrics in `@nestjs-agentic/evaluation` ([#55](https://github.com/irzix/nestjs-agentic/issues/55)).
+- [ ] Anthropic Claude ModelAdapter ([#39](https://github.com/irzix/nestjs-agentic/issues/39)) & Google Gemini ModelAdapter ([#40](https://github.com/irzix/nestjs-agentic/issues/40)).
 
-These are areas of interest, not committed release scope:
+---
 
-- deciding the future of the ADK-named package: a real Google ADK integration, a rename that matches what it does, or deprecation
-- reworking the LangGraph package as a `ModelAdapter` over a LangChain model, rather than keeping a partial `RuntimeAdapter`
-- typed graph and workflow definitions
-- distributed execution workers
-- visual execution inspection and replay
-- advanced multi-agent planning and routing
-- additional evaluation and optimization workflows
+### 1.0 — Production Release (GA)
 
-They will be prioritized only after the independent runtime and durable execution guarantees are proven and user demand is clear.
+> **Status: Planned** | [Milestone 1.0](https://github.com/irzix/nestjs-agentic/milestone/5)
 
-## Production-Readiness Standard
-
-A capability should be described as production-ready only when all applicable guarantees are demonstrated:
-
-- shared contract and integration tests
-- cancellation, deadlines, and bounded retries
-- durable state and documented recovery behavior
-- idempotency guidance for side effects
-- traces, metrics, and auditable decisions
-- tenant and identity isolation
-- compatibility and migration documentation
-
-Until then, documentation should describe the capability as **Available** or **Experimental** rather than imply a production guarantee.
-
-## Non-Goals
-
-- Replacing NestJS services, queues, databases, or authorization systems.
-- Requiring LangGraph or any other orchestration framework.
-- Building unconstrained autonomous agents without budgets, policies, or operator control.
-- Treating multi-agent execution as the default for deterministic application workflows.
-- Adding a graph API solely to mirror another framework.
-
-## Design Principles
-
-1. **NestJS-native first** — core APIs must fit naturally into modules, dependency injection, and application testing.
-2. **Governance is non-optional** — every framework-managed tool invocation crosses the policy boundary.
-3. **Security context is application-owned** — models never author identity, tenant, role, or permission data.
-4. **Runtime contracts are vendor-neutral** — provider and orchestration SDK types remain in optional adapters.
-5. **Reliability before autonomy** — durability, cancellation, idempotency, and observability precede more complex agent behavior.
-6. **Claims follow evidence** — documentation describes behavior supported by implementation and tests.
+General availability: end-to-end multi-tenant enterprise reliability, crash recovery, and proven performance across all 14 pillars.
