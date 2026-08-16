@@ -321,6 +321,7 @@ export class AgentExecutor {
           const output = this.resolveOutput(state, response.content);
           await this.publishCheckpoint(onSuspend, state);
           await this.publishTranscript(onTranscript, state, output);
+          yield { type: 'final_answer', sessionId: requestCtx.sessionId, output, usage: state.usage };
           yield { type: 'complete', sessionId: requestCtx.sessionId, output };
           return;
         }
@@ -567,6 +568,12 @@ export class AgentExecutor {
       }
 
       events?.push({
+        type: 'action_call',
+        id: call.id,
+        toolName: tool.name,
+        args: validation.args,
+      });
+      events?.push({
         type: 'tool_start',
         id: call.id,
         toolName: tool.name,
@@ -614,6 +621,7 @@ export class AgentExecutor {
         return true;
       }
 
+      events?.push({ type: 'action_observation', id: call.id, toolName: tool.name, result });
       events?.push({ type: 'tool_result', id: call.id, toolName: tool.name, result });
     }
 
