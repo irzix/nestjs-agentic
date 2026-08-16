@@ -241,6 +241,59 @@ export async function runPolicyTests() {
     assert(false, 'Test 9: CanaryDetectionPolicy Prompt Exfiltration Interception', err.message);
   }
 
+  // TEST 10: PEM Private Key Regex Redaction
+  try {
+    const { SecretRedactionPolicy } = await import('../src/policies/secret-redaction.policy');
+    const redactionPolicy = new SecretRedactionPolicy();
+
+    const pemKey = `Config loaded with key:
+-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA0Y1+abcdef123456789==
+-----END RSA PRIVATE KEY-----
+Connection ready.`;
+
+    const result = await redactionPolicy.evaluateOutput(dummyCtx, 'loadKey', pemKey);
+    assert(result.decision === 'sanitize', 'Test 10a: PEM private key is detected and flagged for sanitization');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as string;
+      assert(!sanitized.includes('MIIEowIBAAKCAQEA'), 'Test 10b: Private key body is redacted');
+      assert(sanitized.includes('[REDACTED_SECRET]'), 'Test 10c: Mask placeholder is applied to PEM block');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 10: PEM Private Key Regex Redaction', err.message);
+  }
+
+  // TEST 11: Circular Reference Traversal Protection
+  try {
+    const { SecretRedactionPolicy } = await import('../src/policies/secret-redaction.policy');
+    const { CanaryDetectionPolicy } = await import('../src/policies/canary-detection.policy');
+
+    const redactionPolicy = new SecretRedactionPolicy();
+    const canaryPolicy = new CanaryDetectionPolicy({ canaryTokens: ['TRAP_CANARY_123'] });
+
+    // Construct circular object
+    const circularObj: any = {
+      name: 'node_a',
+      apiKey: 'sk-secret-key-12345678901234567890',
+    };
+    circularObj.self = circularObj;
+
+    // 11a: SecretRedactionPolicy handles circular reference without infinite loop
+    const redactResult = await redactionPolicy.evaluateOutput(dummyCtx, 'getGraph', circularObj);
+    assert(redactResult.decision === 'sanitize', 'Test 11a: Circular object is processed safely without stack overflow');
+    if (redactResult.decision === 'sanitize') {
+      const sanitized = redactResult.sanitizedResult as any;
+      assert(sanitized.apiKey === '[REDACTED_SECRET]', 'Test 11b: Secret key in circular object is masked');
+      assert(sanitized.self === circularObj, 'Test 11c: Circular reference is preserved without infinite loop');
+    }
+
+    // 11b: CanaryDetectionPolicy handles circular reference without infinite loop
+    const canaryResult = await canaryPolicy.evaluateOutput(dummyCtx, 'getGraph', circularObj);
+    assert(canaryResult.decision === 'allow', 'Test 11d: Canary detection processes circular object without loop');
+  } catch (err: any) {
+    assert(false, 'Test 11: Circular Reference Traversal Protection', err.message);
+  }
+
   console.log(`\n  📊 Policies Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Policy Unit Tests Failed');

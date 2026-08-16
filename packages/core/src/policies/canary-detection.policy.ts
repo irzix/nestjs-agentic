@@ -11,6 +11,9 @@ export interface CanaryDetectionPolicyOptions {
 
   /** Custom rejection message returned when a canary token is detected. */
   denyReason?: string;
+
+  /** Maximum object traversal depth to prevent stack overflows. Default: `50` */
+  maxDepth?: number;
 }
 
 /**
@@ -33,12 +36,14 @@ export interface CanaryDetectionPolicyOptions {
 export class CanaryDetectionPolicy implements ToolPolicy {
   private readonly canaryTokens: string[];
   private readonly denyReason: string;
+  private readonly maxDepth: number;
 
   constructor(options?: CanaryDetectionPolicyOptions) {
     this.canaryTokens = options?.canaryTokens ?? [];
     this.denyReason =
       options?.denyReason ??
       'Canary token leakage detected: Potential prompt exfiltration attack blocked.';
+    this.maxDepth = options?.maxDepth ?? 50;
   }
 
   /**
@@ -53,7 +58,7 @@ export class CanaryDetectionPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    if (this.containsCanary(args)) {
+    if (this.containsCanary(args, new WeakSet<object>(), 0)) {
       return {
         decision: 'deny',
         reason: 'Canary token exfiltration blocked: Attempt to leak prompt canary token in tool arguments.',
@@ -75,7 +80,7 @@ export class CanaryDetectionPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    if (this.containsCanary(result)) {
+    if (this.containsCanary(result, new WeakSet<object>(), 0)) {
       return {
         decision: 'deny',
         reason: this.denyReason,
@@ -85,18 +90,31 @@ export class CanaryDetectionPolicy implements ToolPolicy {
     return { decision: 'allow' };
   }
 
-  private containsCanary(value: unknown): boolean {
+  private containsCanary(
+    value: unknown,
+    seen: WeakSet<object>,
+    depth: number,
+  ): boolean {
+    if (depth > this.maxDepth) {
+      return false;
+    }
+
     if (typeof value === 'string') {
       return this.canaryTokens.some((token) => value.includes(token));
     }
 
-    if (Array.isArray(value)) {
-      return value.some((item) => this.containsCanary(item));
-    }
-
     if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) {
+        return false;
+      }
+      seen.add(value);
+
+      if (Array.isArray(value)) {
+        return value.some((item) => this.containsCanary(item, seen, depth + 1));
+      }
+
       return Object.values(value as Record<string, unknown>).some((v) =>
-        this.containsCanary(v),
+        this.containsCanary(v, seen, depth + 1),
       );
     }
 

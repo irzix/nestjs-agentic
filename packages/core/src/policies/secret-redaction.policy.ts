@@ -12,6 +12,9 @@ export interface SecretRedactionPolicyOptions {
 
   /** Mask replacement string. Default: `'[REDACTED_SECRET]'` */
   maskPlaceholder?: string;
+
+  /** Maximum object traversal depth to prevent stack overflows. Default: `50` */
+  maxDepth?: number;
 }
 
 /**
@@ -33,6 +36,7 @@ export class SecretRedactionPolicy implements ToolPolicy {
   private readonly patterns: RegExp[];
   private readonly sensitiveKeys: Set<string>;
   private readonly maskPlaceholder: string;
+  private readonly maxDepth: number;
 
   private static readonly DEFAULT_PATTERNS: RegExp[] = [
     // OpenAI API Keys
@@ -44,7 +48,7 @@ export class SecretRedactionPolicy implements ToolPolicy {
     /AKIA[0-9A-Z]{16}/g,
     // JWT Tokens
     /eyJ[a-zA-Z0-9_\-]{10,}\.eyJ[a-zA-Z0-9_\-]{10,}\.[a-zA-Z0-9_\-]+/g,
-    // PEM Private Keys
+    // PEM Private Keys (Fixed character class range: [ A-Z0-9_-])
     /-----BEGIN[ A-Z0-9_-]*PRIVATE KEY-----[\s\S]*?-----END[ A-Z0-9_-]*PRIVATE KEY-----/g,
     // Database Connection Strings with Passwords
     /(?:postgres|postgresql|mongodb|mysql|redis):\/\/[^:\s]+:[^@\s]+@[^\s"'<>]+/gi,
@@ -69,6 +73,7 @@ export class SecretRedactionPolicy implements ToolPolicy {
     this.patterns = [...SecretRedactionPolicy.DEFAULT_PATTERNS, ...(options?.customPatterns ?? [])];
     this.sensitiveKeys = new Set(options?.sensitiveKeys ?? SecretRedactionPolicy.DEFAULT_SENSITIVE_KEYS);
     this.maskPlaceholder = options?.maskPlaceholder ?? '[REDACTED_SECRET]';
+    this.maxDepth = options?.maxDepth ?? 50;
   }
 
   /**
@@ -95,9 +100,14 @@ export class SecretRedactionPolicy implements ToolPolicy {
     }
 
     let modified = false;
-    const sanitized = this.redactUnknown(result, () => {
-      modified = true;
-    });
+    const sanitized = this.redactUnknown(
+      result,
+      () => {
+        modified = true;
+      },
+      new WeakSet<object>(),
+      0,
+    );
 
     if (modified) {
       return { decision: 'sanitize', sanitizedResult: sanitized };
@@ -106,23 +116,37 @@ export class SecretRedactionPolicy implements ToolPolicy {
     return { decision: 'allow' };
   }
 
-  private redactUnknown(value: unknown, onModified: () => void): unknown {
+  private redactUnknown(
+    value: unknown,
+    onModified: () => void,
+    seen: WeakSet<object>,
+    depth: number,
+  ): unknown {
+    if (depth > this.maxDepth) {
+      return value;
+    }
+
     if (typeof value === 'string') {
       return this.redactString(value, onModified);
     }
 
-    if (Array.isArray(value)) {
-      return value.map((item) => this.redactUnknown(item, onModified));
-    }
-
     if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) {
+        return value;
+      }
+      seen.add(value);
+
+      if (Array.isArray(value)) {
+        return value.map((item) => this.redactUnknown(item, onModified, seen, depth + 1));
+      }
+
       const sanitizedObj: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
         if (this.sensitiveKeys.has(k) && typeof v === 'string') {
           sanitizedObj[k] = this.maskPlaceholder;
           onModified();
         } else {
-          sanitizedObj[k] = this.redactUnknown(v, onModified);
+          sanitizedObj[k] = this.redactUnknown(v, onModified, seen, depth + 1);
         }
       }
       return sanitizedObj;
