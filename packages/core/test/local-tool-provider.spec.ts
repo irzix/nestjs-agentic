@@ -3,6 +3,7 @@ import { ModuleRef } from '@nestjs/core';
 import {
   ApprovalStore,
   Context,
+  InMemoryApprovalStore,
   LocalToolProvider,
   Param,
   PolicyResult,
@@ -13,7 +14,6 @@ import {
   UsePolicies,
 } from '../src';
 import type { AgentContext, ToolExecutionResult } from '../src';
-import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
 
 // Dummy Policies for Testing Governance States
 class AllowPolicy implements ToolPolicy {

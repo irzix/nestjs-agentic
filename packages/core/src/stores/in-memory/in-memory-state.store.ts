@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { StateStore } from '../interfaces/state-store.interface';
+import type { StateStore } from '../../interfaces/state-store.interface';
 
 @Injectable()
 export class InMemoryStateStore implements StateStore {

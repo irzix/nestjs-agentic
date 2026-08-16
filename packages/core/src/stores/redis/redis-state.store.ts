@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { StateStore } from '../interfaces/state-store.interface';
+import type { StateStore } from '../../interfaces/state-store.interface';
 
 export interface GenericRedisClient {
   get(key: string): Promise<string | null>;

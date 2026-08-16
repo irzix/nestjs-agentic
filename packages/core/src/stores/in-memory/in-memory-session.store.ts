@@ -1,4 +1,4 @@
-import type { SessionStore } from '../interfaces';
+import type { SessionStore } from '../../interfaces';
 
 /**
  * In-memory implementation of SessionStore.

@@ -17,10 +17,12 @@ import { AgentExecutor } from './services/agent-executor.service';
 import { AgentRunner, AgenticModuleOptions } from './services/agent-runner.service';
 import { ApprovalService } from './services/approval.service';
 import { AuditTrail } from './services/audit-trail.service';
-import { InMemoryApprovalStore } from './stores/in-memory-approval.store';
-import { InMemoryIdempotencyStore } from './stores/in-memory-idempotency.store';
-import { InMemorySessionStore } from './stores/in-memory-session.store';
-import { InMemoryStateStore } from './stores/in-memory-state.store';
+import {
+  InMemoryApprovalStore,
+  InMemoryIdempotencyStore,
+  InMemorySessionStore,
+  InMemoryStateStore,
+} from './stores';
 
 export interface ForFeatureOptions {
   /** Agent provider classes to register. Each must be decorated with @Agent(). */

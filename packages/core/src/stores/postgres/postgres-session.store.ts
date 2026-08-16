@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { SessionStore } from '../interfaces/session.interface';
+import type { SessionStore } from '../../interfaces/session.interface';
 import type { GenericPostgresClient } from './postgres-state.store';
 
 export interface PostgresSessionStoreOptions {

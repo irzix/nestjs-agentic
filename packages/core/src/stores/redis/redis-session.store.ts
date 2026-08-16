@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { SessionStore } from '../interfaces/session.interface';
+import type { SessionStore } from '../../interfaces/session.interface';
 import type { GenericRedisClient } from './redis-state.store';
 
 export interface RedisSessionStoreOptions {

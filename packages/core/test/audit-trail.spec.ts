@@ -8,7 +8,9 @@ import {
   AuditTrail,
   ConsoleAuditSink,
   Context,
+  InMemoryApprovalStore,
   InMemoryAuditSink,
+  InMemorySessionStore,
   LocalToolProvider,
   MockModelAdapter,
   Param,
@@ -27,8 +29,6 @@ import type {
   PolicyResult,
   ToolPolicy,
 } from '../src';
-import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
-import { InMemorySessionStore } from '../src/stores/in-memory-session.store';
 
 class AmountPolicy implements ToolPolicy {
   async evaluate(

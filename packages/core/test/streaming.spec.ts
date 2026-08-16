@@ -4,6 +4,7 @@ import {
   Agent,
   AgentRunner,
   AgenticModuleOptions,
+  InMemoryApprovalStore,
   LocalToolProvider,
   MockRuntimeAdapter,
   ToolDiscoveryService,
@@ -11,7 +12,6 @@ import {
   Tool,
 } from '../src';
 import type { AgentProvider, AgentConfig, AgentStreamEvent } from '../src';
-import { InMemoryApprovalStore } from '../src/stores/in-memory-approval.store';
 
 @ToolSet({ name: 'mockToolset' })
 class MockToolClass {

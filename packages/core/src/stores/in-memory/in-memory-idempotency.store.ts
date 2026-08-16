@@ -1,4 +1,4 @@
-import type { IdempotencyRecord, IdempotencyStore } from '../interfaces/idempotency.interface';
+import type { IdempotencyRecord, IdempotencyStore } from '../../interfaces/idempotency.interface';
 
 /**
  * In-memory implementation of `IdempotencyStore` for development and testing.

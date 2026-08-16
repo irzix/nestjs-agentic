@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { IdempotencyRecord, IdempotencyStore } from '../interfaces/idempotency.interface';
+import type { IdempotencyRecord, IdempotencyStore } from '../../interfaces/idempotency.interface';
 import type { GenericPostgresClient } from './postgres-state.store';
 
 export interface PostgresIdempotencyStoreOptions {
