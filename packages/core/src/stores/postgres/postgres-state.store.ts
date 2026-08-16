@@ -95,6 +95,27 @@ export class PostgresStateStore implements StateStore {
     );
   }
 
+  async setIfNotExists<T = unknown>(key: string, value: T, ttlSeconds?: number): Promise<boolean> {
+    await this.ensureTable();
+    const fullKey = this.getKey(key);
+    const serialized = JSON.stringify(value);
+    const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000) : null;
+
+    await this.client.query(
+      `DELETE FROM ${this.tableName} WHERE key = $1 AND expires_at IS NOT NULL AND expires_at <= NOW()`,
+      [fullKey],
+    );
+
+    const result = await this.client.query(
+      `INSERT INTO ${this.tableName} (key, value, updated_at, expires_at)
+       VALUES ($1, $2::jsonb, NOW(), $3)
+       ON CONFLICT (key) DO NOTHING`,
+      [fullKey, serialized, expiresAt],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async delete(key: string): Promise<void> {
     await this.ensureTable();
     const fullKey = this.getKey(key);

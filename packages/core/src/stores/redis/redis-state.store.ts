@@ -3,7 +3,13 @@ import type { StateStore } from '../../interfaces/state-store.interface';
 
 export interface GenericRedisClient {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string, mode?: string, duration?: number): Promise<unknown>;
+  set(
+    key: string,
+    value: string,
+    mode?: string,
+    duration?: number,
+    flag?: string,
+  ): Promise<unknown>;
   del(key: string): Promise<number>;
   keys(pattern: string): Promise<string[]>;
   /**
@@ -51,6 +57,19 @@ export class RedisStateStore implements StateStore {
       await this.client.set(redisKey, serialized, 'EX', ttlSeconds);
     } else {
       await this.client.set(redisKey, serialized);
+    }
+  }
+
+  async setIfNotExists<T = unknown>(key: string, value: T, ttlSeconds?: number): Promise<boolean> {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+    const redisKey = this.getKey(key);
+
+    if (ttlSeconds) {
+      const res = await this.client.set(redisKey, serialized, 'EX', ttlSeconds, 'NX');
+      return res === 'OK' || res === 1 || res === true;
+    } else {
+      const res = await this.client.set(redisKey, serialized, 'NX');
+      return res === 'OK' || res === 1 || res === true;
     }
   }
 

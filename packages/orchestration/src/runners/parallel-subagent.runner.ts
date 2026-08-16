@@ -42,7 +42,7 @@ export class ParallelSubAgentRunner {
   /**
    * Executes multiple sub-agents in parallel and aggregates their responses based on the configured aggregation strategy.
    */
-  async runParallel(
+  async run(
     parentContext: AgentContext,
     tasks: SubAgentTask[],
   ): Promise<ParallelRunResult> {

@@ -1,4 +1,4 @@
-import type { AgentContext, ExecutionLimits } from '@nestjs-agentic/core';
+import type { AgentContext, ExecutionLimits, StateStore } from '@nestjs-agentic/core';
 
 /**
  * Capability narrowing constraints applied when delegating work to a subordinate agent.
@@ -73,6 +73,91 @@ export interface SubAgentResult {
 
   /** Optional numerical confidence or quality evaluation score (0.0 to 1.0). */
   score?: number;
+
+  /** Token consumption details during this sub-agent run. */
+  tokens?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+
+  /** Execution duration of this sub-agent run in milliseconds. */
+  durationMs?: number;
+}
+
+/**
+ * Cumulative token and execution duration budgets enforced across iterative refinement loops.
+ */
+export interface RefinementLoopBudget {
+  /** Maximum cumulative tokens allowed across all iterations. */
+  maxTotalTokens?: number;
+
+  /** Maximum cumulative execution time in milliseconds across all iterations. */
+  maxTotalTimeMs?: number;
+}
+
+/**
+ * Structured result returned by a satisfaction evaluator in refinement loops.
+ */
+export interface SatisfactionResult {
+  /** Whether the sub-agent output meets satisfaction criteria to terminate the loop. */
+  satisfied: boolean;
+
+  /** Optional evaluation confidence or quality score (0.0 to 1.0). */
+  score?: number;
+
+  /** Actionable feedback instruction prompt for the next iteration (if not satisfied). */
+  feedback?: string;
+
+  /** Detailed diagnostic or rationale string for the evaluation decision. */
+  reason?: string;
+}
+
+/**
+ * Checkpoint snapshot of an in-flight iterative refinement loop.
+ */
+export interface RefinementLoopCheckpoint {
+  /** Checkpoint schema version. */
+  version: 1;
+
+  /** Monotonically increasing sequence number for optimistic concurrency. */
+  checkpointSequence: number;
+
+  /** Parent session identifier. */
+  parentSessionId: string;
+
+  /** Tenant identifier for multi-tenant isolation. */
+  tenantId?: string;
+
+  /** Target worker sub-agent name. */
+  agentName: string;
+
+  /** Last completed iteration index (1-based). */
+  iteration: number;
+
+  /** Maximum allowed iterations configured for the loop. */
+  maxIterations: number;
+
+  /** History of sub-agent results up to this iteration. */
+  history: SubAgentResult[];
+
+  /** Cumulative tokens consumed across iterations. */
+  totalTokens: number;
+
+  /** Cumulative execution duration across iterations in milliseconds. */
+  totalDurationMs: number;
+
+  /** Prompt message prepared for the next iteration. */
+  currentMessage: string;
+
+  /** Source indicating where the feedback for the next iteration originated. */
+  feedbackSource: 'provider' | 'evaluator' | 'default';
+
+  /** ISO timestamp when the checkpoint was saved. */
+  savedAt: string;
+
+  /** Custom state metadata dictionary. */
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -113,12 +198,56 @@ export interface RefinementLoopOptions {
   /** Maximum number of loop iterations allowed. Default: `3` */
   maxIterations?: number;
 
-  /** Target quality score threshold (0.0 to 1.0) to terminate the loop early. Default: `0.85` */
+  /** Target quality score threshold (0.0 to 1.0) to terminate early. Default: `0.85` */
   qualityThreshold?: number;
 
   /** Optional AbortSignal to cancel the refinement loop. */
   signal?: AbortSignal;
 
-  /** Custom satisfaction evaluator function to determine if the result meets loop termination criteria. */
-  satisfactionFn?: (result: SubAgentResult, iteration: number) => Promise<boolean> | boolean;
+  /** Cumulative token and duration budget guardrails across iterations. */
+  budget?: RefinementLoopBudget;
+
+  /** Optional persistence store for automatic loop checkpointing across iterations. */
+  stateStore?: StateStore;
+
+  /** Checkpoint TTL in seconds when saving to stateStore. Default: `86400` (24h). */
+  checkpointTtlSeconds?: number;
+
+  /** Checkpoint TTL in seconds when saving failed/aborted loop checkpoints. Default: `3600` (1h). */
+  errorCheckpointTtlSeconds?: number;
+
+  /** Lock TTL in seconds to prevent concurrent executions of the same loop. Default: `60` (1 min). */
+  lockTtlSeconds?: number;
+
+  /** Custom satisfaction evaluator returning boolean or structured SatisfactionResult. */
+  satisfactionFn?: (
+    result: SubAgentResult,
+    iteration: number,
+  ) => Promise<boolean | SatisfactionResult> | boolean | SatisfactionResult;
+}
+
+/**
+ * Result payload returned from an iterative refinement loop run.
+ */
+export interface RefinementLoopResult {
+  /** Final text response output generated upon loop termination. */
+  finalResponse: string;
+
+  /** Total number of refinement iterations executed. */
+  iterations: number;
+
+  /** Whether the loop satisfied the termination condition before maxIterations was reached. */
+  satisfied: boolean;
+
+  /** Chronological history of sub-agent results for each loop iteration. */
+  history: SubAgentResult[];
+
+  /** Specific reason why the refinement loop terminated. */
+  terminationReason: 'satisfied' | 'max_iterations' | 'budget_exceeded' | 'aborted' | 'error';
+
+  /** Cumulative tokens consumed across all loop iterations. */
+  totalTokens: number;
+
+  /** Cumulative execution duration across all loop iterations in milliseconds. */
+  totalDurationMs: number;
 }

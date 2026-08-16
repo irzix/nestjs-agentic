@@ -6,6 +6,7 @@ import {
   AgentResult,
   AgentRunner,
   InMemoryApprovalStore,
+  InMemoryStateStore,
   LocalToolProvider,
   ModelAdapter,
   ModelRequest,
@@ -20,7 +21,12 @@ import {
   CapabilityEscalationError,
   CapabilityNarrowingPolicy,
   MaxDelegationDepthExceededError,
+  MissingFeedbackProviderError,
   ParallelSubAgentRunner,
+  RefinementCheckpointConflictError,
+  RefinementCheckpointNotFoundError,
+  RefinementCheckpointVersionError,
+  RefinementLoopAlreadyRunningError,
   RefinementLoopRunner,
   SubAgentDelegator,
 } from '../src';
@@ -116,17 +122,28 @@ export async function runOrchestrationTests() {
         await new Promise((r) => setTimeout(r, 300));
       }
 
+      const usage = lastUserMsg.includes('Heavy Token Task')
+        ? { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 }
+        : { inputTokens: 50, outputTokens: 25, totalTokens: 75 };
+
+      if (lastUserMsg.includes('Slow Refinement Round')) {
+        await new Promise((r) => setTimeout(r, 120));
+      }
+
       if (lastUserMsg.includes('Refinement Feedback')) {
-        return { content: 'Draft v2 perfectly refined' };
+        return { content: 'Draft v2 perfectly refined', usage };
+      }
+      if (lastUserMsg.includes('Add executive summary')) {
+        return { content: 'Draft v3 with executive summary and perfect tone', usage };
       }
       if (lastUserMsg === 'Perform SubTask A') {
-        return { content: 'Task A Completed Successfully' };
+        return { content: 'Task A Completed Successfully', usage };
       }
       if (lastUserMsg === 'Perform SubTask B') {
-        return { content: 'Task B Completed Successfully' };
+        return { content: 'Task B Completed Successfully', usage };
       }
       if (lastUserMsg === 'Draft initial report') {
-        return { content: 'Draft v1 containing errors' };
+        return { content: 'Draft v1 containing errors', usage };
       }
 
       // Tool invocation triggers
@@ -136,9 +153,10 @@ export async function runOrchestrationTests() {
           return {
             content: 'Checking balance...',
             toolCalls: [{ id: 'call_bal_1', name: 'getBalance', args: {} }],
+            usage,
           };
         }
-        return { content: `Balance retrieved: ${lastToolMsg.content}` };
+        return { content: `Balance retrieved: ${lastToolMsg.content}`, usage };
       }
 
       if (lastUserMsg.includes('Call transferFunds')) {
@@ -149,9 +167,10 @@ export async function runOrchestrationTests() {
             toolCalls: [
               { id: 'call_tx_1', name: 'transferFunds', args: { amount: 500, recipient: 'vendor_x' } },
             ],
+            usage,
           };
         }
-        return { content: `Transfer result: ${lastToolMsg.content}` };
+        return { content: `Transfer result: ${lastToolMsg.content}`, usage };
       }
 
       if (lastUserMsg.includes('Call auditLogs')) {
@@ -160,12 +179,13 @@ export async function runOrchestrationTests() {
           return {
             content: 'Auditing logs...',
             toolCalls: [{ id: 'call_audit_1', name: 'auditLogs', args: {} }],
+            usage,
           };
         }
-        return { content: `Audit result: ${lastToolMsg.content}` };
+        return { content: `Audit result: ${lastToolMsg.content}`, usage };
       }
 
-      return { content: `Processed ${lastUserMsg}` };
+      return { content: `Processed ${lastUserMsg}`, usage };
     },
   };
 
@@ -243,7 +263,7 @@ export async function runOrchestrationTests() {
       { agentName: 'agent_b', message: 'Perform SubTask B' },
     ];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
 
     assert(result.successCount === 2, 'ParallelSubAgentRunner executed all tasks in parallel');
     assert(result.results.length === 2, 'Returned results for all parallel sub-agents');
@@ -268,7 +288,7 @@ export async function runOrchestrationTests() {
     };
     const tasks = [{ agentName: 'agent_slow', message: 'Hanging Task That Times Out' }];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
 
     assert(result.failedCount === 1, 'ParallelSubAgentRunner caught timeout error');
     assert(result.results[0].error!.includes('timed out'), 'Error message specifies timeout duration');
@@ -292,7 +312,7 @@ export async function runOrchestrationTests() {
     };
     const tasks = [{ agentName: 'agent_slow', message: 'Hanging Task' }];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
     assert(result.successCount === 1, 'ParallelSubAgentRunner recovered via fallback agent');
     assert(result.results[0].agentName.includes('fallback: fallback_agent'), 'Result identifies fallback agent');
     console.log('    ✓ Fallback agent recovery verified');
@@ -313,7 +333,7 @@ export async function runOrchestrationTests() {
       traceId: 'trace_p5',
       security: { userId: 'usr_owner', tenantId: 'tenant_acme' },
     };
-    const result = await loopRunner.runLoop(
+    const result = await loopRunner.run(
       parentContext,
       { agentName: 'writer_agent', message: 'Draft initial report' },
       () => 'Refinement Feedback: Fix typos and polish language',
@@ -367,7 +387,7 @@ export async function runOrchestrationTests() {
       { agentName: 'agent_a', message: 'Task 4' },
     ];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
     assert(result.successCount === 4, 'All tasks completed successfully under bounded concurrency');
     assert(peakConcurrent === 2, `Concurrency limit respected (peak: ${peakConcurrent}, expected: 2)`);
     console.log('    ✓ Bounded concurrency pool verified');
@@ -392,7 +412,7 @@ export async function runOrchestrationTests() {
       { agentName: 'agent_b', message: 'Task 2' },
     ];
 
-    const result = await parallelRunner.runParallel(parentContext, tasks);
+    const result = await parallelRunner.run(parentContext, tasks);
     assert(result.failedCount === 2, 'Pre-aborted signal cancels all tasks immediately');
     assert(result.results[0].error!.includes('aborted'), 'Failure reason notes cancellation');
 
@@ -406,7 +426,7 @@ export async function runOrchestrationTests() {
     const startTime = Date.now();
     setTimeout(() => inFlightController.abort(), 20);
 
-    const inFlightResult = await inFlightRunner.runParallel(parentContext, [
+    const inFlightResult = await inFlightRunner.run(parentContext, [
       { agentName: 'agent_slow', message: 'Hanging Task' },
     ]);
     const duration = Date.now() - startTime;
@@ -737,6 +757,535 @@ export async function runOrchestrationTests() {
     );
     assert(financeTools.transfers.length === 0, 'Side effect never executed');
     console.log('    ✓ Blacklist precedence over whitelist verified');
+  }
+
+  // =========================================================================
+  // TEST 17: Automatic Refinement Loop Checkpointing in StateStore
+  // =========================================================================
+  {
+    console.log('  - Test 17: Automatic Refinement Loop Checkpointing in StateStore');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: () => Promise.resolve(false), // Loop reaches maxIterations
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_ckpt_auto',
+      traceId: 'trace_ckpt_auto',
+      security: { tenantId: 'tenant_ckpt_1' },
+    };
+
+    const result = await loopRunner.run(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Draft initial report' },
+      () => 'Refinement Feedback: Improve further',
+    );
+
+    assert(result.iterations === 3, 'Executed all 3 iterations');
+    assert(result.satisfied === false, 'Termination unsatisfied as configured');
+    assert(result.terminationReason === 'max_iterations', 'Termination reason is max_iterations');
+
+    // Verify checkpoint exists in stateStore
+    const checkpoint = await loopRunner.getCheckpoint(parentContext, 'writer_agent');
+    assert(checkpoint !== null, 'Checkpoint was successfully saved in StateStore');
+    assert(checkpoint!.iteration === 2, 'Latest in-flight checkpoint was for iteration 2');
+    assert(checkpoint!.history.length === 2, 'Checkpoint contains history up to iteration 2');
+    assert(checkpoint!.totalTokens > 0, 'Checkpoint contains accumulated token usage');
+    console.log('    ✓ Automatic refinement checkpointing verified');
+  }
+
+  // =========================================================================
+  // TEST 18: Resume Refinement Loop from Checkpoint Across Restarts
+  // =========================================================================
+  {
+    console.log('  - Test 18: Resume Refinement Loop from Checkpoint Across Restarts');
+    const stateStore = new InMemoryStateStore();
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_resume_1',
+      traceId: 'trace_resume',
+      security: { tenantId: 'tenant_resume' },
+    };
+
+    // 1. Instance A executes iteration 1 and crashes
+    const instanceA = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    // Run iteration 1 and simulate interruption
+    await instanceA.run(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Draft initial report' },
+      () => 'Refinement Feedback: Improve language',
+    );
+
+    const savedCheckpoint = await instanceA.getCheckpoint(parentContext, 'writer_agent');
+    assert(savedCheckpoint !== null, 'Saved checkpoint found');
+
+    // 2. Instance B boots up with fresh runner and resumes from checkpoint
+    const instanceB = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: (res) => Promise.resolve(res.response.includes('perfectly refined')),
+    });
+
+    const resumedResult = await instanceB.resume(
+      parentContext,
+      savedCheckpoint!,
+      () => 'Refinement Feedback: Final polish',
+    );
+
+    assert(resumedResult.satisfied === true, 'Resumed loop satisfied quality goal');
+    assert(resumedResult.iterations >= 2, 'Resumed loop finished remaining iterations');
+    assert(resumedResult.finalResponse.includes('perfectly refined'), 'Final output matches expected quality');
+    console.log('    ✓ Resumed refinement loop from checkpoint verified');
+  }
+
+  // =========================================================================
+  // TEST 19: Cumulative Token Budget Enforcement (maxTotalTokens)
+  // =========================================================================
+  {
+    console.log('  - Test 19: Cumulative Token Budget Enforcement (maxTotalTokens)');
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 5,
+      budget: {
+        maxTotalTokens: 100, // 75 tokens per iteration -> exceeds limit on iteration 2
+      },
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_token_budget',
+      traceId: 'trace_tbudget',
+      security: { tenantId: 'tenant_budget' },
+    };
+
+    const result = await loopRunner.run(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Draft initial report' },
+      () => 'Refinement Feedback: Try again',
+    );
+
+    assert(result.terminationReason === 'budget_exceeded', 'Loop terminated with budget_exceeded reason');
+    assert(result.satisfied === false, 'Loop not satisfied due to budget exhaustion');
+    assert(result.totalTokens >= 100, 'Total tokens exceeded configured budget limit');
+    assert(result.iterations < 5, 'Loop halted before maxIterations');
+    console.log('    ✓ Token budget limit enforcement verified');
+  }
+
+  // =========================================================================
+  // TEST 20: Cumulative Duration Budget Enforcement (maxTotalTimeMs)
+  // =========================================================================
+  {
+    console.log('  - Test 20: Cumulative Duration Budget Enforcement (maxTotalTimeMs)');
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 5,
+      budget: {
+        maxTotalTimeMs: 150, // 120ms per round -> exceeds on round 2
+      },
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_time_budget',
+      traceId: 'trace_time_budget',
+      security: { tenantId: 'tenant_budget' },
+    };
+
+    const result = await loopRunner.run(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Slow Refinement Round 1' },
+      () => 'Slow Refinement Round 2',
+    );
+
+    assert(result.terminationReason === 'budget_exceeded', 'Terminated due to duration budget limit');
+    assert(result.totalDurationMs >= 150, 'Total duration recorded accurately');
+    console.log('    ✓ Duration budget limit enforcement verified');
+  }
+
+  // =========================================================================
+  // TEST 21: Structured SatisfactionResult with Dynamic Evaluator Feedback
+  // =========================================================================
+  {
+    console.log('  - Test 21: Structured SatisfactionResult with Dynamic Evaluator Feedback');
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      satisfactionFn: (res, iter) => {
+        if (iter === 1) {
+          return {
+            satisfied: false,
+            score: 0.65,
+            feedback: 'Add executive summary', // Dynamic prompt for iteration 2
+            reason: 'Missing executive summary section',
+          };
+        }
+        return {
+          satisfied: true,
+          score: 0.98,
+          reason: 'Complete with executive summary',
+        };
+      },
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_eval_feedback',
+      traceId: 'trace_eval_f',
+      security: { tenantId: 'tenant_eval' },
+    };
+
+    const result = await loopRunner.run(parentContext, {
+      agentName: 'writer_agent',
+      message: 'Draft initial report',
+    });
+
+    assert(result.satisfied === true, 'Loop satisfied via evaluator');
+    assert(result.terminationReason === 'satisfied', 'Termination reason is satisfied');
+    assert(result.iterations === 2, 'Completed exactly in 2 iterations');
+    assert(result.finalResponse.includes('executive summary'), 'Iteration 2 used dynamic evaluator feedback');
+    console.log('    ✓ Structured SatisfactionResult dynamic feedback verified');
+  }
+
+  // =========================================================================
+  // TEST 22: Automatic Checkpoint Cleanup upon Satisfied Completion
+  // =========================================================================
+  {
+    console.log('  - Test 22: Automatic Checkpoint Cleanup upon Satisfied Completion');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: () => Promise.resolve(true), // Satisfied immediately on round 1
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_ckpt_clean',
+      traceId: 'trace_clean',
+      security: { tenantId: 'tenant_clean' },
+    };
+
+    const result = await loopRunner.run(parentContext, {
+      agentName: 'writer_agent',
+      message: 'Draft initial report',
+    });
+
+    assert(result.satisfied === true, 'Loop completed with satisfaction');
+    const checkpoint = await loopRunner.getCheckpoint(parentContext, 'writer_agent');
+    assert(checkpoint === null, 'Checkpoint was deleted from StateStore upon satisfied completion');
+    console.log('    ✓ Checkpoint cleanup on completion verified');
+  }
+
+  // =========================================================================
+  // TEST 23: Checkpoint Schema Version Validation
+  // =========================================================================
+  {
+    console.log('  - Test 23: Checkpoint Schema Version Validation');
+    const loopRunner = new RefinementLoopRunner(runner);
+    const parentContext: AgentContext = {
+      sessionId: 'sess_version_err',
+      traceId: 'trace_v_err',
+      security: { tenantId: 'tenant_v' },
+    };
+
+    const invalidCheckpoint = {
+      version: 99, // Incompatible version
+      parentSessionId: 'sess_version_err',
+      agentName: 'writer_agent',
+      iteration: 1,
+      maxIterations: 3,
+      history: [],
+      totalTokens: 50,
+      totalDurationMs: 100,
+      currentMessage: 'msg',
+      savedAt: new Date().toISOString(),
+    } as never;
+
+    let versionErrorCaught = false;
+    try {
+      await loopRunner.resume(parentContext, invalidCheckpoint);
+    } catch (err) {
+      if (err instanceof RefinementCheckpointVersionError) {
+        versionErrorCaught = true;
+        assert(err.version === 99, 'Caught invalid version');
+        assert(err.supportedVersion === 1, 'Expected version 1');
+      }
+    }
+
+    assert(versionErrorCaught, 'RefinementCheckpointVersionError thrown on invalid version');
+    console.log('    ✓ Checkpoint schema version validation verified');
+  }
+
+  // =========================================================================
+  // TEST 24: Distributed Concurrency Lock Contention (RefinementLoopAlreadyRunningError)
+  // =========================================================================
+  {
+    console.log('  - Test 24: Distributed Concurrency Lock Contention');
+    const stateStore = new InMemoryStateStore();
+    const runnerA = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: () => new Promise((r) => setTimeout(() => r(false), 80)),
+    });
+    const runnerB = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_lock_race',
+      traceId: 'trace_lock_race',
+      security: { tenantId: 'tenant_race' },
+    };
+
+    // Start instance A (simulating long-running in-flight refinement execution)
+    const runAPromise = runnerA.run(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Slow Draft initial report' },
+      () => 'Refinement Feedback: Continue',
+    );
+
+    // Give instance A a tick to acquire the distributed lease lock
+    await new Promise((r) => setTimeout(r, 15));
+
+    // Attempt to start instance B concurrently for the same session and agent
+    let lockErrorCaught = false;
+    try {
+      await runnerB.run(parentContext, {
+        agentName: 'writer_agent',
+        message: 'Draft initial report',
+      });
+    } catch (err) {
+      if (err instanceof RefinementLoopAlreadyRunningError) {
+        lockErrorCaught = true;
+        assert(err.sessionId === 'sess_lock_race', 'Error matches session ID');
+        assert(err.agentName === 'writer_agent', 'Error matches agent name');
+      }
+    }
+
+    assert(lockErrorCaught, 'RefinementLoopAlreadyRunningError thrown on concurrent execution');
+    await runAPromise;
+    console.log('    ✓ Concurrency lock contention protection verified');
+  }
+
+  // =========================================================================
+  // TEST 25: Dynamic Token Budget Downscaling Passed to Sub-Agent Limits
+  // =========================================================================
+  {
+    console.log('  - Test 25: Dynamic Token Budget Downscaling');
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      budget: {
+        maxTotalTokens: 100, // Round 1 uses 75, round 2 gets 25 max
+      },
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_dyn_budget',
+      traceId: 'trace_dyn_b',
+      security: { tenantId: 'tenant_budget' },
+    };
+
+    const res = await loopRunner.run(parentContext, {
+      agentName: 'writer_agent',
+      message: 'Draft initial report',
+    });
+
+    assert(res.terminationReason === 'budget_exceeded', 'Terminated safely with budget_exceeded');
+    assert(res.totalTokens >= 100, 'Total tokens tracked correctly');
+    console.log('    ✓ Dynamic token budget downscaling verified');
+  }
+
+  // =========================================================================
+  // TEST 26: Missing Feedback Provider Validation on Resume (MissingFeedbackProviderError)
+  // =========================================================================
+  {
+    console.log('  - Test 26: Missing Feedback Provider Validation on Resume');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 3,
+      stateStore,
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_feedback_source_chk',
+      traceId: 'trace_f_src',
+      security: { tenantId: 'tenant_f_src' },
+    };
+
+    await loopRunner.run(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Draft initial report' },
+      () => 'Custom Provider Feedback',
+    );
+
+    const checkpoint = await loopRunner.getCheckpoint(parentContext, 'writer_agent');
+    assert(checkpoint !== null, 'Checkpoint exists');
+    assert(checkpoint!.feedbackSource === 'provider', 'feedbackSource marked as provider');
+
+    let missingProviderCaught = false;
+    try {
+      // Attempt resume without providing feedbackProviderFn
+      await loopRunner.resume(parentContext, checkpoint!);
+    } catch (err) {
+      if (err instanceof MissingFeedbackProviderError) {
+        missingProviderCaught = true;
+      }
+    }
+
+    assert(missingProviderCaught, 'MissingFeedbackProviderError thrown on resume without provider');
+    console.log('    ✓ Missing feedback provider validation on resume verified');
+  }
+
+  // =========================================================================
+  // TEST 27: Monotonic Checkpoint Sequence & Error TTL
+  // =========================================================================
+  {
+    console.log('  - Test 27: Monotonic Checkpoint Sequence & Error TTL');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, {
+      maxIterations: 4,
+      stateStore,
+      errorCheckpointTtlSeconds: 1800,
+      satisfactionFn: () => Promise.resolve(false),
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_seq_test',
+      traceId: 'trace_seq',
+      security: { tenantId: 'tenant_seq' },
+    };
+
+    await loopRunner.run(
+      parentContext,
+      { agentName: 'writer_agent', message: 'Draft initial report' },
+      () => 'Refinement Feedback: Round 2',
+    );
+
+    const checkpoint = await loopRunner.getCheckpoint(parentContext, 'writer_agent');
+    assert(checkpoint !== null, 'Checkpoint exists');
+    assert(checkpoint!.checkpointSequence >= 2, 'checkpointSequence is monotonically positive');
+    console.log('    ✓ Checkpoint sequence incrementation verified');
+  }
+
+  // =========================================================================
+  // TEST 28: Atomic Lock Acquisition via StateStore.setIfNotExists
+  // =========================================================================
+  {
+    console.log('  - Test 28: Atomic Lock Acquisition via StateStore.setIfNotExists');
+    const stateStore = new InMemoryStateStore();
+    const key = 'test:atomic:lock';
+
+    const first = await stateStore.setIfNotExists(key, 'lock_1', 60);
+    assert(first === true, 'First setIfNotExists succeeds');
+
+    const second = await stateStore.setIfNotExists(key, 'lock_2', 60);
+    assert(second === false, 'Second setIfNotExists fails atomically');
+
+    await stateStore.delete(key);
+    const third = await stateStore.setIfNotExists(key, 'lock_3', 60);
+    assert(third === true, 'setIfNotExists succeeds after key deletion');
+    console.log('    ✓ Atomic setIfNotExists behavior verified');
+  }
+
+  // =========================================================================
+  // TEST 29: Safe Lock Release (Owner Verification)
+  // =========================================================================
+  {
+    console.log('  - Test 29: Safe Lock Release (Owner Verification)');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, { stateStore });
+    const parentContext: AgentContext = {
+      sessionId: 'sess_safe_release',
+      traceId: 'trace_safe_rel',
+      security: { tenantId: 'tenant_rel' },
+    };
+
+    // Simulate process A holding lock
+    const lockKey = `agentic:tenant_rel:refinement:sess_safe_release:writer_agent:lock`;
+    await stateStore.set(lockKey, 'owner_lock_A', 60);
+
+    // Simulate process B attempting to release process A's lock with wrong lockId
+    await (loopRunner as unknown as { releaseLock: (ctx: AgentContext, agent: string, lockId: string) => Promise<void> })
+      .releaseLock(parentContext, 'writer_agent', 'wrong_lock_B');
+
+    const currentLock = await stateStore.get<string>(lockKey);
+    assert(currentLock === 'owner_lock_A', 'Process A lock was NOT deleted by Process B');
+
+    // Process A releases with correct lockId
+    await (loopRunner as unknown as { releaseLock: (ctx: AgentContext, agent: string, lockId: string) => Promise<void> })
+      .releaseLock(parentContext, 'writer_agent', 'owner_lock_A');
+
+    const releasedLock = await stateStore.get<string>(lockKey);
+    assert(releasedLock === null, 'Process A lock was successfully deleted by owner');
+    console.log('    ✓ Safe owner-verified lock release verified');
+  }
+
+  // =========================================================================
+  // TEST 30: OCC Sequence Enforcement (RefinementCheckpointConflictError)
+  // =========================================================================
+  {
+    console.log('  - Test 30: OCC Sequence Enforcement (RefinementCheckpointConflictError)');
+    const stateStore = new InMemoryStateStore();
+    const loopRunner = new RefinementLoopRunner(runner, { stateStore });
+    const parentContext: AgentContext = {
+      sessionId: 'sess_occ_test',
+      traceId: 'trace_occ',
+      security: { tenantId: 'tenant_occ' },
+    };
+
+    const checkpointKey = `agentic:tenant_occ:refinement:sess_occ_test:writer_agent:checkpoint`;
+
+    // Save checkpoint sequence 5
+    await stateStore.set(checkpointKey, {
+      version: 1,
+      checkpointSequence: 5,
+      parentSessionId: 'sess_occ_test',
+      agentName: 'writer_agent',
+      iteration: 2,
+      maxIterations: 3,
+      history: [],
+      totalTokens: 100,
+      totalDurationMs: 200,
+      currentMessage: 'msg',
+      feedbackSource: 'default',
+      savedAt: new Date().toISOString(),
+    });
+
+    // Attempt to write an older or equal sequence (e.g. sequence 4)
+    let conflictCaught = false;
+    try {
+      await (loopRunner as unknown as {
+        saveCheckpoint: (
+          key: string,
+          ctx: AgentContext,
+          agent: string,
+          state: unknown,
+        ) => Promise<void>;
+      }).saveCheckpoint(checkpointKey, parentContext, 'writer_agent', {
+        iteration: 2,
+        maxIter: 3,
+        history: [],
+        accumulatedTokens: 80,
+        accumulatedDurationMs: 150,
+        currentMessage: 'stale msg',
+        feedbackSource: 'default',
+        sequence: 4, // Stale sequence
+      });
+    } catch (err) {
+      if (err instanceof RefinementCheckpointConflictError) {
+        conflictCaught = true;
+        assert(err.attemptedSequence === 4, 'Attempted sequence matches 4');
+        assert(err.currentSequence === 5, 'Current sequence matches 5');
+      }
+    }
+
+    assert(conflictCaught, 'RefinementCheckpointConflictError thrown on stale sequence write');
+    console.log('    ✓ OCC checkpoint sequence conflict detection verified');
   }
 
   console.log('🎉 All Orchestration Unit & Security Tests Passed!\n');

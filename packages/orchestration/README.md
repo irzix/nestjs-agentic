@@ -82,7 +82,7 @@ const parallelRunner = new ParallelSubAgentRunner(runner, {
   fallbackAgentName: 'general_assistant', // Fallback on persistent failure
 });
 
-const runResult = await parallelRunner.runParallel(parentContext, [
+const runResult = await parallelRunner.run(parentContext, [
   { agentName: 'security_reviewer', message: codeDiffPrompt },
   { agentName: 'architecture_reviewer', message: codeDiffPrompt },
   { agentName: 'quality_reviewer', message: codeDiffPrompt },
@@ -92,32 +92,51 @@ console.log(`Completed: ${runResult.successCount} succeeded, ${runResult.failedC
 console.log('Synthesized Response:\n', runResult.combinedResponse);
 ```
 
-### 3. Supervisor-Worker Iterative Refinement Loop (`RefinementLoopRunner`)
+### 3. Resumable, Budget-Aware Refinement Loops (`RefinementLoopRunner`)
 
 ```typescript
-import { RefinementLoopRunner, SubAgentResult } from '@nestjs-agentic/orchestration';
+import { RefinementLoopRunner, SatisfactionResult, SubAgentResult } from '@nestjs-agentic/orchestration';
+import { RedisStateStore } from '@nestjs-agentic/core';
 
 const refinementRunner = new RefinementLoopRunner(runner, {
-  maxIterations: 3,
+  maxIterations: 4,
   qualityThreshold: 0.90,
-  satisfactionFn: async (result: SubAgentResult, iteration: number) => {
-    return result.response.includes('QUALITY_GATE: PASSED');
+  // Persistent checkpointing across process crashes
+  stateStore: new RedisStateStore(redisClient),
+  checkpointTtlSeconds: 86400,
+  // Cumulative budget guardrails across iterations
+  budget: {
+    maxTotalTokens: 25000,
+    maxTotalTimeMs: 60000,
+  },
+  // Dynamic evaluator providing actionable feedback for the next round
+  satisfactionFn: async (result: SubAgentResult, iteration: number): Promise<SatisfactionResult> => {
+    if (result.response.includes('QUALITY_GATE: PASSED')) {
+      return { satisfied: true, score: 0.95 };
+    }
+    return {
+      satisfied: false,
+      score: 0.60,
+      feedback: `Iteration ${iteration} Feedback: Please add error-handling examples and benchmark statistics.`,
+      reason: 'Missing operational error-handling section',
+    };
   },
 });
 
-const loopResult = await refinementRunner.runLoop(
-  parentContext,
-  {
-    agentName: 'copywriter_agent',
-    message: 'Draft landing page value proposition',
-  },
-  async (lastResult: SubAgentResult, iteration: number) => {
-    return `Iteration ${iteration} Feedback: Make the headline punchier and include performance metrics.`;
-  },
-);
+// Run loop with automatic checkpointing
+const loopResult = await refinementRunner.run(parentContext, {
+  agentName: 'copywriter_agent',
+  message: 'Draft technical architecture RFC',
+});
 
-console.log(`Finished in ${loopResult.iterations} iterations (Satisfied: ${loopResult.satisfied})`);
-console.log('Final Result:\n', loopResult.finalResponse);
+console.log(`Finished: ${loopResult.terminationReason} in ${loopResult.iterations} iterations (Tokens: ${loopResult.totalTokens})`);
+
+// Or recover and resume an in-flight loop across process restarts:
+const checkpoint = await refinementRunner.getCheckpoint(parentContext, 'copywriter_agent');
+if (checkpoint) {
+  const resumedResult = await refinementRunner.resume(parentContext, checkpoint);
+  console.log('Resumed Output:', resumedResult.finalResponse);
+}
 ```
 
 ---
