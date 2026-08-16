@@ -61,7 +61,7 @@ export async function runOrchestrationTests() {
 
   const mockAdapter = {
     async execute(input: any) {
-      if (input.message.includes('Hanging Task')) {
+      if (input.sessionId?.includes('agent_slow') && input.message.includes('Hanging Task')) {
         await new Promise((r) => setTimeout(r, 300));
       }
       if (input.message.includes('Refinement Feedback')) {
@@ -177,6 +177,88 @@ export async function runOrchestrationTests() {
     assert(result.iterations >= 1, 'Test 5b: RefinementLoopRunner recorded loop iteration count');
   } catch (err: any) {
     assert(false, 'Test 5: RefinementLoopRunner Iterative Loop', err.message);
+  }
+
+  // TEST 6: ParallelSubAgentRunner Bounded Concurrency
+  try {
+    let currentConcurrent = 0;
+    let peakConcurrent = 0;
+
+    const concurrentAdapter = {
+      async execute(input: any) {
+        currentConcurrent++;
+        if (currentConcurrent > peakConcurrent) {
+          peakConcurrent = currentConcurrent;
+        }
+        await new Promise((r) => setTimeout(r, 30));
+        currentConcurrent--;
+        return { sessionId: input.sessionId, output: 'done', toolCalls: [] };
+      },
+    };
+
+    const concurrentRunner = new AgentRunner(
+      [agentA, agentB, agentSubA, agentSlow],
+      concurrentAdapter as any,
+      { defaultModel: { provider: 'mock', model: 'mock-model' } },
+      localToolProvider,
+      mockModuleRef,
+    );
+
+    const parallelRunner = new ParallelSubAgentRunner(concurrentRunner, { maxConcurrency: 2 });
+    const parentContext = { userId: 'usr_owner', tenantId: 'tenant_acme' };
+    const tasks = [
+      { agentName: 'agent_a', message: 'Task 1' },
+      { agentName: 'agent_b', message: 'Task 2' },
+      { agentName: 'sub_agent_a', message: 'Task 3' },
+      { agentName: 'agent_a', message: 'Task 4' },
+    ];
+
+    const result = await parallelRunner.runParallel('sess_p6', parentContext, tasks);
+    assert(result.successCount === 4, 'Test 6a: All tasks completed successfully under bounded concurrency');
+    assert(peakConcurrent === 2, `Test 6b: Concurrency limit respected (peak: ${peakConcurrent}, expected: 2)`);
+  } catch (err: any) {
+    assert(false, 'Test 6: ParallelSubAgentRunner Bounded Concurrency', err.message);
+  }
+
+  // TEST 7: ParallelSubAgentRunner AbortSignal Cancellation
+  try {
+    const controller = new AbortController();
+    controller.abort();
+
+    const parallelRunner = new ParallelSubAgentRunner(runner, { signal: controller.signal });
+    const parentContext = { userId: 'usr_owner', tenantId: 'tenant_acme' };
+    const tasks = [
+      { agentName: 'agent_a', message: 'Task 1' },
+      { agentName: 'agent_b', message: 'Task 2' },
+    ];
+
+    const result = await parallelRunner.runParallel('sess_p7', parentContext, tasks);
+    assert(result.failedCount === 2, 'Test 7a: Pre-aborted signal cancels all tasks immediately');
+    assert(result.results[0].error!.includes('aborted'), 'Test 7b: Failure reason notes cancellation');
+
+    // 7c. Mid-execution in-flight cancellation
+    const inFlightController = new AbortController();
+    const inFlightRunner = new ParallelSubAgentRunner(runner, {
+      signal: inFlightController.signal,
+      timeoutMs: 1000,
+    });
+
+    const startTime = Date.now();
+    // Schedule abort after 20ms while 300ms hanging task is in-flight
+    setTimeout(() => inFlightController.abort(), 20);
+
+    const inFlightResult = await inFlightRunner.runParallel('sess_p7_inflight', parentContext, [
+      { agentName: 'agent_slow', message: 'Hanging Task' },
+    ]);
+    const duration = Date.now() - startTime;
+
+    assert(inFlightResult.failedCount === 1, 'Test 7c: In-flight abort cancelled running sub-agent');
+    assert(
+      duration < 200,
+      `Test 7d: Cancelled immediately in ${duration}ms without waiting for 1000ms timeout`,
+    );
+  } catch (err: any) {
+    assert(false, 'Test 7: ParallelSubAgentRunner AbortSignal Cancellation', err.message);
   }
 
   console.log(`\n  📊 Orchestration Test Results: ${passed} passed, ${failed} failed.\n`);

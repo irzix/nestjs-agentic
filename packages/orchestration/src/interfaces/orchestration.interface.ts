@@ -12,6 +12,9 @@ export interface SubAgentTask {
 
   /** Task-specific security context overrides or metadata. */
   context?: Partial<ParentSecurityContext>;
+
+  /** Optional AbortSignal to cancel this sub-agent execution. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -58,6 +61,12 @@ export interface ParallelRunnerOptions {
   /** Number of retries per sub-agent upon timeout or execution failure. Default: `1` */
   retriesPerSubAgent?: number;
 
+  /** Maximum number of sub-agents allowed to run concurrently. Default: unlimited */
+  maxConcurrency?: number;
+
+  /** Optional AbortSignal to cancel all running and queued sub-agents. */
+  signal?: AbortSignal;
+
   /** Name of fallback sub-agent to invoke if primary sub-agent fails all retries. */
   fallbackAgentName?: string;
 
@@ -74,6 +83,9 @@ export interface RefinementLoopOptions {
 
   /** Target quality score threshold (0.0 to 1.0) to terminate the loop early. Default: `0.85` */
   qualityThreshold?: number;
+
+  /** Optional AbortSignal to cancel the refinement loop. */
+  signal?: AbortSignal;
 
   /** Custom satisfaction evaluator function to determine if the result meets loop termination criteria. */
   satisfactionFn?: (result: SubAgentResult, iteration: number) => Promise<boolean> | boolean;

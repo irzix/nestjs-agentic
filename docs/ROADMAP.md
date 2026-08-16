@@ -82,11 +82,10 @@ Goal: make executions safe to pause, recover, inspect, and operate in production
 
 Goal: build multi-agent coordination on the same guarantees as single-agent execution.
 
-- [x] Cancellation-aware fan-out and bounded parallel execution (`maxConcurrency` in `ParallelSubAgentRunner`).
+- [x] Cancellation-aware fan-out and bounded parallel execution (`maxConcurrency` in `ParallelSubAgentRunner`) ([#35](https://github.com/irzix/nestjs-agentic/issues/35)).
 - [ ] Implement MetaGPT Standard Operating Procedures (SOPs) and Multi-Agent Debate Consensus ([#53](https://github.com/irzix/nestjs-agentic/issues/53), [#36](https://github.com/irzix/nestjs-agentic/issues/36)).
 - [ ] Make refinement loops budget-aware, checkpointed, and resumable ([#37](https://github.com/irzix/nestjs-agentic/issues/37)).
 - [ ] Preserve tenant identity and support capability narrowing in sub-agent delegation ([#38](https://github.com/irzix/nestjs-agentic/issues/38)).
-- [ ] Bounded concurrency and cancellation-aware fan-out join behavior ([#35](https://github.com/irzix/nestjs-agentic/issues/35)).
 - [ ] Resilient error recovery and evaluator-driven sub-agent selection.
 
 ---
