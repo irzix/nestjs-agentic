@@ -2,7 +2,12 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import { APPROVAL_STORE, IDEMPOTENCY_STORE, POLICY_INSTANCES } from '../constants';
-import { ApprovalToolNotFoundError, PolicyNotRegisteredError } from '../errors';
+import {
+  ApprovalToolNotFoundError,
+  ExecutionCancelledError,
+  ExecutionLimitExceededError,
+  PolicyNotRegisteredError,
+} from '../errors';
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
 import { auditEnvelope } from '../interfaces';
@@ -112,7 +117,11 @@ export class LocalToolProvider {
     agentContext: AgentContext,
   ): Promise<ToolExecutionResult> {
     if (agentContext.signal?.aborted) {
-      return { success: false, status: 'denied', reason: 'Execution cancelled by AbortSignal' };
+      throw new ExecutionCancelledError();
+    }
+
+    if (agentContext.deadline && Date.now() > agentContext.deadline.getTime()) {
+      throw new ExecutionLimitExceededError('timeout', 0);
     }
 
     const tool = this.discoverToolByName(toolSetTokensOrInstances, toolName);
@@ -205,7 +214,11 @@ export class LocalToolProvider {
         toolCallId?: string;
       }): Promise<ToolExecutionResult> => {
         if (agentContext.signal?.aborted) {
-          return { success: false, status: 'denied', reason: 'Execution cancelled by AbortSignal' };
+          throw new ExecutionCancelledError();
+        }
+
+        if (agentContext.deadline && Date.now() > agentContext.deadline.getTime()) {
+          throw new ExecutionLimitExceededError('timeout', 0);
         }
 
         const idempotencyKey =

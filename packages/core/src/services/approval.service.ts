@@ -98,7 +98,25 @@ export class ApprovalService {
       throw new ExecutionCancelledError();
     }
 
-    const claimed = await this.store.claim(approvalId);
+    let abortHandler: (() => void) | undefined;
+    let claimed: PendingApproval | null;
+
+    if (options?.signal) {
+      const abortPromise = new Promise<never>((_, reject) => {
+        abortHandler = () => reject(new ExecutionCancelledError());
+        options.signal!.addEventListener('abort', abortHandler, { once: true });
+      });
+
+      try {
+        claimed = await Promise.race([this.store.claim(approvalId), abortPromise]);
+      } finally {
+        if (abortHandler) {
+          options.signal.removeEventListener('abort', abortHandler);
+        }
+      }
+    } else {
+      claimed = await this.store.claim(approvalId);
+    }
 
     if (!claimed) {
       throw new ApprovalNotFoundError(approvalId);

@@ -235,6 +235,7 @@ export async function runLocalToolProviderTests() {
 
   // TEST 6: Tool Cancellation and Deadline Propagation
   try {
+    const { ExecutionCancelledError, ExecutionLimitExceededError } = await import('../src');
     const controller = new AbortController();
     const deadline = new Date(Date.now() + 5000);
     const cancellableContext: AgentContext = {
@@ -252,6 +253,23 @@ export async function runLocalToolProviderTests() {
           isAborted: ctx.signal?.aborted ?? false,
           hasDeadline: Boolean(ctx.deadline),
         };
+      }
+
+      @Tool({ description: 'Long running async tool' })
+      async longRunningTask(@Context() ctx: AgentContext) {
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => resolve('completed'), 200);
+          if (ctx.signal) {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer);
+                reject(new ExecutionCancelledError('Tool aborted in-flight'));
+              },
+              { once: true },
+            );
+          }
+        });
       }
     }
 
@@ -272,17 +290,73 @@ export async function runLocalToolProviderTests() {
 
     // Abort controller
     controller.abort();
-    const exec2 = await tool?.execute({ args: {} });
-    assert(exec2?.success === false, 'Test 6d: Aborted signal blocked tool execution');
-    assert((exec2 as any)?.status === 'denied', 'Test 6e: Aborted tool returns denied status');
 
-    const approvedExec = await cancelProvider.invokeApprovedTool(
-      [new CancellableTools()],
-      'checkCancellation',
-      {},
-      cancellableContext,
+    let abortedError: unknown;
+    try {
+      await tool?.execute({ args: {} });
+    } catch (err) {
+      abortedError = err;
+    }
+    assert(
+      abortedError instanceof ExecutionCancelledError,
+      'Test 6d: Aborted signal throws ExecutionCancelledError uniformly',
     );
-    assert(approvedExec.success === false, 'Test 6f: invokeApprovedTool respects aborted signal');
+
+    let approvedErr: unknown;
+    try {
+      await cancelProvider.invokeApprovedTool(
+        [new CancellableTools()],
+        'checkCancellation',
+        {},
+        cancellableContext,
+      );
+    } catch (err) {
+      approvedErr = err;
+    }
+    assert(
+      approvedErr instanceof ExecutionCancelledError,
+      'Test 6e: invokeApprovedTool throws ExecutionCancelledError when aborted',
+    );
+
+    // Deadline expiry test
+    const expiredContext: AgentContext = {
+      ...agentContext,
+      deadline: new Date(Date.now() - 1000), // In the past
+    };
+    const expiredTools = cancelProvider.buildTools([new CancellableTools()], expiredContext, 'TestAgent');
+    let deadlineErr: unknown;
+    try {
+      await expiredTools[0]?.execute({ args: {} });
+    } catch (err) {
+      deadlineErr = err;
+    }
+    assert(
+      deadlineErr instanceof ExecutionLimitExceededError,
+      'Test 6f: Expired deadline throws ExecutionLimitExceededError',
+    );
+
+    // In-flight async tool cancellation test
+    const inFlightCtrl = new AbortController();
+    const inFlightCtx: AgentContext = {
+      ...agentContext,
+      signal: inFlightCtrl.signal,
+    };
+    const inFlightTools = cancelProvider.buildTools([new CancellableTools()], inFlightCtx, 'TestAgent');
+    const longTool = inFlightTools.find((t) => t.name === 'longRunningTask');
+
+    const longPromise = longTool?.execute({ args: {} });
+    setTimeout(() => inFlightCtrl.abort(), 20);
+
+    let inFlightErr: unknown;
+    try {
+      await longPromise;
+    } catch (err) {
+      inFlightErr = err;
+    }
+    assert(
+      inFlightErr instanceof ExecutionCancelledError,
+      'Test 6g: In-flight async tool aborts immediately on signal abort event',
+    );
   } catch (err: any) {
     assert(false, 'Test 6: Tool Cancellation and Deadline Propagation', err.message);
   }
