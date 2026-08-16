@@ -45,9 +45,6 @@ const CORE_PROVIDERS: Provider[] = [
   AgentRunner,
   ApprovalService,
   AuditTrail,
-  { provide: APPROVAL_STORE, useClass: InMemoryApprovalStore },
-  { provide: SESSION_STORE, useClass: InMemorySessionStore },
-  { provide: IDEMPOTENCY_STORE, useClass: InMemoryIdempotencyStore },
 ];
 
 @Module({})
@@ -55,12 +52,16 @@ export class AgenticModule {
   /**
    * Registers core services globally. Call once in the root AppModule.
    * Registers default in-memory stores which can be overridden per-module
-   * via { provide: APPROVAL_STORE, useClass: RedisApprovalStore } or stateStore in options.
+   * via options or custom tokens.
    */
   static forRoot(options: AgenticModuleOptions): DynamicModule {
     const stateStoreProvider: Provider = options.stateStore
       ? { provide: STATE_STORE, useValue: options.stateStore }
       : { provide: STATE_STORE, useClass: InMemoryStateStore };
+
+    const approvalStoreProvider: Provider = options.approvalStore
+      ? { provide: APPROVAL_STORE, useValue: options.approvalStore }
+      : { provide: APPROVAL_STORE, useClass: InMemoryApprovalStore };
 
     const sessionStoreProvider: Provider = options.sessionStore
       ? { provide: SESSION_STORE, useValue: options.sessionStore }
@@ -93,6 +94,7 @@ export class AgenticModule {
       providers: [
         { provide: AGENTIC_OPTIONS, useValue: options },
         stateStoreProvider,
+        approvalStoreProvider,
         sessionStoreProvider,
         idempotencyStoreProvider,
         ...modelAdapterProviders,

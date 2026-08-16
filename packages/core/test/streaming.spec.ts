@@ -86,25 +86,41 @@ export async function runStreamingTests() {
       events.push(event);
     }
 
+    const ev0 = events[0];
+    const ev1 = events[1];
+    const ev2 = events[2];
+    const ev3 = events[3];
+
     assert(events.length >= 6, 'Test 1a: Stream emitted complete ReAct lifecycle event sequence');
-    assert(events[0].type === 'tool_start', 'Test 1b: First event is "tool_start" for backwards compatibility');
-    assert(events[1].type === 'action_call', 'Test 1c: Second event is ReAct "action_call"');
-    assert((events[1] as any).toolName === 'mockTool', 'Test 1d: "action_call" carries toolName');
-    assert(events[2].type === 'tool_result', 'Test 1e: Third event is "tool_result"');
-    assert(events[3].type === 'action_observation', 'Test 1f: Fourth event is ReAct "action_observation"');
-    
+    assert(ev0.type === 'tool_start', 'Test 1b: First event is "tool_start" for backwards compatibility');
+    assert(ev1.type === 'action_call', 'Test 1c: Second event is ReAct "action_call"');
+    assert(ev1.type === 'action_call' && ev1.toolName === 'mockTool', 'Test 1d: "action_call" carries toolName');
+    assert(ev2.type === 'tool_result', 'Test 1e: Third event is "tool_result"');
+    assert(ev3.type === 'action_observation', 'Test 1f: Fourth event is ReAct "action_observation"');
+
     const finalAnswerIdx = events.findIndex((e) => e.type === 'final_answer');
     const completeIdx = events.findIndex((e) => e.type === 'complete');
     assert(finalAnswerIdx !== -1, 'Test 1g: "final_answer" event is emitted');
+    const finalAnswerEv = events[finalAnswerIdx];
     assert(completeIdx !== -1, 'Test 1h: "complete" event is emitted');
     assert(finalAnswerIdx < completeIdx, 'Test 1i: "final_answer" precedes "complete"');
-    assert((events[finalAnswerIdx] as any).sessionId === 'sess_stream_1', 'Test 1j: "final_answer" includes sessionId');
+    assert(
+      finalAnswerEv.type === 'final_answer' && finalAnswerEv.sessionId === 'sess_stream_1',
+      'Test 1j: "final_answer" includes sessionId',
+    );
     assert(events[events.length - 1].type === 'complete', 'Test 1k: Final event is "complete"');
-    assert(Boolean((events[0] as any).id), 'Test 1l: "tool_start" carries correlation id');
-    assert((events[0] as any).id === (events[1] as any).id, 'Test 1m: "tool_start" and "action_call" share identical correlation id for deduplication');
-    assert((events[2] as any).id === (events[3] as any).id, 'Test 1n: "tool_result" and "action_observation" share identical correlation id for deduplication');
-  } catch (err: any) {
-    assert(false, 'Test 1: AgentRunner runStream Event Emitting', err.message);
+    assert(ev0.type === 'tool_start' && Boolean(ev0.id), 'Test 1l: "tool_start" carries correlation id');
+    assert(
+      ev0.type === 'tool_start' && ev1.type === 'action_call' && ev0.id === ev1.id,
+      'Test 1m: "tool_start" and "action_call" share identical correlation id for deduplication',
+    );
+    assert(
+      ev2.type === 'tool_result' && ev3.type === 'action_observation' && ev2.id === ev3.id,
+      'Test 1n: "tool_result" and "action_observation" share identical correlation id for deduplication',
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    assert(false, 'Test 1: AgentRunner runStream Event Emitting', message);
   }
 
   console.log(`\n  📊 Streaming Test Results: ${passed} passed, ${failed} failed.\n`);

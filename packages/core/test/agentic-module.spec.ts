@@ -168,23 +168,33 @@ export async function runAgenticModuleTests() {
       context: { tenantId: 'acme' },
     });
 
-    const pending = result.toolCalls[0]?.result as any;
+    const pending = result.toolCalls[0]?.result as { status?: string; approvalId?: string } | undefined;
     assert(
       pending?.status === 'pending_approval',
       'Test 2a: High-value transfer suspended for approval',
     );
     assert(ledger.transfers.length === 0, 'Test 2b: Side effect withheld before approval');
 
-    const approved = (await approvals.approve(pending.approvalId)) as any;
+    const approved = await approvals.approve(pending!.approvalId!);
+    const approvedToolResult =
+      'toolCalls' in approved && approved.toolCalls?.[0]?.result
+        ? approved.toolCalls[0].result
+        : undefined;
+    const isSuccess =
+      typeof approvedToolResult === 'object' &&
+      approvedToolResult !== null &&
+      'success' in approvedToolResult &&
+      approvedToolResult.success === true;
     assert(
-      approved?.toolCalls?.[0]?.result?.success === true,
+      isSuccess,
       'Test 2c: ApprovalService executed the pending tool and resumed the turn',
     );
     assert(ledger.transfers.length === 1, 'Test 2d: Side effect applied exactly once after approval');
 
     await moduleRef.close();
-  } catch (err: any) {
-    assert(false, 'Test 2: Approval flow through DI', err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    assert(false, 'Test 2: Approval flow through DI', message);
   }
 
   // TEST 3: Module-level limits apply when a run does not override them
