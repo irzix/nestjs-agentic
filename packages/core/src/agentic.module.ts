@@ -1,5 +1,6 @@
 import { DynamicModule, Module, Provider, Type } from '@nestjs/common';
 import {
+  AGENT_OBSERVERS,
   AGENT_PROVIDERS,
   AGENTIC_OPTIONS,
   APPROVAL_STORE,
@@ -81,6 +82,11 @@ export class AgenticModule {
       ? [{ provide: AUDIT_SINKS, useValue: options.auditSinks }]
       : [];
 
+    // Observers receive runtime lifecycle hooks, OpenTelemetry spans, and metrics.
+    const observerProviders: Provider[] = options.observers?.length
+      ? [{ provide: AGENT_OBSERVERS, useValue: options.observers }]
+      : [];
+
     return {
       module: AgenticModule,
       global: true,
@@ -91,6 +97,7 @@ export class AgenticModule {
         idempotencyStoreProvider,
         ...modelAdapterProviders,
         ...auditSinkProviders,
+        ...observerProviders,
         ...CORE_PROVIDERS,
       ],
       exports: [

@@ -1084,17 +1084,28 @@ Configured messages invoke the selected resolved tool. Unconfigured messages ret
 
 ## Observer Contract
 
+`AgentObserver` provides error-isolated lifecycle hooks for tracing agent runs, model rounds, tool invocations, token consumption, and execution latencies.
+
 ```typescript
 interface AgentObserver {
-  onAgentStart?(agentName: string, sessionId: string): void;
-  onAgentEnd?(agentName: string, result: AgentResult): void;
-  onToolCall?(toolName: string, args: Record<string, unknown>): void;
-  onToolResult?(toolName: string, result: unknown, durationMs: number): void;
-  onError?(agentName: string, error: Error): void;
+  onAgentStart?(event: AgentStartEvent): void | Promise<void>;
+  onAgentEnd?(event: AgentEndEvent): void | Promise<void>;
+  onModelRequest?(event: ModelRequestEvent): void | Promise<void>;
+  onModelResponse?(event: ModelResponseEvent): void | Promise<void>;
+  onToolCall?(event: ToolCallEvent): void | Promise<void>;
+  onToolResult?(event: ToolResultEvent): void | Promise<void>;
+  onError?(event: AgentErrorEvent): void | Promise<void>;
 }
 ```
 
-`AgentObserver` and `AGENT_OBSERVERS` are exported extension contracts, but `AgentRunner` does not dispatch these hooks in `0.4.x`. End-to-end observer wiring is planned.
+### Built-in Observers
+
+- **`OpenTelemetryGenAiObserver`**: Standardizes runtime telemetry on official [CNCF OpenTelemetry Semantic Conventions for Generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.agent.*`, `gen_ai.tool.*`).
+- **`InMemoryAgentObserver`**: Collects typed lifecycle event records in-memory for testing, inspection, and local debugging.
+
+### Registration
+
+Observers can be registered globally via `AgenticModule.forRoot({ observers: [...] })` or by providing the `AGENT_OBSERVERS` multi-provider token. Observer callbacks run concurrently with complete error isolation (`Promise.allSettled`), guaranteeing that monitoring exceptions never disrupt agent execution.
 
 ## Injection Tokens
 
@@ -1105,6 +1116,6 @@ interface AgentObserver {
 | `APPROVAL_STORE` | `ApprovalStore` implementation | Defaults to `InMemoryApprovalStore`. |
 | `SESSION_STORE` | `SessionStore` implementation | Defaults to `InMemorySessionStore`. |
 | `STATE_STORE` | `StateStore` implementation | Defaults to `InMemoryStateStore`. |
-| `AGENT_OBSERVERS` | Observer multi-provider contract | Exported but not dispatched by `AgentRunner` in `0.4.x`. |
+| `AGENT_OBSERVERS` | Observer multi-provider contract | Dispatched at all lifecycle hooks (`onAgentStart`, `onModelRequest`, `onModelResponse`, `onToolCall`, `onToolResult`, `onAgentEnd`, `onError`). |
 
 Other exported constants primarily support framework metadata and internal provider discovery and should not be treated as stable application extension points before 1.0.

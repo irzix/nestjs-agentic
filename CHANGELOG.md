@@ -21,8 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `AgentRunner.resumeCheckpoint` and `AgentRunner.recoverLatestCheckpoint` with `checkpointTtlSeconds` configuration.
 - **Contract Test Suites**:
   - `runSessionStoreContract`, `runApprovalStoreContract`, and `runIdempotencyStoreContract` verifying store implementations against behavioral contracts.
-- **Modular Store Directory Architecture**:
-  - Reorganized `stores/` into driver submodules (`in-memory/`, `redis/`, `postgres/`) with unified barrel exports.
+- **Runtime Observers & OpenTelemetry Tracing (`@nestjs-agentic/core`)**:
+  - `AgentObserver`: Lifecycle hook interface (`onAgentStart`, `onModelRequest`, `onModelResponse`, `onToolCall`, `onToolResult`, `onAgentEnd`, `onError`).
+  - `ObserverNotifier`: Concurrent, error-isolated lifecycle event dispatcher using `Promise.allSettled`.
+  - `OpenTelemetryGenAiObserver`: Built-in CNCF GenAI Semantic Conventions (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.agent.*`, `gen_ai.tool.*`, `gen_ai.duration_ms`).
+  - `InMemoryAgentObserver`: In-memory event collector for unit testing and local inspection.
+  - Multi-provider wiring: `AgenticModule.forRoot({ observers: [...] })` and `AGENT_OBSERVERS` token support in `AgentRunner` and `AgentExecutor`.
 
 ## [0.4.0] - 2026-08-10
 

@@ -36,6 +36,8 @@ import type {
   ToolExecutionResult,
 } from '../interfaces/tool.interface';
 import { validateToolArgs } from '../utils/tool-args.validator';
+import type { AgentObserver } from '../interfaces/observer.interface';
+import { ObserverNotifier } from '../observers/observer-notifier';
 
 /** Input for one governed agent turn executed by the framework runtime. */
 export interface AgentExecutionInput {
@@ -43,6 +45,7 @@ export interface AgentExecutionInput {
   message: string;
   model: ModelConfig;
   tools: ResolvedTool[];
+  agentName?: string;
   instructions?: string;
   traceId?: string;
   /** Prior conversation messages to replay before the current user message. */
@@ -51,6 +54,8 @@ export interface AgentExecutionInput {
   /** How exceptions thrown by tools are treated. Default: `report` */
   toolErrorHandling?: ToolErrorHandling;
   signal?: AbortSignal;
+  observers?: AgentObserver[];
+  observerNotifier?: ObserverNotifier;
   /**
    * Receives the conversation once the turn ends, either with a final answer or
    * suspended for approval. Not called when the turn fails, so a partial
@@ -78,8 +83,10 @@ interface ExecutorRequestContext {
   sessionId: string;
   model: ModelConfig;
   tools: ResolvedTool[];
+  agentName?: string;
   traceId?: string;
   signal?: AbortSignal;
+  observerNotifier?: ObserverNotifier;
 }
 
 /** Input for continuing a turn that suspended on `require_approval`. */
@@ -100,6 +107,7 @@ export interface AgentResumeInput extends ExecutorRequestContext {
   outcome: ToolExecutionResult;
   limits?: ExecutionLimits;
   toolErrorHandling?: ToolErrorHandling;
+  observers?: AgentObserver[];
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
   /** Checkpoints a resumed turn that suspends again on a further approval. */
   onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
@@ -112,6 +120,7 @@ export interface AgentResumeCheckpointInput extends ExecutorRequestContext {
   instructions?: string;
   limits?: ExecutionLimits;
   toolErrorHandling?: ToolErrorHandling;
+  observers?: AgentObserver[];
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
   onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
   onCheckpoint?(checkpoint: InFlightCheckpoint): void | Promise<void>;
@@ -164,15 +173,34 @@ export class AgentExecutor {
     return Boolean(this.modelAdapter);
   }
 
+  private createRequestContext(
+    input: AgentExecutionInput | AgentResumeInput | AgentResumeCheckpointInput,
+  ): ExecutorRequestContext {
+    const observerNotifier =
+      input.observerNotifier ??
+      (input.observers?.length ? new ObserverNotifier(input.observers) : undefined);
+
+    return {
+      sessionId: input.sessionId,
+      model: input.model,
+      tools: input.tools,
+      traceId: input.traceId,
+      signal: input.signal,
+      agentName: input.agentName,
+      observerNotifier,
+    };
+  }
+
   async execute(input: AgentExecutionInput): Promise<AgentResult> {
     const adapter = this.requireAdapter();
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
+    const requestCtx = this.createRequestContext(input);
 
     return this.runToCompletion(
       adapter,
-      input,
+      requestCtx,
       state,
       limits,
       toolErrorHandling,
@@ -187,10 +215,11 @@ export class AgentExecutor {
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
+    const requestCtx = this.createRequestContext(input);
 
     yield* this.streamToCompletion(
       adapter,
-      input,
+      requestCtx,
       state,
       limits,
       toolErrorHandling,
@@ -212,10 +241,11 @@ export class AgentExecutor {
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createResumedState(input);
+    const requestCtx = this.createRequestContext(input);
 
     return this.runToCompletion(
       adapter,
-      input,
+      requestCtx,
       state,
       limits,
       toolErrorHandling,
@@ -231,10 +261,11 @@ export class AgentExecutor {
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createResumedState(input);
+    const requestCtx = this.createRequestContext(input);
 
     yield* this.streamToCompletion(
       adapter,
-      input,
+      requestCtx,
       state,
       limits,
       toolErrorHandling,
@@ -252,10 +283,11 @@ export class AgentExecutor {
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createCheckpointState(input);
+    const requestCtx = this.createRequestContext(input);
 
     return this.runToCompletion(
       adapter,
-      input,
+      requestCtx,
       state,
       limits,
       toolErrorHandling,
@@ -273,10 +305,11 @@ export class AgentExecutor {
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createCheckpointState(input);
+    const requestCtx = this.createRequestContext(input);
 
     yield* this.streamToCompletion(
       adapter,
-      input,
+      requestCtx,
       state,
       limits,
       toolErrorHandling,
@@ -302,8 +335,36 @@ export class AgentExecutor {
       while (true) {
         this.assertWithinBudget(state, limits, scope);
 
-        const response = await adapter.generate(this.buildRequest(requestCtx, state, scope));
+        const request = this.buildRequest(requestCtx, state, scope);
+        const reqStart = Date.now();
+
+        await requestCtx.observerNotifier?.notifyModelRequest({
+          agentName: requestCtx.agentName ?? 'agent',
+          sessionId: requestCtx.sessionId,
+          traceId: requestCtx.traceId ?? state.executionId,
+          model: requestCtx.model,
+          roundIndex: state.iteration,
+          messages: request.messages,
+          timestamp: new Date(reqStart),
+        });
+
+        const response = await adapter.generate(request);
+        const reqDurationMs = Date.now() - reqStart;
+
+        await requestCtx.observerNotifier?.notifyModelResponse({
+          agentName: requestCtx.agentName ?? 'agent',
+          sessionId: requestCtx.sessionId,
+          traceId: requestCtx.traceId ?? state.executionId,
+          model: requestCtx.model,
+          roundIndex: state.iteration,
+          response,
+          usage: response.usage,
+          durationMs: reqDurationMs,
+          timestamp: new Date(),
+        });
+
         const finished = await this.applyModelRound(
+          requestCtx,
           state,
           response,
           requestCtx.tools,
@@ -350,6 +411,18 @@ export class AgentExecutor {
         this.assertWithinBudget(state, limits, scope);
 
         const request = this.buildRequest(requestCtx, state, scope);
+        const reqStart = Date.now();
+
+        await requestCtx.observerNotifier?.notifyModelRequest({
+          agentName: requestCtx.agentName ?? 'agent',
+          sessionId: requestCtx.sessionId,
+          traceId: requestCtx.traceId ?? state.executionId,
+          model: requestCtx.model,
+          roundIndex: state.iteration,
+          messages: request.messages,
+          timestamp: new Date(reqStart),
+        });
+
         let response: ModelResponse | undefined;
 
         if (adapter.stream) {
@@ -373,8 +446,22 @@ export class AgentExecutor {
           }
         }
 
+        const reqDurationMs = Date.now() - reqStart;
+        await requestCtx.observerNotifier?.notifyModelResponse({
+          agentName: requestCtx.agentName ?? 'agent',
+          sessionId: requestCtx.sessionId,
+          traceId: requestCtx.traceId ?? state.executionId,
+          model: requestCtx.model,
+          roundIndex: state.iteration,
+          response,
+          usage: response.usage,
+          durationMs: reqDurationMs,
+          timestamp: new Date(),
+        });
+
         const pendingEvents: AgentStreamEvent[] = [];
         const finished = await this.applyModelRound(
+          requestCtx,
           state,
           response,
           requestCtx.tools,
@@ -594,6 +681,7 @@ export class AgentExecutor {
    * final answer or because a tool requires human approval.
    */
   private async applyModelRound(
+    requestCtx: ExecutorRequestContext,
     state: ExecutionState,
     response: ModelResponse,
     tools: ResolvedTool[],
@@ -654,10 +742,22 @@ export class AgentExecutor {
         args: validation.args,
       });
 
+      const toolStart = Date.now();
+      await requestCtx.observerNotifier?.notifyToolCall({
+        agentName: requestCtx.agentName ?? 'agent',
+        sessionId: requestCtx.sessionId,
+        traceId: requestCtx.traceId ?? state.executionId,
+        toolName: tool.name,
+        toolCallId: call.id,
+        args: validation.args,
+        timestamp: new Date(toolStart),
+      });
+
       let result: ToolExecutionResult;
       try {
         result = await tool.execute({ args: validation.args, toolCallId: call.id });
       } catch (err) {
+        const toolDurationMs = Date.now() - toolStart;
         // Framework errors signal misconfiguration, so they must not be hidden
         // from the caller by being described to the model.
         if (err instanceof AgenticError) throw err;
@@ -676,11 +776,34 @@ export class AgentExecutor {
           toolName: tool.name,
           error: failure.error,
         });
+
+        await requestCtx.observerNotifier?.notifyToolResult({
+          agentName: requestCtx.agentName ?? 'agent',
+          sessionId: requestCtx.sessionId,
+          traceId: requestCtx.traceId ?? state.executionId,
+          toolName: tool.name,
+          toolCallId: call.id,
+          result: failure,
+          durationMs: toolDurationMs,
+          timestamp: new Date(),
+        });
         continue;
       }
 
+      const toolDurationMs = Date.now() - toolStart;
       state.toolCalls.push({ toolName: tool.name, args: validation.args, result });
       this.pushToolMessage(state, call, result);
+
+      await requestCtx.observerNotifier?.notifyToolResult({
+        agentName: requestCtx.agentName ?? 'agent',
+        sessionId: requestCtx.sessionId,
+        traceId: requestCtx.traceId ?? state.executionId,
+        toolName: tool.name,
+        toolCallId: call.id,
+        result,
+        durationMs: toolDurationMs,
+        timestamp: new Date(),
+      });
 
       if (!result.success && result.status === 'pending_approval') {
         events?.push({

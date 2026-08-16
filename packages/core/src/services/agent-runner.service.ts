@@ -3,6 +3,7 @@ import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import {
   AGENT_METADATA,
+  AGENT_OBSERVERS,
   AGENT_PROVIDERS,
   AGENTIC_OPTIONS,
   APPROVAL_STORE,
@@ -20,6 +21,7 @@ import { LocalToolProvider } from '../providers/local-tool.provider';
 import type {
   AgentConfig,
   AgentContext,
+  AgentObserver,
   AgentProvider,
   AgentResult,
   AgentStreamEvent,
@@ -41,7 +43,6 @@ import {
   type InFlightCheckpoint,
   type ToolErrorHandling,
 } from '../interfaces/execution.interface';
-import type { ModelMessage } from '../interfaces/model.interface';
 import {
   DEFAULT_SESSION_MAX_MESSAGES,
   isSessionRecord,
@@ -50,7 +51,8 @@ import {
   type SessionStore,
 } from '../interfaces/session.interface';
 import { trimHistory, withoutSystemMessages } from '../utils/session-history';
-import type { ModelAdapter } from '../interfaces/model.interface';
+import type { ModelAdapter, ModelMessage, ModelUsage } from '../interfaces/model.interface';
+import { ObserverNotifier } from '../observers/observer-notifier';
 
 import { STATE_STORE, type StateStore } from '../interfaces/state-store.interface';
 import { AgentExecutor } from './agent-executor.service';
@@ -100,6 +102,10 @@ export interface AgenticModuleOptions {
    * nothing.
    */
   auditSinks?: AuditSink[];
+  /**
+   * Optional runtime observers to receive lifecycle events, OpenTelemetry traces, and metrics.
+   */
+  observers?: AgentObserver[];
 }
 
 export interface RunInput {
@@ -159,7 +165,20 @@ export class AgentRunner {
     @Optional() @Inject(SESSION_STORE) private readonly sessionStore?: SessionStore,
     @Optional() @Inject(APPROVAL_STORE) private readonly approvalStore?: ApprovalStore,
     @Optional() @Inject(STATE_STORE) private readonly stateStore?: StateStore,
+    @Optional() @Inject(AGENT_OBSERVERS) private readonly injectedObservers?: AgentObserver[],
   ) {}
+
+  private getNotifier(): ObserverNotifier {
+    const fromOptions = this.options.observers ?? [];
+    const fromInjected = Array.isArray(this.injectedObservers)
+      ? (this.injectedObservers as any).flat(Infinity)
+      : this.injectedObservers
+        ? [this.injectedObservers]
+        : [];
+    const all = [...fromOptions, ...fromInjected];
+    const unique = Array.from(new Set(all.filter(Boolean)));
+    return new ObserverNotifier(unique);
+  }
 
   /**
    * Conversation history is scoped by tenant as well as session, so the same
@@ -262,8 +281,11 @@ export class AgentRunner {
 
     const history = await this.resolveResumeHistory(pending);
     const store = this.resolveSessionStore();
+    const notifier = this.getNotifier();
 
     return this.executor.resume({
+      agentName: pending.agentName,
+      observerNotifier: notifier,
       sessionId: pending.context.sessionId,
       model: config.model ?? this.options.defaultModel,
       tools: this.localToolProvider.buildTools(
@@ -457,93 +479,215 @@ export class AgentRunner {
 
   async run(agentName: string, input: RunInput): Promise<AgentResult> {
     const prepared = this.prepare(agentName, input);
+    const notifier = this.getNotifier();
+    const startAt = Date.now();
 
-    if (this.useBuiltInRuntime()) {
-      const withHistory = this.historyEnabled(input);
-
-      return this.executor!.execute({
-        sessionId: input.sessionId,
-        message: input.message,
-        model: prepared.model,
-        tools: prepared.tools,
-        instructions: prepared.config.instructions,
-        traceId: prepared.context.traceId,
-        limits: prepared.limits,
-        toolErrorHandling: prepared.toolErrorHandling,
-        signal: input.signal,
-        history: withHistory ? await this.loadHistory(prepared.context) : undefined,
-        onCheckpoint: (checkpoint) =>
-          this.saveInFlightCheckpoint(prepared.context, checkpoint),
-        onTranscript: withHistory
-          ? (messages) => this.saveHistory(prepared.context, messages)
-          : undefined,
-        // Independent of history being enabled: an approval must stay resumable
-        // even for a stateless turn.
-        onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
-      });
-    }
-
-    return this.requireRuntimeAdapter().execute({
-      sessionId: input.sessionId,
+    await notifier.notifyAgentStart({
+      agentName,
+      sessionId: prepared.context.sessionId,
+      traceId: prepared.context.traceId,
+      tenantId: prepared.context.security.tenantId,
+      userId: prepared.context.security.userId,
       message: input.message,
-      tools: prepared.tools,
-      model: prepared.model,
-      instructions: prepared.config.instructions,
+      timestamp: new Date(startAt),
+      context: prepared.context,
     });
+
+    try {
+      let result: AgentResult;
+
+      if (this.useBuiltInRuntime()) {
+        const withHistory = this.historyEnabled(input);
+
+        result = await this.executor!.execute({
+          agentName,
+          sessionId: input.sessionId,
+          message: input.message,
+          model: prepared.model,
+          tools: prepared.tools,
+          instructions: prepared.config.instructions,
+          traceId: prepared.context.traceId,
+          limits: prepared.limits,
+          toolErrorHandling: prepared.toolErrorHandling,
+          signal: input.signal,
+          observerNotifier: notifier,
+          history: withHistory ? await this.loadHistory(prepared.context) : undefined,
+          onCheckpoint: (checkpoint) =>
+            this.saveInFlightCheckpoint(prepared.context, checkpoint),
+          onTranscript: withHistory
+            ? (messages) => this.saveHistory(prepared.context, messages)
+            : undefined,
+          // Independent of history being enabled: an approval must stay resumable
+          // even for a stateless turn.
+          onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+        });
+      } else {
+        result = await this.requireRuntimeAdapter().execute({
+          sessionId: input.sessionId,
+          message: input.message,
+          tools: prepared.tools,
+          model: prepared.model,
+          instructions: prepared.config.instructions,
+        });
+      }
+
+      const durationMs = Date.now() - startAt;
+      await notifier.notifyAgentEnd({
+        agentName,
+        sessionId: prepared.context.sessionId,
+        traceId: prepared.context.traceId,
+        tenantId: prepared.context.security.tenantId,
+        result,
+        durationMs,
+        totalTokensUsed: result.usage?.totalTokens,
+        timestamp: new Date(),
+        context: prepared.context,
+      });
+
+      return result;
+    } catch (err: unknown) {
+      const durationMs = Date.now() - startAt;
+      await notifier.notifyError({
+        agentName,
+        sessionId: prepared.context.sessionId,
+        traceId: prepared.context.traceId,
+        error: err instanceof Error ? err : new Error(String(err)),
+        durationMs,
+        timestamp: new Date(),
+        context: prepared.context,
+      });
+      throw err;
+    }
   }
 
   async *runStream(agentName: string, input: RunInput): AsyncIterable<AgentStreamEvent> {
     const prepared = this.prepare(agentName, input);
+    const notifier = this.getNotifier();
+    const startAt = Date.now();
 
-    if (this.useBuiltInRuntime()) {
-      const withHistory = this.historyEnabled(input);
+    await notifier.notifyAgentStart({
+      agentName,
+      sessionId: prepared.context.sessionId,
+      traceId: prepared.context.traceId,
+      tenantId: prepared.context.security.tenantId,
+      userId: prepared.context.security.userId,
+      message: input.message,
+      timestamp: new Date(startAt),
+      context: prepared.context,
+    });
 
-      yield* this.executor!.stream({
+    try {
+      if (this.useBuiltInRuntime()) {
+        const withHistory = this.historyEnabled(input);
+        let finalUsage: ModelUsage | undefined;
+        let finalOutput = '';
+        let wasSuspended = false;
+
+        for await (const event of this.executor!.stream({
+          agentName,
+          sessionId: input.sessionId,
+          message: input.message,
+          model: prepared.model,
+          tools: prepared.tools,
+          instructions: prepared.config.instructions,
+          traceId: prepared.context.traceId,
+          limits: prepared.limits,
+          toolErrorHandling: prepared.toolErrorHandling,
+          signal: input.signal,
+          observerNotifier: notifier,
+          history: withHistory ? await this.loadHistory(prepared.context) : undefined,
+          onCheckpoint: (checkpoint) =>
+            this.saveInFlightCheckpoint(prepared.context, checkpoint),
+          onTranscript: withHistory
+            ? (messages) => this.saveHistory(prepared.context, messages)
+            : undefined,
+          onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+        })) {
+          if (event.type === 'approval_required') {
+            wasSuspended = true;
+          }
+          if (event.type === 'final_answer') {
+            finalOutput = event.output;
+            finalUsage = event.usage;
+          }
+          yield event;
+        }
+
+        const durationMs = Date.now() - startAt;
+        const result: AgentResult = {
+          sessionId: input.sessionId,
+          output: finalOutput,
+          toolCalls: [],
+          usage: finalUsage,
+        };
+
+        await notifier.notifyAgentEnd({
+          agentName,
+          sessionId: prepared.context.sessionId,
+          traceId: prepared.context.traceId,
+          tenantId: prepared.context.security.tenantId,
+          result,
+          durationMs,
+          totalTokensUsed: finalUsage?.totalTokens,
+          timestamp: new Date(),
+          context: prepared.context,
+        });
+        return;
+      }
+
+      const adapter = this.requireRuntimeAdapter();
+      const adapterInput = {
         sessionId: input.sessionId,
         message: input.message,
-        model: prepared.model,
         tools: prepared.tools,
+        model: prepared.model,
         instructions: prepared.config.instructions,
+      };
+
+      if (adapter.stream) {
+        yield* adapter.stream(adapterInput);
+      } else {
+        const res = await adapter.execute(adapterInput);
+        for (const toolCall of res.toolCalls) {
+          const callId = `call_${randomUUID().slice(0, 8)}`;
+          yield { type: 'tool_start', id: callId, toolName: toolCall.toolName, args: toolCall.args };
+          yield { type: 'action_call', id: callId, toolName: toolCall.toolName, args: toolCall.args };
+          yield { type: 'tool_result', id: callId, toolName: toolCall.toolName, result: toolCall.result as any };
+          yield { type: 'action_observation', id: callId, toolName: toolCall.toolName, result: toolCall.result as any };
+        }
+        yield { type: 'token', text: res.output };
+        yield { type: 'final_answer', sessionId: res.sessionId, output: res.output, usage: res.usage };
+        yield { type: 'complete', sessionId: res.sessionId, output: res.output };
+      }
+
+      const durationMs = Date.now() - startAt;
+      await notifier.notifyAgentEnd({
+        agentName,
+        sessionId: prepared.context.sessionId,
         traceId: prepared.context.traceId,
-        limits: prepared.limits,
-        toolErrorHandling: prepared.toolErrorHandling,
-        signal: input.signal,
-        history: withHistory ? await this.loadHistory(prepared.context) : undefined,
-        onCheckpoint: (checkpoint) =>
-          this.saveInFlightCheckpoint(prepared.context, checkpoint),
-        onTranscript: withHistory
-          ? (messages) => this.saveHistory(prepared.context, messages)
-          : undefined,
-        onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+        tenantId: prepared.context.security.tenantId,
+        result: {
+          sessionId: input.sessionId,
+          output: '',
+          toolCalls: [],
+        },
+        durationMs,
+        timestamp: new Date(),
+        context: prepared.context,
       });
-      return;
+    } catch (err: unknown) {
+      const durationMs = Date.now() - startAt;
+      await notifier.notifyError({
+        agentName,
+        sessionId: prepared.context.sessionId,
+        traceId: prepared.context.traceId,
+        error: err instanceof Error ? err : new Error(String(err)),
+        durationMs,
+        timestamp: new Date(),
+        context: prepared.context,
+      });
+      throw err;
     }
-
-    const adapter = this.requireRuntimeAdapter();
-    const adapterInput = {
-      sessionId: input.sessionId,
-      message: input.message,
-      tools: prepared.tools,
-      model: prepared.model,
-      instructions: prepared.config.instructions,
-    };
-
-    if (adapter.stream) {
-      yield* adapter.stream(adapterInput);
-      return;
-    }
-
-    const res = await adapter.execute(adapterInput);
-    for (const toolCall of res.toolCalls) {
-      const callId = `call_${randomUUID().slice(0, 8)}`;
-      yield { type: 'tool_start', id: callId, toolName: toolCall.toolName, args: toolCall.args };
-      yield { type: 'action_call', id: callId, toolName: toolCall.toolName, args: toolCall.args };
-      yield { type: 'tool_result', id: callId, toolName: toolCall.toolName, result: toolCall.result as any };
-      yield { type: 'action_observation', id: callId, toolName: toolCall.toolName, result: toolCall.result as any };
-    }
-    yield { type: 'token', text: res.output };
-    yield { type: 'final_answer', sessionId: res.sessionId, output: res.output, usage: res.usage };
-    yield { type: 'complete', sessionId: res.sessionId, output: res.output };
   }
 
   /**
@@ -590,8 +734,11 @@ export class AgentRunner {
     );
 
     const sessionStore = this.resolveSessionStore();
+    const notifier = this.getNotifier();
 
     return this.executor.resumeCheckpoint({
+      agentName,
+      observerNotifier: notifier,
       sessionId: checkpoint.sessionId,
       checkpoint,
       model: config.model ?? this.options.defaultModel,
