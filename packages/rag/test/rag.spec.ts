@@ -316,6 +316,10 @@ export class SecurityReviewService {
 export function formatReviewSummary(decision: ReviewDecision): string {
   return \`Review outcome: \${decision}\`;
 }
+
+export const computeChecksum = (data: string): string => {
+  return 'chk_123';
+};
 `;
 
     const chunks = await splitter.splitDocument({
@@ -323,10 +327,10 @@ export function formatReviewSummary(decision: ReviewDecision): string {
       title: 'src/security-review.service.ts',
       rawContent: sampleTypeScriptCode,
       chunks: [],
-      metadata: { repository: 'nestjs-agentic' },
+      metadata: { repository: 'nestjs-agentic', nodeType: 'malicious_overwrite' },
     });
 
-    assert(chunks.length >= 5, 'Test 10a: AstCodebaseSplitter parsed code into discrete semantic units');
+    assert(chunks.length >= 6, 'Test 10a: AstCodebaseSplitter parsed code into discrete semantic units');
 
     const importsChunk = chunks.find((c) => c.metadata.nodeType === 'imports');
     assert(Boolean(importsChunk), 'Test 10b: Extracted imports header block chunk');
@@ -344,23 +348,27 @@ export function formatReviewSummary(decision: ReviewDecision): string {
     assert(interfaceChunk?.metadata.identifier === 'ReviewOptions', 'Test 10f: Interface identifier ReviewOptions matches');
     assert(interfaceChunk?.metadata.exported === true, 'Test 10g: Interface exported modifier preserved');
     assert(Boolean(interfaceChunk?.content?.includes('Review options interface documentation')), 'Test 10h: JSDoc comment preserved with interface');
+    assert(interfaceChunk?.metadata.nodeType === 'interface', 'Test 10i: nodeType was protected from metadata overwrite');
 
     const typeChunk = chunks.find((c) => c.metadata.nodeType === 'type');
-    assert(Boolean(typeChunk), 'Test 10i: Extracted type alias chunk');
-    assert(typeChunk?.metadata.identifier === 'ReviewDecision', 'Test 10j: Type identifier ReviewDecision matches');
+    assert(Boolean(typeChunk), 'Test 10j: Extracted type alias chunk');
+    assert(typeChunk?.metadata.identifier === 'ReviewDecision', 'Test 10k: Type identifier ReviewDecision matches');
 
     const staticMethodChunk = chunks.find((c) => c.metadata.identifier === 'SecurityReviewService.createInstance');
-    assert(Boolean(staticMethodChunk), 'Test 10k: Extracted static class method as discrete chunk');
-    assert(Boolean(staticMethodChunk?.metadata?.isStatic), 'Test 10l: isStatic metadata flag set on static method');
+    assert(Boolean(staticMethodChunk), 'Test 10l: Extracted static class method as discrete chunk');
+    assert(Boolean(staticMethodChunk?.metadata?.isStatic), 'Test 10m: isStatic metadata flag set on static method');
 
     const getterChunk = chunks.find((c) => c.metadata.identifier === 'SecurityReviewService.isEnabled');
-    assert(Boolean(getterChunk), 'Test 10m: Extracted class getter as discrete chunk');
+    assert(Boolean(getterChunk), 'Test 10n: Extracted class getter as discrete chunk');
 
     const evalMethodChunk = chunks.find((c) => c.metadata.identifier === 'SecurityReviewService.evaluatePr');
-    assert(Boolean(evalMethodChunk), 'Test 10n: Extracted instance method evaluatePr');
+    assert(Boolean(evalMethodChunk), 'Test 10o: Extracted instance method evaluatePr');
 
     const functionChunk = chunks.find((c) => c.metadata.nodeType === 'function' && c.metadata.identifier === 'formatReviewSummary');
-    assert(Boolean(functionChunk), 'Test 10o: Extracted function AST chunk');
+    assert(Boolean(functionChunk), 'Test 10p: Extracted function AST chunk');
+
+    const arrowChunk = chunks.find((c) => c.metadata.nodeType === 'function' && c.metadata.identifier === 'computeChecksum');
+    assert(Boolean(arrowChunk), 'Test 10q: Extracted arrow function chunk');
   } catch (err: any) {
     assert(false, 'Test 10: AstCodebaseSplitter AST Chunking', err.message);
   }
@@ -408,10 +416,7 @@ export function formatReviewSummary(decision: ReviewDecision): string {
     const result = await strategy.process({
       query: 'PrReviewOrchestrator @nestjs-agentic/core impact analysis',
       chunks: [relevantChunk, unrelatedChunk],
-      scores: new Map([
-        ['chunk_orch_1', 1.0],
-        ['chunk_unrelated_2', 1.0],
-      ]),
+      scores: { chunk_orch_1: 1.0, chunk_unrelated_2: 1.0 } as any,
     });
 
     assert(Boolean(result.graphContext), 'Test 11a: GraphDependencyStrategy generated dependency context');

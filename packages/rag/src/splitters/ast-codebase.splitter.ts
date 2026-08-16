@@ -41,16 +41,35 @@ export class AstCodebaseSplitter implements DocumentSplitter {
   private readonly minChunkSize: number;
   private readonly splitClassMethods: boolean;
 
-  // Pre-compiled static regular expressions for high-throughput scanning
+  // Pre-compiled static regular expressions for single-pass O(N) scanning
   private static readonly RE_INTERFACE = /^(?:export\s+)?interface\s+([A-Za-z0-9_$]+)/;
   private static readonly RE_TYPE_ALIAS = /^(?:export\s+)?type\s+([A-Za-z0-9_$]+)\s*=/;
   private static readonly RE_CLASS = /^(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z0-9_$]+)/;
   private static readonly RE_FUNCTION = /^(?:export\s+)?(?:async\s+)?function\s*(?:\*\s*)?([A-Za-z0-9_$]+)?\s*\(/;
+  private static readonly RE_ARROW_FUNCTION =
+    /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z0-9_$]+)(?:\s*:\s*[^=]+)?\s*=>\s*\{/;
   private static readonly RE_ENUM = /^(?:export\s+)?(?:const\s+)?enum\s+([A-Za-z0-9_$]+)/;
-  private static readonly RE_IMPORT_START = /^import\s+(?:type\s+)?(?:(?:\*\s+as\s+[A-Za-z0-9_$]+|\{[^}]*\}|[A-Za-z0-9_$,\s]+)\s+from\s+)?['"][^'"]+['"]/;
   private static readonly RE_MODULE_SPECIFIER = /from\s+['"]([^'"]+)['"]|import\s*\(?['"]([^'"]+)['"]\)?/;
-  private static readonly RE_CLASS_MEMBER =
-    /^(?:@\w+(?:\([^)]*\))?\s+)*(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+|override\s+|abstract\s+|async\s+)*(?:get\s+|set\s+)?(?:constructor|#?[A-Za-z0-9_$]+)\s*(?:\(|=|\{)/;
+
+  private static readonly RESERVED_KEYWORDS = new Set([
+    'class',
+    'interface',
+    'type',
+    'enum',
+    'export',
+    'import',
+    'return',
+    'if',
+    'else',
+    'for',
+    'while',
+    'switch',
+    'case',
+    'break',
+    'const',
+    'let',
+    'var',
+  ]);
 
   constructor(options?: AstCodebaseSplitterOptions) {
     this.maxChunkSize = options?.maxChunkSize ?? 1500;
@@ -65,14 +84,22 @@ export class AstCodebaseSplitter implements DocumentSplitter {
    * @returns Array of AST-aligned DocumentChunk objects with rich metadata.
    */
   async splitDocument(document: Document): Promise<DocumentChunk[]> {
-    const rawContent = document.rawContent;
-    if (!rawContent || rawContent.trim().length === 0) {
+    if (!document || typeof document.rawContent !== 'string') {
       return [];
     }
 
+    const rawContent = document.rawContent;
+    if (rawContent.trim().length === 0) {
+      return [];
+    }
+
+    const docId = document.id || `doc_${Date.now()}`;
+    const fileName =
+      document.title ||
+      (typeof document.metadata?.filePath === 'string' ? document.metadata.filePath : 'source.ts');
+
     const lines = rawContent.split('\n');
     const chunks: DocumentChunk[] = [];
-    const fileName = document.title || 'source.ts';
     let chunkCounter = 0;
 
     const createChunk = (
@@ -85,17 +112,17 @@ export class AstCodebaseSplitter implements DocumentSplitter {
     ): DocumentChunk => {
       chunkCounter++;
       return {
-        id: `${document.id}_ast_${chunkCounter}`,
-        parentId: document.id,
+        id: `${docId}_ast_${chunkCounter}`,
+        parentId: docId,
         content: content.trim(),
         metadata: {
+          ...document.metadata,
+          ...extraMetadata,
           filePath: fileName,
           nodeType,
           identifier,
           startLine,
           endLine,
-          ...document.metadata,
-          ...extraMetadata,
         },
       };
     };
@@ -120,7 +147,11 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         importLines.push(line);
         importEndLine = i + 1;
 
-        if (trimmed.includes(';') || (trimmed.includes("from '") && trimmed.endsWith("';")) || (trimmed.includes('from "') && trimmed.endsWith('";'))) {
+        if (
+          trimmed.includes(';') ||
+          (trimmed.includes("from '") && trimmed.endsWith("';")) ||
+          (trimmed.includes('from "') && trimmed.endsWith('";'))
+        ) {
           inMultiLineImport = false;
         } else if (!trimmed.includes(';') && (trimmed.includes('{') || trimmed.includes('from'))) {
           inMultiLineImport = true;
@@ -244,7 +275,7 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         continue;
       }
 
-      // Match Function Declaration
+      // Match Standard Function Declaration
       const funcMatch = currentTrimmed.match(AstCodebaseSplitter.RE_FUNCTION);
       if (funcMatch) {
         const funcName = funcMatch[1] ?? 'anonymousFunction';
@@ -254,6 +285,23 @@ export class AstCodebaseSplitter implements DocumentSplitter {
         chunks.push(
           createChunk(blockContent, 'function', funcName, declStartLine, endLine, {
             exported: isExported,
+          }),
+        );
+        idx = nextIdx;
+        continue;
+      }
+
+      // Match Arrow Function Declaration
+      const arrowMatch = currentTrimmed.match(AstCodebaseSplitter.RE_ARROW_FUNCTION);
+      if (arrowMatch) {
+        const funcName = arrowMatch[1];
+        const isExported = currentTrimmed.startsWith('export ');
+        const { blockContent, endLine, nextIdx } = this.extractBracedBlock(lines, idx, leadingLines);
+
+        chunks.push(
+          createChunk(blockContent, 'function', funcName, declStartLine, endLine, {
+            exported: isExported,
+            isArrow: true,
           }),
         );
         idx = nextIdx;
@@ -345,26 +393,6 @@ export class AstCodebaseSplitter implements DocumentSplitter {
       nextIdx: i + 1,
     };
   }
-
-  private static readonly RESERVED_KEYWORDS = new Set([
-    'class',
-    'interface',
-    'type',
-    'enum',
-    'export',
-    'import',
-    'return',
-    'if',
-    'else',
-    'for',
-    'while',
-    'switch',
-    'case',
-    'break',
-    'const',
-    'let',
-    'var',
-  ]);
 
   private splitClassMembers(
     bodyLines: string[],

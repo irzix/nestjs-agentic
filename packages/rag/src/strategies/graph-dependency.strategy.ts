@@ -1,4 +1,8 @@
-import type { KnowledgeGraphNode, KnowledgeGraphEdge, KnowledgeGraphProvider } from '../interfaces/graph.interface';
+import type {
+  KnowledgeGraphNode,
+  KnowledgeGraphEdge,
+  KnowledgeGraphProvider,
+} from '../interfaces/graph.interface';
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 
 /**
@@ -19,8 +23,8 @@ export interface GraphDependencyStrategyOptions {
 }
 
 /**
- * RAG Strategy for traversing codebase package dependency graphs, import chains,
- * and cross-package impact trees in monorepos and modular systems.
+ * Production-grade RAG Strategy for traversing codebase package dependency graphs,
+ * import chains, and cross-package impact trees in monorepos and modular systems.
  *
  * Resolves:
  * - Downstream dependents: "What packages/modules depend on component X?"
@@ -37,9 +41,26 @@ export class GraphDependencyStrategy implements RAGStrategy {
   private readonly dependencyScoreBoost: number;
   private readonly extractSymbolsFn?: (query: string) => Promise<string[]> | string[];
 
-  // Token boundary regex to prevent false-positive substring matching (e.g., 'er' or 'import')
+  // Token boundary regex patterns
   private static readonly RE_SCOPED_PACKAGE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/g;
   private static readonly RE_IDENTIFIERS = /\b[A-Za-z_$][A-Za-z0-9_$.-]{2,}\b/g;
+  private static readonly STOP_WORDS = new Set([
+    'the',
+    'and',
+    'for',
+    'with',
+    'from',
+    'that',
+    'this',
+    'what',
+    'which',
+    'impact',
+    'analysis',
+    'query',
+    'test',
+    'code',
+    'file',
+  ]);
 
   constructor(options: GraphDependencyStrategyOptions) {
     this.graphProvider = options.graphProvider;
@@ -56,7 +77,7 @@ export class GraphDependencyStrategy implements RAGStrategy {
    * @returns Updated RAGContext with dependency graph facts and boosted chunk scores.
    */
   async process(context: RAGContext): Promise<RAGContext> {
-    if (!context.query || context.query.trim().length === 0) {
+    if (!context || !context.query || context.query.trim().length === 0) {
       return context;
     }
 
@@ -67,38 +88,19 @@ export class GraphDependencyStrategy implements RAGStrategy {
 
     const dependencyFactLines = new Set<string>();
     const impactedEntities = new Set<string>();
-    const subGraphCache = new Map<string, { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] }>();
+    const visitedSymbols = new Set<string>();
+    const seenEdges = new Set<string>();
 
     for (const symbol of targetSymbols) {
       impactedEntities.add(symbol.toLowerCase());
-
-      try {
-        let subGraph = subGraphCache.get(symbol);
-        if (!subGraph) {
-          subGraph = await this.graphProvider.querySubGraph(symbol, this.maxDepth);
-          subGraphCache.set(symbol, subGraph);
-        }
-
-        for (const node of subGraph.nodes) {
-          impactedEntities.add(node.id.toLowerCase());
-          impactedEntities.add(node.label.toLowerCase());
-        }
-
-        for (const edge of subGraph.edges) {
-          const source = subGraph.nodes.find((n: KnowledgeGraphNode) => n.id === edge.sourceId);
-          const target = subGraph.nodes.find((n: KnowledgeGraphNode) => n.id === edge.targetId);
-
-          const sourceLabel = source ? `${source.label} [${source.id}]` : edge.sourceId;
-          const targetLabel = target ? `${target.label} [${target.id}]` : edge.targetId;
-
-          dependencyFactLines.add(`• ${sourceLabel} --(${edge.relation})--> ${targetLabel}`);
-        }
-      } catch (err: unknown) {
-        // Fallback gracefully on graph retrieval errors without breaking pipeline
-        if (process.env.RAG_LOG_DEBUG === 'true') {
-          console.debug(`[GraphDependencyStrategy] Failed to query sub-graph for symbol: ${symbol}`, err);
-        }
-      }
+      await this.traverseWithCycleProtection(
+        symbol,
+        0,
+        visitedSymbols,
+        seenEdges,
+        impactedEntities,
+        dependencyFactLines,
+      );
     }
 
     if (dependencyFactLines.size === 0) {
@@ -109,10 +111,19 @@ export class GraphDependencyStrategy implements RAGStrategy {
       `### Codebase Architecture & Dependency Graph Facts\n` +
       Array.from(dependencyFactLines).join('\n');
 
-    // Word-boundary based candidate chunk score boosting to prevent false-positive substring hits
-    let updatedChunks = context.chunks;
-    const scoresMap = new Map<string, number>(context.scores);
+    // Convert scores safely regardless of input type (Map, Record, or undefined)
+    const scoresMap = new Map<string, number>();
+    if (context.scores instanceof Map) {
+      for (const [k, v] of context.scores.entries()) {
+        scoresMap.set(k, v);
+      }
+    } else if (context.scores && typeof context.scores === 'object') {
+      for (const [k, v] of Object.entries(context.scores)) {
+        scoresMap.set(k, Number(v));
+      }
+    }
 
+    let updatedChunks = context.chunks;
     if (context.chunks && context.chunks.length > 0) {
       updatedChunks = context.chunks.map((chunk) => {
         const content = typeof chunk.content === 'string' ? chunk.content : '';
@@ -121,9 +132,9 @@ export class GraphDependencyStrategy implements RAGStrategy {
 
         let matched = false;
         for (const entity of impactedEntities) {
-          if (entity.length < 3) continue;
+          if (entity.length < 3 || GraphDependencyStrategy.STOP_WORDS.has(entity)) continue;
 
-          // Exact word/token matching
+          // Exact word/token boundary matching
           const escaped = entity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const wordRegex = new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, 'i');
 
@@ -160,6 +171,60 @@ export class GraphDependencyStrategy implements RAGStrategy {
     };
   }
 
+  private async traverseWithCycleProtection(
+    currentSymbol: string,
+    currentDepth: number,
+    visitedSymbols: Set<string>,
+    seenEdges: Set<string>,
+    impactedEntities: Set<string>,
+    factLines: Set<string>,
+  ): Promise<void> {
+    if (visitedSymbols.has(currentSymbol) || currentDepth > this.maxDepth) {
+      return;
+    }
+    visitedSymbols.add(currentSymbol);
+
+    try {
+      const subGraph = await this.graphProvider.querySubGraph(currentSymbol, 1);
+
+      for (const node of subGraph.nodes) {
+        impactedEntities.add(node.id.toLowerCase());
+        impactedEntities.add(node.label.toLowerCase());
+      }
+
+      for (const edge of subGraph.edges) {
+        const edgeKey = `${edge.sourceId}->${edge.relation}->${edge.targetId}`;
+        if (seenEdges.has(edgeKey)) continue;
+        seenEdges.add(edgeKey);
+
+        const source = subGraph.nodes.find((n: KnowledgeGraphNode) => n.id === edge.sourceId);
+        const target = subGraph.nodes.find((n: KnowledgeGraphNode) => n.id === edge.targetId);
+
+        const sourceLabel = source ? `${source.label} [${source.id}]` : edge.sourceId;
+        const targetLabel = target ? `${target.label} [${target.id}]` : edge.targetId;
+
+        factLines.add(`• ${sourceLabel} --(${edge.relation})--> ${targetLabel}`);
+
+        // Recursively traverse connected neighbor
+        const nextSymbol = edge.sourceId === currentSymbol ? edge.targetId : edge.sourceId;
+        if (!visitedSymbols.has(nextSymbol)) {
+          await this.traverseWithCycleProtection(
+            nextSymbol,
+            currentDepth + 1,
+            visitedSymbols,
+            seenEdges,
+            impactedEntities,
+            factLines,
+          );
+        }
+      }
+    } catch (err: unknown) {
+      if (process.env.RAG_LOG_DEBUG === 'true') {
+        console.debug(`[GraphDependencyStrategy] Traversal error for: ${currentSymbol}`, err);
+      }
+    }
+  }
+
   private async resolveTargetSymbols(query: string): Promise<string[]> {
     if (this.extractSymbolsFn) {
       return this.extractSymbolsFn(query);
@@ -176,12 +241,12 @@ export class GraphDependencyStrategy implements RAGStrategy {
     // 2. Match individual identifier symbols
     const identifierMatches = query.match(GraphDependencyStrategy.RE_IDENTIFIERS) ?? [];
     for (const match of identifierMatches) {
-      if (!match.startsWith('@')) {
+      if (!match.startsWith('@') && !GraphDependencyStrategy.STOP_WORDS.has(match.toLowerCase())) {
         symbols.add(match);
       }
     }
 
-    // 3. Fallback / supplementary check with graph node search
+    // 3. Supplement with graph node search
     if (this.graphProvider.searchNodes) {
       for (const sym of Array.from(symbols)) {
         try {
@@ -189,8 +254,10 @@ export class GraphDependencyStrategy implements RAGStrategy {
           for (const n of found) {
             symbols.add(n.id);
           }
-        } catch {
-          // Ignore search failures
+        } catch (err: unknown) {
+          if (process.env.RAG_LOG_DEBUG === 'true') {
+            console.debug(`[GraphDependencyStrategy] searchNodes error for: ${sym}`, err);
+          }
         }
       }
     }
