@@ -73,6 +73,8 @@ export interface AgenticModuleOptions {
    * which hands the error to the model instead of ending the run.
    */
   toolErrorHandling?: ToolErrorHandling;
+  /** Custom ApprovalStore used for HITL approval records. */
+  approvalStore?: ApprovalStore;
   /** Custom SessionStore used for conversation history. */
   sessionStore?: SessionStore;
   /** Custom IdempotencyStore used for deduplicating tool executions. */

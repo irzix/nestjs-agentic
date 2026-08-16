@@ -5,6 +5,7 @@ import { runApprovalServiceTests } from './approval-service.spec';
 import { runApprovalStoreContractTests } from './approval-store-contract.spec';
 import { runAuditTrailTests } from './audit-trail.spec';
 import { runConversationHistoryTests } from './conversation-history.spec';
+import { runCrashRecoveryHitlTests } from './crash-recovery-hitl.spec';
 import { runIdempotencyTests } from './idempotency.spec';
 import { runLocalToolProviderTests } from './local-tool-provider.spec';
 import { runModelAdapterContractTests } from './model-adapter-contract.spec';
@@ -37,12 +38,14 @@ async function runAllCoreTests() {
     await runAuditTrailTests();
     await runPostgresStoresTests();
     await runObserversTests();
+    await runCrashRecoveryHitlTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 16 CORE UNIT TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 17 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
-  } catch (err: any) {
-    console.error('\n❌ TEST SUITE FAILURE:', err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('\n❌ TEST SUITE FAILURE:', message);
     process.exit(1);
   }
 }

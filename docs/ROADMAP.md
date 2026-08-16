@@ -60,7 +60,7 @@ Goal: run a complete, governed agent turn without requiring LangGraph or another
 
 ### 0.6 — Durable and Observable Execution
 
-> **Status: In Progress** | [Milestone 0.6](https://github.com/irzix/nestjs-agentic/milestone/2)
+> **Status: Complete** | [Milestone 0.6](https://github.com/irzix/nestjs-agentic/milestone/2)
 
 Goal: make executions safe to pause, recover, inspect, and operate in production environments.
 
@@ -72,7 +72,7 @@ Goal: make executions safe to pause, recover, inspect, and operate in production
 - [x] Implement Tri-Rail Guardrails with post-execution tool output sanitization and canary tokens ([#49](https://github.com/irzix/nestjs-agentic/issues/49)).
 - [x] PostgreSQL persistence adapters for state, session, approval, and idempotency stores ([#34](https://github.com/irzix/nestjs-agentic/issues/34)).
 - [x] Standardize formal ReAct event lifecycles (`thought`, `action_call`, `observation`) and OpenTelemetry GenAI attributes ([#32](https://github.com/irzix/nestjs-agentic/issues/32), [#56](https://github.com/irzix/nestjs-agentic/issues/56)).
-- [ ] Integration test suite for crash recovery and HITL approvals ([#30](https://github.com/irzix/nestjs-agentic/issues/30)).
+- [x] Integration test suite for crash recovery and HITL approvals ([#30](https://github.com/irzix/nestjs-agentic/issues/30)).
 
 ---
 

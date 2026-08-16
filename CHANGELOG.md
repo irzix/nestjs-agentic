@@ -21,11 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `AgentRunner.resumeCheckpoint` and `AgentRunner.recoverLatestCheckpoint` with `checkpointTtlSeconds` configuration.
 - **Contract Test Suites**:
   - `runSessionStoreContract`, `runApprovalStoreContract`, and `runIdempotencyStoreContract` verifying store implementations against behavioral contracts.
+- **Multi-Instance Crash Recovery & HITL Integration Tests (`@nestjs-agentic/core`)**:
+  - `runCrashRecoveryHitlTests`: Comprehensive 7-scenario integration test suite verifying multi-instance process crash recovery, complete DI container restart, Redis & PostgreSQL persistence store resumption, atomic single-claim concurrency, in-flight checkpoint recovery, rejection handling, and multi-tenant isolation (#30).
 - **Runtime Observers & OpenTelemetry Tracing (`@nestjs-agentic/core`)**:
   - `AgentObserver`: Lifecycle hook interface (`onAgentStart`, `onModelRequest`, `onModelResponse`, `onToolCall`, `onToolResult`, `onAgentEnd`, `onError`).
-  - `ObserverNotifier`: Concurrent, error-isolated lifecycle event dispatcher using `Promise.allSettled`.
-  - `OpenTelemetryGenAiObserver`: Built-in CNCF GenAI Semantic Conventions (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.agent.*`, `gen_ai.tool.*`, `gen_ai.duration_ms`).
-  - `InMemoryAgentObserver`: In-memory event collector for unit testing and local inspection.
+  - `ObserverNotifier`: Concurrent, error-isolated lifecycle event dispatcher using `Promise.allSettled` with sampling rate control (`samplingRate`).
+  - `OpenTelemetryGenAiObserver`: Built-in CNCF GenAI Semantic Conventions (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.agent.*`, `gen_ai.tool.*`, `gen_ai.parent_trace.id`, `gen_ai.root_trace.id`).
+  - `StructuredLogObserver`: Built-in structured JSON logging observer for NestJS Logger, Winston, and Pino.
+  - `InMemoryAgentObserver`: In-memory event collector with configurable `maxEvents` FIFO bounds for unit testing and local inspection.
   - Multi-provider wiring: `AgenticModule.forRoot({ observers: [...] })` and `AGENT_OBSERVERS` token support in `AgentRunner` and `AgentExecutor`.
 
 ## [0.4.0] - 2026-08-10
