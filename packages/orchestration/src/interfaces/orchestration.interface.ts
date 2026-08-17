@@ -162,8 +162,19 @@ export interface RefinementLoopCheckpoint {
 
 /**
  * Strategy for aggregating parallel sub-agent execution results.
+ *
+ * - `allSettled`: Run all sub-agents, merge every result.
+ * - `firstSuccess`: Race all sub-agents, cancel losers on first success.
+ * - `bestOf`: Run all sub-agents, pick the best by evaluator or score.
+ * - `consensusMerge`: Run all sub-agents, merge with convergence scoring.
+ * - `fallbackChain`: Execute sub-agents sequentially until one succeeds.
  */
-export type AggregationStrategy = 'allSettled' | 'firstSuccess' | 'consensusMerge';
+export type AggregationStrategy =
+  | 'allSettled'
+  | 'firstSuccess'
+  | 'bestOf'
+  | 'consensusMerge'
+  | 'fallbackChain';
 
 /**
  * Options for configuring parallel sub-agent fan-out execution.
@@ -189,6 +200,22 @@ export interface ParallelRunnerOptions {
 
   /** Custom merger function to combine sub-agent results. */
   customMergerFn?: (results: SubAgentResult[]) => Promise<string> | string;
+
+  /**
+   * Custom evaluator function to select the best sub-agent result from successful executions.
+   * Used by the `bestOf` aggregation strategy.
+   *
+   * @param results - Array of successful sub-agent execution results.
+   * @returns The chosen winner SubAgentResult. If it throws or returns an invalid result,
+   * the runner automatically falls back to highest score selection.
+   */
+  evaluatorFn?: (results: SubAgentResult[]) => Promise<SubAgentResult> | SubAgentResult;
+
+  /**
+   * Consensus convergence threshold (0.0 to 1.0) for multi-agent debate and consensus merging.
+   * Default: `0.7`
+   */
+  consensusThreshold?: number;
 }
 
 /**

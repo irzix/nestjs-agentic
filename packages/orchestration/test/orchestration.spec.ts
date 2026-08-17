@@ -1288,6 +1288,254 @@ export async function runOrchestrationTests() {
     console.log('    ✓ OCC checkpoint sequence conflict detection verified');
   }
 
+  // =========================================================================
+  // TEST 31: firstSuccess Race — Fast Cancellation of Losers
+  // =========================================================================
+  {
+    console.log('  - Test 31: firstSuccess Race — Fast Cancellation of Losers');
+    const parallelRunner = new ParallelSubAgentRunner(runner, {
+      aggregationStrategy: 'firstSuccess',
+      timeoutMs: 10000,
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_race_first',
+      traceId: 'trace_race',
+      security: { tenantId: 'tenant_race' },
+    };
+
+    const res = await parallelRunner.run(parentContext, [
+      { agentName: 'writer_agent', message: 'Fast responder' },
+      { agentName: 'agent_a', message: 'Slow responder' },
+      { agentName: 'agent_b', message: 'Another responder' },
+    ]);
+
+    assert(res.successCount === 1, 'Exactly one winner in firstSuccess');
+    assert(res.results.length === 1, 'Only the winner result is returned');
+    assert(res.selectedAgent !== undefined, 'selectedAgent is set');
+    assert(res.combinedResponse.length > 0, 'Combined response contains winner output');
+    console.log('    ✓ firstSuccess race with fast cancellation verified');
+  }
+
+  // =========================================================================
+  // TEST 32: bestOf — Evaluator-Driven Selection
+  // =========================================================================
+  {
+    console.log('  - Test 32: bestOf — Evaluator-Driven Selection');
+    const parallelRunner = new ParallelSubAgentRunner(runner, {
+      aggregationStrategy: 'bestOf',
+      evaluatorFn: (results) => {
+        // Evaluator: pick the result with longest response
+        return results.reduce((best, r) =>
+          r.response.length > best.response.length ? r : best,
+        );
+      },
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_best_eval',
+      traceId: 'trace_best_eval',
+      security: { tenantId: 'tenant_best' },
+    };
+
+    const res = await parallelRunner.run(parentContext, [
+      { agentName: 'writer_agent', message: 'Write short' },
+      { agentName: 'agent_a', message: 'Write a long detailed response' },
+    ]);
+
+    assert(res.selectedAgent !== undefined, 'bestOf selects a winner');
+    assert(res.successCount === 2, 'Both agents succeeded');
+    assert(res.results.length === 2, 'All results are returned');
+    assert(res.combinedResponse === res.results.find((r) => r.agentName === res.selectedAgent)?.response,
+      'combinedResponse matches the selected winner');
+    console.log('    ✓ bestOf evaluator-driven selection verified');
+  }
+
+  // =========================================================================
+  // TEST 33: bestOf — Fallback to Highest Score (No Evaluator)
+  // =========================================================================
+  {
+    console.log('  - Test 33: bestOf — Fallback to Highest Score');
+    const parallelRunner = new ParallelSubAgentRunner(runner, {
+      aggregationStrategy: 'bestOf',
+      // No evaluatorFn — should fall back to highest score
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_best_score',
+      traceId: 'trace_best_score',
+      security: { tenantId: 'tenant_score' },
+    };
+
+    const res = await parallelRunner.run(parentContext, [
+      { agentName: 'writer_agent', message: 'Draft analysis' },
+      { agentName: 'agent_a', message: 'Draft analysis' },
+    ]);
+
+    assert(res.selectedAgent !== undefined, 'bestOf without evaluator still selects');
+    assert(res.combinedResponse.length > 0, 'Response is non-empty');
+    console.log('    ✓ bestOf fallback to highest score verified');
+  }
+
+  // =========================================================================
+  // TEST 34: fallbackChain — Sequential Cascade Stops on First Success
+  // =========================================================================
+  {
+    console.log('  - Test 34: fallbackChain — Sequential Cascade Stops on First Success');
+    const callOrder: string[] = [];
+    const mockRunner = {
+      async run(agentName: string, input: Record<string, unknown>) {
+        callOrder.push(agentName);
+        if (agentName === 'agent_a') {
+          throw new Error('Agent A failed');
+        }
+        return {
+          output: `${agentName} succeeded`,
+          toolCalls: [],
+          usage: { inputTokens: 25, outputTokens: 25, totalTokens: 50 },
+        };
+      },
+    } as unknown as AgentRunner;
+
+    const cascadeRunner = new ParallelSubAgentRunner(mockRunner, {
+      aggregationStrategy: 'fallbackChain',
+      retriesPerSubAgent: 0,
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_cascade',
+      traceId: 'trace_cascade',
+      security: { tenantId: 'tenant_cascade' },
+    };
+
+    const res = await cascadeRunner.run(parentContext, [
+      { agentName: 'agent_a', message: 'Try A' },
+      { agentName: 'agent_b', message: 'Try B' },
+      { agentName: 'agent_c', message: 'Try C' },
+    ]);
+
+    assert(callOrder.length === 2, `Called exactly 2 agents (was ${callOrder.length})`);
+    assert(callOrder[0] === 'agent_a', 'Called agent_a first');
+    assert(callOrder[1] === 'agent_b', 'Called agent_b second');
+    assert(res.selectedAgent === 'agent_b', 'agent_b selected as winner');
+    assert(res.successCount === 1, 'One success');
+    assert(res.failedCount === 1, 'One failure');
+    assert(res.results.length === 2, 'Only 2 results (agent_c never ran)');
+    console.log('    ✓ fallbackChain sequential cascade verified');
+  }
+
+  // =========================================================================
+  // TEST 35: fallbackChain — All Agents Fail
+  // =========================================================================
+  {
+    console.log('  - Test 35: fallbackChain — All Agents Fail');
+    const mockRunner = {
+      async run(agentName: string) {
+        throw new Error(`${agentName} failed`);
+      },
+    } as unknown as AgentRunner;
+
+    const cascadeRunner = new ParallelSubAgentRunner(mockRunner, {
+      aggregationStrategy: 'fallbackChain',
+      retriesPerSubAgent: 0,
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_all_fail',
+      traceId: 'trace_all_fail',
+      security: { tenantId: 'tenant_fail' },
+    };
+
+    const res = await cascadeRunner.run(parentContext, [
+      { agentName: 'agent_x', message: 'Try X' },
+      { agentName: 'agent_y', message: 'Try Y' },
+    ]);
+
+    assert(res.successCount === 0, 'Zero successes');
+    assert(res.failedCount === 2, 'All agents failed');
+    assert(res.selectedAgent === undefined, 'No winner selected');
+    assert(res.results.length === 2, 'All results returned');
+    assert(res.combinedResponse.includes('agent_x') && res.combinedResponse.includes('agent_y'),
+      'Combined response reports all failures');
+    console.log('    ✓ fallbackChain all-fail cascade verified');
+  }
+
+  // =========================================================================
+  // TEST 36: bestOf — Resilient Error Fallback on Faulty Evaluator
+  // =========================================================================
+  {
+    console.log('  - Test 36: bestOf — Resilient Error Fallback on Faulty Evaluator');
+    const parallelRunner = new ParallelSubAgentRunner(runner, {
+      aggregationStrategy: 'bestOf',
+      evaluatorFn: async () => {
+        throw new Error('External evaluator API network timeout');
+      },
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_eval_err',
+      traceId: 'trace_eval_err',
+      security: { tenantId: 'tenant_eval_err' },
+    };
+
+    const res = await parallelRunner.run(parentContext, [
+      { agentName: 'writer_agent', message: 'Write short' },
+      { agentName: 'agent_a', message: 'Write a long detailed response' },
+    ]);
+
+    assert(res.selectedAgent !== undefined, 'bestOf safely selects winner even when evaluator throws');
+    assert(res.successCount === 2, 'Both sub-agents executed successfully');
+    assert(res.results.length === 2, 'All sub-agent results preserved');
+    console.log('    ✓ bestOf faulty evaluator fallback verified');
+  }
+
+  // =========================================================================
+  // TEST 37: fallbackChain — Mid-Run Abort Captures All Remaining Tasks
+  // =========================================================================
+  {
+    console.log('  - Test 37: fallbackChain — Mid-Run Abort Captures All Remaining Tasks');
+    const abortController = new AbortController();
+
+    const mockRunner = {
+      async run(agentName: string) {
+        if (agentName === 'agent_1') {
+          // Abort during agent_1 run
+          abortController.abort();
+          throw new Error('Agent 1 failed');
+        }
+        return {
+          output: `${agentName} output`,
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+        };
+      },
+    } as unknown as AgentRunner;
+
+    const cascadeRunner = new ParallelSubAgentRunner(mockRunner, {
+      aggregationStrategy: 'fallbackChain',
+      signal: abortController.signal,
+      retriesPerSubAgent: 0,
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_cascade_abort',
+      traceId: 'trace_cascade_abort',
+      security: { tenantId: 'tenant_cascade_abort' },
+    };
+
+    const res = await cascadeRunner.run(parentContext, [
+      { agentName: 'agent_1', message: 'Task 1' },
+      { agentName: 'agent_2', message: 'Task 2' },
+      { agentName: 'agent_3', message: 'Task 3' },
+    ]);
+
+    assert(res.results.length === 3, `All 3 tasks are tracked in results (was ${res.results.length})`);
+    assert(Boolean(res.results[0].error?.includes('failed') || res.results[0].error?.includes('aborted')), 'First task failed');
+    assert(res.results[1].error === 'Execution was aborted', 'Second task marked as aborted');
+    assert(res.results[2].error === 'Execution was aborted', 'Third task marked as aborted');
+    console.log('    ✓ fallbackChain mid-run abort completion verified');
+  }
+
   console.log('🎉 All Orchestration Unit & Security Tests Passed!\n');
 }
 
@@ -1297,3 +1545,5 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+

@@ -17,10 +17,17 @@ export interface ParallelRunResult {
 
   /** Total number of sub-agents that failed or timed out. */
   failedCount: number;
+
+  /** Name of the sub-agent selected as winner (for bestOf / firstSuccess). */
+  selectedAgent?: string;
+
+  /** Consensus convergence score for consensusMerge (0.0–1.0). */
+  consensusScore?: number;
 }
 
 /**
- * Runner service for executing multiple sub-agents in parallel with retries, fallback recovery, and score-weighted consensus.
+ * Runner service for executing multiple sub-agents with configurable aggregation strategies:
+ * race-with-cancellation, evaluator-driven best-of-N, sequential fallback chains, and consensus merge.
  */
 export class ParallelSubAgentRunner {
   private readonly delegator: SubAgentDelegator;
@@ -36,11 +43,13 @@ export class ParallelSubAgentRunner {
       signal: options?.signal,
       fallbackAgentName: options?.fallbackAgentName,
       customMergerFn: options?.customMergerFn,
+      evaluatorFn: options?.evaluatorFn,
+      consensusThreshold: options?.consensusThreshold ?? 0.7,
     };
   }
 
   /**
-   * Executes multiple sub-agents in parallel and aggregates their responses based on the configured aggregation strategy.
+   * Executes sub-agents using the configured aggregation strategy.
    */
   async run(
     parentContext: AgentContext,
@@ -53,260 +62,467 @@ export class ParallelSubAgentRunner {
     if (this.options.signal?.aborted) {
       const abortedResults: SubAgentResult[] = tasks.map((t) => ({
         agentName: t.agentName,
-        status: 'failed',
+        status: 'failed' as const,
         response: '',
         toolCount: 0,
-        error: 'Parallel execution was aborted',
+        error: 'Execution was aborted',
       }));
       return {
-        combinedResponse: 'Parallel execution was aborted',
+        combinedResponse: 'Execution was aborted',
         results: abortedResults,
         successCount: 0,
         failedCount: tasks.length,
       };
     }
 
-    const executeTaskWithRetryAndFallback = async (task: SubAgentTask): Promise<SubAgentResult> => {
-      const activeSignal = task.signal ?? this.options.signal;
-      if (activeSignal?.aborted) {
-        return {
-          agentName: task.agentName,
-          status: 'failed',
-          response: '',
-          toolCount: 0,
-          error: 'Sub-agent run was aborted',
-        };
+    switch (this.options.aggregationStrategy) {
+      case 'firstSuccess':
+        return this.raceFirstSuccess(parentContext, tasks);
+      case 'fallbackChain':
+        return this.cascade(parentContext, tasks);
+      case 'bestOf':
+      case 'consensusMerge':
+      case 'allSettled':
+      default:
+        return this.fanOut(parentContext, tasks);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // firstSuccess — True race with fast cancellation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Races all sub-agents in parallel. The moment one succeeds, an internal
+   * AbortController cancels every remaining in-flight agent. Only the winner
+   * is returned in `results`.
+   */
+  private async raceFirstSuccess(
+    parentContext: AgentContext,
+    tasks: SubAgentTask[],
+  ): Promise<ParallelRunResult> {
+    const raceController = new AbortController();
+    const externalSignal = this.options.signal;
+
+    // Link external abort to internal race controller
+    const onExternalAbort = () => raceController.abort();
+    if (externalSignal) {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+
+    let winner: SubAgentResult | null = null;
+
+    try {
+      const promises = tasks.map(async (task): Promise<SubAgentResult> => {
+        const composedSignal = raceController.signal;
+        return this.executeWithRetry(parentContext, task, composedSignal);
+      });
+
+      // Race: resolve as soon as any sub-agent succeeds
+      winner = await new Promise<SubAgentResult>((resolve) => {
+        let settledCount = 0;
+        const failures: SubAgentResult[] = [];
+
+        for (const p of promises) {
+          p.then((result) => {
+            settledCount++;
+            if (raceController.signal.aborted && winner) {
+              return;
+            }
+            if (result.status === 'success' && !winner) {
+              winner = result;
+              raceController.abort();
+              resolve(result);
+            } else {
+              failures.push(result);
+              if (settledCount === promises.length && !winner) {
+                // All failed — resolve with last failure
+                resolve(failures[failures.length - 1]);
+              }
+            }
+          }).catch(() => {
+            settledCount++;
+            if (settledCount === promises.length && !winner) {
+              resolve({
+                agentName: 'unknown',
+                status: 'failed',
+                response: '',
+                toolCount: 0,
+                error: 'All sub-agents failed',
+              });
+            }
+          });
+        }
+      });
+    } finally {
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
       }
+    }
 
-      let attempts = 0;
-      let lastResult: SubAgentResult | null = null;
-      const maxAttempts = (this.options.retriesPerSubAgent ?? 1) + 1;
+    const isSuccess = winner.status === 'success';
+    return {
+      combinedResponse: isSuccess ? winner.response : `Error: ${winner.error}`,
+      results: [winner],
+      successCount: isSuccess ? 1 : 0,
+      failedCount: isSuccess ? 0 : 1,
+      selectedAgent: isSuccess ? winner.agentName : undefined,
+    };
+  }
 
-      while (attempts < maxAttempts) {
-        if (activeSignal?.aborted) {
-          return {
-            agentName: task.agentName,
+  // ---------------------------------------------------------------------------
+  // fallbackChain — Sequential cascade
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Executes tasks one-by-one in order. Stops at the first success.
+   * Uses full retry + timeout + fallback for each step.
+   */
+  private async cascade(
+    parentContext: AgentContext,
+    tasks: SubAgentTask[],
+  ): Promise<ParallelRunResult> {
+    const allResults: SubAgentResult[] = [];
+    const activeSignal = this.options.signal;
+
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      if (activeSignal?.aborted) {
+        for (let j = i; j < tasks.length; j++) {
+          allResults.push({
+            agentName: tasks[j].agentName,
             status: 'failed',
             response: '',
             toolCount: 0,
-            error: 'Sub-agent run was aborted',
-          };
+            error: 'Execution was aborted',
+          });
         }
-
-        attempts++;
-
-        let timer: NodeJS.Timeout | undefined;
-        let abortHandler: (() => void) | undefined;
-
-        const timeoutPromise = new Promise<SubAgentResult>((resolve) => {
-          timer = setTimeout(() => {
-            resolve({
-              agentName: task.agentName,
-              status: 'failed',
-              response: '',
-              toolCount: 0,
-              error: `Sub-agent ${task.agentName} timed out after ${this.options.timeoutMs}ms`,
-            });
-          }, this.options.timeoutMs);
-        });
-
-        const abortPromise = new Promise<SubAgentResult>((resolve) => {
-          if (activeSignal?.aborted) {
-            resolve({
-              agentName: task.agentName,
-              status: 'failed',
-              response: '',
-              toolCount: 0,
-              error: 'Sub-agent run was aborted',
-            });
-            return;
-          }
-          if (activeSignal) {
-            abortHandler = () => {
-              resolve({
-                agentName: task.agentName,
-                status: 'failed',
-                response: '',
-                toolCount: 0,
-                error: 'Sub-agent run was aborted',
-              });
-            };
-            activeSignal.addEventListener('abort', abortHandler, { once: true });
-          }
-        });
-
-        try {
-          lastResult = await Promise.race([
-            this.delegator.delegate(parentContext, task, undefined, activeSignal),
-            timeoutPromise,
-            abortPromise,
-          ]);
-        } finally {
-          if (timer) clearTimeout(timer);
-          if (activeSignal && abortHandler) {
-            activeSignal.removeEventListener('abort', abortHandler);
-          }
-        }
-
-        if (lastResult.status === 'success' || activeSignal?.aborted) {
-          return lastResult;
-        }
+        break;
       }
 
-      // Fallback agent execution if primary sub-agent fails all retries and is not aborted
-      if (!activeSignal?.aborted && this.options.fallbackAgentName && this.options.fallbackAgentName !== task.agentName) {
-        const fallbackTask: SubAgentTask = {
-          ...task,
-          agentName: this.options.fallbackAgentName,
-        };
+      const result = await this.executeWithRetry(parentContext, task, activeSignal);
+      allResults.push(result);
 
-        let fallbackTimer: NodeJS.Timeout | undefined;
-        let fallbackAbortHandler: (() => void) | undefined;
-
-        const fallbackTimeoutPromise = new Promise<SubAgentResult>((resolve) => {
-          fallbackTimer = setTimeout(() => {
-            resolve({
-              agentName: this.options.fallbackAgentName!,
-              status: 'failed',
-              response: '',
-              toolCount: 0,
-              error: `Fallback sub-agent ${this.options.fallbackAgentName} timed out after ${this.options.timeoutMs}ms`,
-            });
-          }, this.options.timeoutMs);
-        });
-
-        const fallbackAbortPromise = new Promise<SubAgentResult>((resolve) => {
-          if (activeSignal?.aborted) {
-            resolve({
-              agentName: this.options.fallbackAgentName!,
-              status: 'failed',
-              response: '',
-              toolCount: 0,
-              error: 'Sub-agent run was aborted',
-            });
-            return;
-          }
-          if (activeSignal) {
-            fallbackAbortHandler = () => {
-              resolve({
-                agentName: this.options.fallbackAgentName!,
-                status: 'failed',
-                response: '',
-                toolCount: 0,
-                error: 'Sub-agent run was aborted',
-              });
-            };
-            activeSignal.addEventListener('abort', fallbackAbortHandler, { once: true });
-          }
-        });
-
-        try {
-          const fallbackResult = await Promise.race([
-            this.delegator.delegate(parentContext, fallbackTask, undefined, activeSignal),
-            fallbackTimeoutPromise,
-            fallbackAbortPromise,
-          ]);
-
-          return {
-            ...fallbackResult,
-            agentName: `${task.agentName} (fallback: ${this.options.fallbackAgentName})`,
-          };
-        } finally {
-          if (fallbackTimer) clearTimeout(fallbackTimer);
-          if (activeSignal && fallbackAbortHandler) {
-            activeSignal.removeEventListener('abort', fallbackAbortHandler);
-          }
-        }
+      if (result.status === 'success') {
+        break;
       }
+    }
 
-      return (
-        lastResult || {
-          agentName: task.agentName,
-          status: 'failed',
-          response: '',
-          toolCount: 0,
-          error: 'Sub-agent failed all execution attempts',
-        }
-      );
+    const lastSuccess = allResults.find((r) => r.status === 'success');
+    const successCount = lastSuccess ? 1 : 0;
+    const failedCount = allResults.length - successCount;
+    const combinedResponse = lastSuccess
+      ? lastSuccess.response
+      : allResults.map((r) => `[${r.agentName} Error: ${r.error}]`).join('\n');
+
+    return {
+      combinedResponse,
+      results: allResults,
+      successCount,
+      failedCount,
+      selectedAgent: lastSuccess?.agentName,
     };
+  }
 
-    // Execute with optional maxConcurrency limit
+  // ---------------------------------------------------------------------------
+  // fanOut — allSettled / bestOf / consensusMerge
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Runs all sub-agents in parallel (honoring maxConcurrency), then
+   * delegates to the configured aggregation strategy for result merging.
+   */
+  private async fanOut(
+    parentContext: AgentContext,
+    tasks: SubAgentTask[],
+  ): Promise<ParallelRunResult> {
+    const activeSignal = this.options.signal;
     const results: SubAgentResult[] = [];
     const maxConcurrency = this.options.maxConcurrency;
 
     if (maxConcurrency && maxConcurrency > 0 && maxConcurrency < tasks.length) {
       let activeIndex = 0;
-      const executing: Promise<void>[] = [];
 
       const runWorker = async () => {
-        while (activeIndex < tasks.length) {
-          const currentIndex = activeIndex++;
-          const task = tasks[currentIndex];
-          results[currentIndex] = await executeTaskWithRetryAndFallback(task);
+        while (true) {
+          const idx = activeIndex++;
+          if (idx >= tasks.length) break;
+          results[idx] = await this.executeWithRetry(parentContext, tasks[idx], activeSignal);
         }
       };
 
-      const workerCount = Math.min(maxConcurrency, tasks.length);
-      for (let i = 0; i < workerCount; i++) {
-        executing.push(runWorker());
+      const workers: Promise<void>[] = [];
+      for (let i = 0; i < Math.min(maxConcurrency, tasks.length); i++) {
+        workers.push(runWorker());
       }
-
-      await Promise.all(executing);
+      await Promise.all(workers);
     } else {
-      const taskPromises = tasks.map((task) => executeTaskWithRetryAndFallback(task));
-      const settledResults = await Promise.all(taskPromises);
-      results.push(...settledResults);
+      const settled = await Promise.all(
+        tasks.map((task) => this.executeWithRetry(parentContext, task, activeSignal)),
+      );
+      results.push(...settled);
     }
 
     const successCount = results.filter((r) => r.status === 'success').length;
-    const failedCount = results.filter((r) => r.status !== 'success').length;
+    const failedCount = results.length - successCount;
 
-    let combinedResponse = '';
+    return this.aggregate(results, successCount, failedCount);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Aggregation
+  // ---------------------------------------------------------------------------
+
+  private async aggregate(
+    results: SubAgentResult[],
+    successCount: number,
+    failedCount: number,
+  ): Promise<ParallelRunResult> {
+    // Custom merger overrides everything
     if (this.options.customMergerFn) {
-      combinedResponse = await this.options.customMergerFn(results);
-    } else {
-      switch (this.options.aggregationStrategy) {
-        case 'firstSuccess': {
-          const firstSuccess = results.find((r) => r.status === 'success');
-          combinedResponse = firstSuccess
-            ? firstSuccess.response
-            : results.map((r) => `[${r.agentName} Error: ${r.error}]`).join('\n');
-          break;
+      const combinedResponse = await this.options.customMergerFn(results);
+      return { combinedResponse, results, successCount, failedCount };
+    }
+
+    switch (this.options.aggregationStrategy) {
+      case 'bestOf':
+        return this.aggregateBestOf(results, successCount, failedCount);
+      case 'consensusMerge':
+        return this.aggregateConsensus(results, successCount, failedCount);
+      case 'allSettled':
+      default:
+        return this.aggregateAllSettled(results, successCount, failedCount);
+    }
+  }
+
+  private async aggregateBestOf(
+    results: SubAgentResult[],
+    successCount: number,
+    failedCount: number,
+  ): Promise<ParallelRunResult> {
+    const successful = results.filter((r) => r.status === 'success');
+    if (successful.length === 0) {
+      return {
+        combinedResponse: 'No sub-agents completed successfully.',
+        results,
+        successCount,
+        failedCount,
+      };
+    }
+
+    let selected: SubAgentResult | undefined;
+    if (this.options.evaluatorFn) {
+      try {
+        const evaluated = await this.options.evaluatorFn(successful);
+        if (evaluated && successful.includes(evaluated)) {
+          selected = evaluated;
         }
-        case 'consensusMerge': {
-          const successful = results.filter((r) => r.status === 'success');
-          if (successful.length === 0) {
-            combinedResponse = 'No sub-agents completed successfully.';
-          } else {
-            combinedResponse = successful
-              .map((r) => {
-                const confidence = r.score !== undefined ? ` (Score: ${r.score})` : '';
-                return `### [SubAgent: ${r.agentName}${confidence}]\n${r.response}`;
-              })
-              .join('\n\n');
-          }
-          break;
-        }
-        case 'allSettled':
-        default: {
-          combinedResponse = results
-            .map((r) => {
-              if (r.status === 'success') {
-                return `### [SubAgent: ${r.agentName} - SUCCESS]\n${r.response}`;
-              }
-              return `### [SubAgent: ${r.agentName} - FAILED]\nError: ${r.error}`;
-            })
-            .join('\n\n');
-          break;
-        }
+      } catch {
+        // Fallback to highest score if evaluator throws or fails
       }
     }
+
+    if (!selected) {
+      // Fallback: pick highest score, or first success
+      selected = successful.reduce((best, r) =>
+        (r.score ?? 0) > (best.score ?? 0) ? r : best,
+      );
+    }
+
+    return {
+      combinedResponse: selected.response,
+      results,
+      successCount,
+      failedCount,
+      selectedAgent: selected.agentName,
+    };
+  }
+
+  private aggregateConsensus(
+    results: SubAgentResult[],
+    successCount: number,
+    failedCount: number,
+  ): ParallelRunResult {
+    const successful = results.filter((r) => r.status === 'success');
+    if (successful.length === 0) {
+      return {
+        combinedResponse: 'No sub-agents completed successfully.',
+        results,
+        successCount,
+        failedCount,
+        consensusScore: 0,
+      };
+    }
+
+    // Compute consensus convergence metric from scores (variance-based)
+    const scores = successful
+      .map((r) => r.score)
+      .filter((s): s is number => s !== undefined);
+
+    let consensusScore: number | undefined;
+    if (scores.length >= 2) {
+      const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+      const variance = scores.reduce((acc, s) => acc + (s - mean) ** 2, 0) / scores.length;
+      // Normalize: max possible variance for [0,1] scores is 0.25
+      consensusScore = Math.max(0, Math.min(1, 1 - variance / 0.25));
+    }
+
+    const combinedResponse = successful
+      .map((r) => {
+        const confidence = r.score !== undefined ? ` (Score: ${r.score})` : '';
+        return `### [SubAgent: ${r.agentName}${confidence}]\n${r.response}`;
+      })
+      .join('\n\n');
 
     return {
       combinedResponse,
       results,
       successCount,
       failedCount,
+      consensusScore,
     };
+  }
+
+  private aggregateAllSettled(
+    results: SubAgentResult[],
+    successCount: number,
+    failedCount: number,
+  ): ParallelRunResult {
+    const combinedResponse = results
+      .map((r) => {
+        if (r.status === 'success') {
+          return `### [SubAgent: ${r.agentName} - SUCCESS]\n${r.response}`;
+        }
+        return `### [SubAgent: ${r.agentName} - FAILED]\nError: ${r.error}`;
+      })
+      .join('\n\n');
+
+    return { combinedResponse, results, successCount, failedCount };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Single task execution with retry, timeout, and fallback
+  // ---------------------------------------------------------------------------
+
+  private async executeWithRetry(
+    parentContext: AgentContext,
+    task: SubAgentTask,
+    externalSignal?: AbortSignal,
+  ): Promise<SubAgentResult> {
+    const activeSignal = task.signal ?? externalSignal;
+
+    if (activeSignal?.aborted) {
+      return {
+        agentName: task.agentName,
+        status: 'failed',
+        response: '',
+        toolCount: 0,
+        error: 'Execution was aborted',
+      };
+    }
+
+    let attempts = 0;
+    let lastResult: SubAgentResult | null = null;
+    const maxAttempts = (this.options.retriesPerSubAgent ?? 1) + 1;
+
+    while (attempts < maxAttempts) {
+      if (activeSignal?.aborted) {
+        return {
+          agentName: task.agentName,
+          status: 'failed',
+          response: '',
+          toolCount: 0,
+          error: 'Execution was aborted',
+        };
+      }
+
+      attempts++;
+      lastResult = await this.delegateWithTimeout(parentContext, task, activeSignal);
+
+      if (lastResult.status === 'success' || activeSignal?.aborted) {
+        return lastResult;
+      }
+    }
+
+    // Fallback agent
+    if (
+      !activeSignal?.aborted &&
+      this.options.fallbackAgentName &&
+      this.options.fallbackAgentName !== task.agentName
+    ) {
+      const fallbackTask: SubAgentTask = { ...task, agentName: this.options.fallbackAgentName };
+      const fallbackResult = await this.delegateWithTimeout(parentContext, fallbackTask, activeSignal);
+      return {
+        ...fallbackResult,
+        agentName: `${task.agentName} (fallback: ${this.options.fallbackAgentName})`,
+      };
+    }
+
+    return lastResult || {
+      agentName: task.agentName,
+      status: 'failed',
+      response: '',
+      toolCount: 0,
+      error: 'Sub-agent failed all execution attempts',
+    };
+  }
+
+  private async delegateWithTimeout(
+    parentContext: AgentContext,
+    task: SubAgentTask,
+    activeSignal?: AbortSignal,
+  ): Promise<SubAgentResult> {
+    let timer: NodeJS.Timeout | undefined;
+    let abortHandler: (() => void) | undefined;
+
+    const timeoutPromise = new Promise<SubAgentResult>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({
+          agentName: task.agentName,
+          status: 'failed',
+          response: '',
+          toolCount: 0,
+          error: `Sub-agent ${task.agentName} timed out after ${this.options.timeoutMs}ms`,
+        });
+      }, this.options.timeoutMs);
+    });
+
+    const abortPromise = new Promise<SubAgentResult>((resolve) => {
+      if (activeSignal?.aborted) {
+        resolve({
+          agentName: task.agentName,
+          status: 'failed',
+          response: '',
+          toolCount: 0,
+          error: 'Execution was aborted',
+        });
+        return;
+      }
+      if (activeSignal) {
+        abortHandler = () => {
+          resolve({
+            agentName: task.agentName,
+            status: 'failed',
+            response: '',
+            toolCount: 0,
+            error: 'Execution was aborted',
+          });
+        };
+        activeSignal.addEventListener('abort', abortHandler, { once: true });
+      }
+    });
+
+    try {
+      return await Promise.race([
+        this.delegator.delegate(parentContext, task, undefined, activeSignal),
+        timeoutPromise,
+        abortPromise,
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (activeSignal && abortHandler) {
+        activeSignal.removeEventListener('abort', abortHandler);
+      }
+    }
   }
 }
