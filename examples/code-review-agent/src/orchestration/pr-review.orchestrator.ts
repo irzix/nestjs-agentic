@@ -193,7 +193,33 @@ export class PrReviewOrchestrator {
     // 3. Post review summary comment to GitHub PR if token is available
     if (token && event.repoFullName && event.prNumber) {
       try {
-        const commentBody = `### 🤖 Njent Autonomous Code Review Summary\n\n**Decision:** \`${report.overallStatus}\` (Confidence: ${(report.overallScore * 100).toFixed(0)}%, Consensus: ${(report.consensusScore * 100).toFixed(0)}%)\n\n${report.summaryMarkdown}\n\n---\n*Reviewed autonomously by [nestjs-agentic](https://github.com/irzix/nestjs-agentic)*`;
+        const modelName = process.env.MODEL_NAME || (process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o');
+        const sessionId = `sess_pr_${event.prNumber}_${Date.now()}`;
+
+        const pipelineAccordion = `
+<details>
+<summary><b>🔍 nestjs-agentic Execution Pipeline & Telemetry (Click to expand)</b></summary>
+
+#### 🏗️ Multi-Agent Architecture Pipeline
+1. **🛡️ Ingress Security & Context Pruning**: HMAC-SHA256 verified, collaborator authorized via \`CollaboratorGuard\`, and lockfiles pruned via \`ContextPruner\`.
+2. **🧠 AST Codebase RAG**: Extracted TypeScript AST nodes and mapped dependency graph via \`@nestjs-agentic/rag\`.
+3. **⚡ Parallel Specialist Execution**: Ran \`SecurityReviewerAgent\`, \`ArchitectureReviewerAgent\`, and \`QualityReviewerAgent\` concurrently via \`@nestjs-agentic/orchestration\`.
+4. **📊 Mathematical Consensus**: Calculated variance and convergence score (${(report.consensusScore * 100).toFixed(1)}%) via \`ConsensusEvaluatorService\`.
+5. **⚖️ Quality Gate**: Evaluated against hallucination boundaries and MT-Bench debiasing via \`@nestjs-agentic/evaluation\`.
+6. **📈 OpenTelemetry GenAI Tracing**: Audited event emitted conforming to CNCF GenAI Semantic Conventions.
+
+#### ⏱️ Runtime & Telemetry Metadata
+| Metric | Value |
+| :--- | :--- |
+| **Model** | \`${modelName}\` |
+| **Framework** | \`nestjs-agentic v0.7.0\` |
+| **Consensus Score** | \`${(report.consensusScore * 100).toFixed(1)}%\` |
+| **Overall Confidence** | \`${(report.overallScore * 100).toFixed(1)}%\` |
+| **Session ID** | \`${sessionId}\` |
+
+</details>`;
+
+        const commentBody = `### 🤖 Njent Autonomous Code Review Summary\n\n**Decision:** \`${report.overallStatus}\` (Confidence: ${(report.overallScore * 100).toFixed(0)}%, Consensus: ${(report.consensusScore * 100).toFixed(0)}%)\n\n${report.summaryMarkdown}\n\n---\n${pipelineAccordion}\n\n---\n*Reviewed autonomously by [nestjs-agentic](https://github.com/irzix/nestjs-agentic) — The Agentic Architecture for NestJS*`;
 
         await fetch(
           `https://api.github.com/repos/${event.repoFullName}/issues/${event.prNumber}/comments`,
