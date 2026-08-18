@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { PairwiseDebiasedJudge } from '@nestjs-agentic/evaluation';
 import type { PairwiseJudgeFn, PairwiseJudgeResult } from '@nestjs-agentic/evaluation';
 import type { InlineReviewIssue } from '../agents/schemas/review-output.schema';
@@ -11,7 +11,7 @@ import type { InlineReviewIssue } from '../agents/schemas/review-output.schema';
 export class ReviewQualityEvaluatorService {
   private readonly pairwiseJudge: PairwiseDebiasedJudge;
 
-  constructor(customJudgeFn?: PairwiseJudgeFn) {
+  constructor(@Optional() customJudgeFn?: PairwiseJudgeFn) {
     const judgeFn: PairwiseJudgeFn = customJudgeFn || ((query, first, second) => {
       // Default heuristic judge scoring based on rubric adherence
       const firstScore = first.output.includes('`') ? 0.90 : 0.60;

@@ -14,6 +14,8 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
+    "dev:agent": "npm run dev --workspace=example-code-review-agent",
+    "start:agent": "npm run start:dev --workspace=example-code-review-agent",
     "changeset": "changeset",
     "changeset:status": "changeset status --since=origin/main",
     "version-packages": "changeset version && npm install --package-lock-only --ignore-scripts",
