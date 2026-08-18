@@ -36,6 +36,7 @@ export interface GitHubWebhookPayload {
     body: string;
     user: {
       login: string;
+      type?: string;
     };
   };
   repository: {
