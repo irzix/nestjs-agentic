@@ -67,7 +67,7 @@ export class McpService implements OnModuleInit, OnModuleDestroy {
    */
   async getAllTools(agentContext: AgentContext): Promise<ResolvedTool[]> {
     const toolPromises = Array.from(this.providers.values()).map((provider) =>
-      provider.buildTools(agentContext),
+      provider.getTools(agentContext),
     );
     const toolArrays = await Promise.all(toolPromises);
     return toolArrays.flat();

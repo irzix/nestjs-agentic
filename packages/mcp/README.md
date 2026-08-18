@@ -40,7 +40,9 @@ npm install @nestjs-agentic/mcp @nestjs-agentic/core
 
 ```typescript
 import { Module } from '@nestjs/common';
-import { McpModule } from '@nestjs-agentic/mcp';
+import { McpModule, McpService } from '@nestjs-agentic/mcp';
+
+export const FILESYSTEM_TOOLS = Symbol('FILESYSTEM_TOOLS');
 
 @Module({
   imports: [
@@ -54,48 +56,46 @@ import { McpModule } from '@nestjs-agentic/mcp';
             args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp/workspace'],
           },
           timeoutMs: 30000,
-        },
-        {
-          name: 'remote-analytics',
-          transport: {
-            type: 'sse',
-            url: 'https://mcp.internal.company.com/sse',
-            headers: {
-              Authorization: 'Bearer secret-token',
-            },
-          },
-        },
+        }
       ],
     }),
   ],
+  providers: [
+    // Expose the dynamic MCP tool provider as a standard DI token
+    {
+      provide: FILESYSTEM_TOOLS,
+      useFactory: (mcpService: McpService) => mcpService.getProvider('filesystem'),
+      inject: [McpService],
+    },
+  ],
+  exports: [FILESYSTEM_TOOLS],
 })
 export class AppModule {}
 ```
 
 ### 2. Inject and Use MCP Tools in an Agent
 
+Since `@nestjs-agentic/mcp` natively implements the `ToolProvider` interface, it can be seamlessly injected into any agent definition.
+
 ```typescript
 import { Injectable } from '@nestjs/common';
-import { AgentRunner, AgentContext } from '@nestjs-agentic/core';
-import { McpService } from '@nestjs-agentic/mcp';
+import { Agent, AgentRunner, AgentContext } from '@nestjs-agentic/core';
+import { FILESYSTEM_TOOLS } from './app.module';
 
+@Agent({
+  name: 'reviewer',
+  instructions: 'You are a code reviewer.',
+  tools: [FILESYSTEM_TOOLS], // MCP tools are automatically resolved and injected!
+})
 @Injectable()
 export class CodeReviewAgent {
-  constructor(
-    private readonly runner: AgentRunner,
-    private readonly mcpService: McpService,
-  ) {}
+  constructor(private readonly runner: AgentRunner) {}
 
   async review(context: AgentContext, prNumber: number) {
-    // Dynamically retrieve resolved MCP tools from the filesystem server
-    const fsProvider = this.mcpService.getProvider('filesystem');
-    const tools = await fsProvider.buildTools(context);
-
-    return this.runner.run({
-      agentName: 'reviewer',
+    return this.runner.run('reviewer', {
+      sessionId: `pr-review-${prNumber}`,
       context,
       message: `Review PR #${prNumber} by inspecting modified files.`,
-      tools,
     });
   }
 }

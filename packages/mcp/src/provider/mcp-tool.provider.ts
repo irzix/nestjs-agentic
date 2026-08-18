@@ -4,7 +4,9 @@ import type {
   ToolExecutionInput,
   ToolExecutionResult,
   ToolPolicy,
+  ToolProvider,
 } from '@nestjs-agentic/core';
+import { ApprovalToolNotFoundError } from '@nestjs-agentic/core';
 import type { McpClient } from '../client/mcp-client';
 import type { McpToolSchema } from '../interfaces/mcp.interface';
 import { mcpSchemaToToolParams, validateGorillaPreConditions } from '../utils/schema-converter';
@@ -18,7 +20,7 @@ export interface McpToolProviderOptions {
  * Bridges Model Context Protocol (MCP) tool definitions into NestJS-Agentic's `ResolvedTool[]` interface.
  * Implements deterministic parameter pre-validation (Gorilla), policy evaluation, and execution unwrapping.
  */
-export class McpToolProvider {
+export class McpToolProvider implements ToolProvider {
   private readonly client: McpClient;
   private readonly policies: ToolPolicy[];
 
@@ -30,9 +32,50 @@ export class McpToolProvider {
   /**
    * Discovers tools from the MCP server and constructs policy-wrapped `ResolvedTool[]` instances.
    */
-  async buildTools(agentContext: AgentContext): Promise<ResolvedTool[]> {
+  async getTools(agentContext: AgentContext): Promise<ResolvedTool[]> {
     const mcpTools = await this.client.listTools();
     return mcpTools.map((tool) => this.buildResolvedTool(tool, agentContext));
+  }
+
+  /**
+   * Directly invokes an already-approved tool call, bypassing policy evaluation.
+   */
+  async invokeApprovedTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    agentContext: AgentContext
+  ): Promise<ToolExecutionResult> {
+    const mcpTools = await this.client.listTools();
+    const tool = mcpTools.find((t) => t.name === toolName);
+
+    if (!tool) {
+      throw new ApprovalToolNotFoundError(toolName);
+    }
+
+    try {
+      const activeSignal = agentContext.signal;
+      const callResult = await this.client.callTool(tool.name, args, activeSignal);
+
+      const textBlocks = callResult.content.filter((c) => c.type === 'text');
+      const outputData =
+        textBlocks.length === 1
+          ? textBlocks[0].text
+          : textBlocks.length > 1
+            ? textBlocks.map((b) => b.text).join('\n\n')
+            : callResult.content;
+
+      return {
+        success: true,
+        data: outputData,
+      };
+    } catch (execErr: unknown) {
+      const message = (execErr as Error).message || 'MCP tool execution failed';
+      return {
+        success: false,
+        status: 'denied',
+        reason: message,
+      };
+    }
   }
 
   /**

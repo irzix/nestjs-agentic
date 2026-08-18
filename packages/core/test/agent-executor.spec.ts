@@ -582,7 +582,7 @@ export async function runAgentExecutorTests() {
     const checkpoints: any[] = [];
 
     const executor = new AgentExecutor(model);
-    const prepared = runner.prepare('support', {
+    const prepared = await runner.prepare('support', {
       sessionId: 'sess_15_executor',
       message: 'Process multi-step order',
     });

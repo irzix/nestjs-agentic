@@ -441,7 +441,7 @@ async function runMcpTests(): Promise<void> {
       security: { tenantId: 'tenant_test' },
     };
 
-    const tools = await provider.buildTools(context);
+    const tools = await provider.getTools(context);
     assert(tools.length === 1, 'Built 1 resolved tool');
 
     const result = await tools[0].execute({ args: {} });
