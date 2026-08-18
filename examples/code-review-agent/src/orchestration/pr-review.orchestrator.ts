@@ -66,9 +66,13 @@ export class PrReviewOrchestrator {
   async executeReview(options: OrchestratorRunOptions): Promise<SynthesizedPRReviewReport> {
     const tracer = options.tracer;
 
-    // 1. Prune noisy files and lockfiles from diff
+    // 1. Prune noisy files and lockfiles from diff (with token budget cap)
     const prunerStart = Date.now();
-    const { prunedDiff, ignoredFiles } = ContextPruner.pruneDiff(options.rawDiff);
+    let cappedDiff = options.rawDiff;
+    if (cappedDiff.length > 8000) {
+      cappedDiff = `${cappedDiff.slice(0, 8000)}\n\n[... Diff truncated: ${options.rawDiff.length - 8000} bytes omitted for token efficiency ...]`;
+    }
+    const { prunedDiff, ignoredFiles } = ContextPruner.pruneDiff(cappedDiff);
     tracer?.record(
       'pruner',
       `✂️ [Context Pruner] Pruned diff (${options.rawDiff.length}B -> ${prunedDiff.length}B, excluded: ${ignoredFiles.join(', ') || 'none'})`,
@@ -101,7 +105,7 @@ export class PrReviewOrchestrator {
 
     // 4. Assemble U-Curve attention prompt
     const assembledPrompt = UCurvePromptAssembler.assemble({
-      systemInstructions: 'Review pull request diff for security, architectural integrity, and code quality.',
+      systemInstructions: 'Review pull request diff for security, architectural integrity, domain scope relevance, and code quality.',
       architecturalRules: options.architecturalRules,
       astCodebaseContext: retrievedAstContext,
       episodicLessons,
@@ -125,7 +129,7 @@ export class PrReviewOrchestrator {
           }),
           this.agentRunner.run('architecture-reviewer', {
             sessionId: `${sessionId}_arch`,
-            message: `${assembledPrompt}\n\nReview this PR specifically for Architecture & NestJS framework alignment, module boundaries, domain relevance to nestjs-agentic library, and constructor dependency injection. ${schemaInstruction}`,
+            message: `${assembledPrompt}\n\nReview this PR specifically for Architecture & NestJS framework alignment, module boundaries, and Domain Scope Relevance to the nestjs-agentic library (AI Agent framework). If this PR introduces out-of-scope domain code (e.g. e-commerce payments, flight booking, crypto wallets) not related to building AI Agents, flag it as CRITICAL out-of-scope with score <= 0.30 and passed: false. ${schemaInstruction}`,
           }),
           this.agentRunner.run('quality-reviewer', {
             sessionId: `${sessionId}_qual`,
@@ -368,10 +372,18 @@ Output JSON conforming to: {"reviewerName": string, "category": "security"|"arch
     }
 
     // 3. Execute multi-agent review with real RAG context and execution tracer
+    const defaultRules = [
+      'Domain Scope & Alignment: "nestjs-agentic" is an AI Agent orchestration framework for NestJS. Unrelated business logic (e.g. e-commerce payments, checkout, booking engines, crypto wallets) not related to building AI agents MUST be flagged as CRITICAL out-of-scope with CHANGES_REQUESTED and score <= 0.30.',
+      'Constructor Injection: All services must use constructor dependency injection (@Inject / @Optional) rather than manual instantiation.',
+      'Modular Architecture: Any new service must belong to and be provided/exported by a valid NestJS Module.',
+      'Strict Typing: No "any" types in public APIs.',
+    ];
+
     const report = await this.executeReview({
       rawDiff,
       triggerEvent: event,
       changedFilePaths,
+      architecturalRules: defaultRules,
       tracer,
     });
 
