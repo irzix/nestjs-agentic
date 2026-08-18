@@ -1,17 +1,22 @@
 import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
-import { SopGuardFailedError, SopMaxTransitionsExceededError, SopPhaseExecutionError } from '../errors';
+import {
+  SopGuardFailedError,
+  SopMaxTransitionsExceededError,
+  SopPhaseExecutionError,
+} from '../errors';
 import type {
   SopContext,
   SopPhase,
   SopPhaseResult,
   SopRunResult,
   SopRunnerOptions,
+  SopWorkflowCheckpoint,
   SubAgentResult,
   SubAgentTask,
 } from '../interfaces/orchestration.interface';
 import { SubAgentDelegator } from '../delegator/sub-agent.delegator';
 
-/** Internal safety limit: max phases visitied per workflow run to prevent infinite cycles. */
+/** Internal safety limit: max phases visited per workflow run to prevent infinite cycles. */
 const MAX_PHASES_VISITED = 256;
 
 /**
@@ -19,8 +24,9 @@ const MAX_PHASES_VISITED = 256;
  *
  * Executes an ordered list of `SopPhase` definitions sequentially. Each phase receives a
  * dynamically-built prompt derived from the accumulated `SopContext` of all prior phases.
- * Guard functions gate phase-to-phase transitions; a failed guard halts the workflow and
- * sets `requiresHumanReview: true`. Capability narrowing is applied per-phase.
+ * Guard functions gate phase-to-phase transitions with automatic retries for transient issues.
+ * Full checkpoint persistence and resumption prevents duplicate execution across process crashes.
+ * Capability narrowing is strictly isolated and applied per-phase.
  *
  * @see Hong et al., "MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework"
  *      (DeepWisdom, ICLR 2024, arXiv:2308.00352)
@@ -47,19 +53,76 @@ export class SopRunner {
   }
 
   /**
-   * Executes an ordered SOP workflow over the provided phases.
-   *
-   * @param parentContext - Parent agent context for tenant isolation and trace propagation.
-   * @param phases - Ordered array of `SopPhase` definitions.
-   * @param initialData - Optional shared metadata injected into the initial `SopContext`.
-   * @returns `SopRunResult` containing all phase results and termination metadata.
+   * Generates a unique checkpoint storage key scoped by tenant and session ID.
+   */
+  private getCheckpointKey(parentContext: AgentContext): string {
+    const tenantId = parentContext.security.tenantId ?? 'default';
+    return `agentic:${tenantId}:sop:${parentContext.sessionId}:checkpoint`;
+  }
+
+  /**
+   * Recovers the saved `SopWorkflowCheckpoint` for the given session from StateStore.
+   */
+  async getCheckpoint(parentContext: AgentContext): Promise<SopWorkflowCheckpoint | null> {
+    if (!this.options.stateStore) return null;
+    const key = this.getCheckpointKey(parentContext);
+    const checkpoint = await this.options.stateStore.get<SopWorkflowCheckpoint>(key);
+    return checkpoint ?? null;
+  }
+
+  /**
+   * Executes an ordered SOP workflow over the provided phases from the beginning.
    */
   async run(
     parentContext: AgentContext,
     phases: SopPhase[],
     initialData?: Record<string, unknown>,
   ): Promise<SopRunResult> {
-    if (phases.length === 0) {
+    return this.executePhases(parentContext, phases, {
+      completedPhases: [],
+      startOutput: undefined,
+      data: initialData ?? {},
+    });
+  }
+
+  /**
+   * Resumes an interrupted SOP workflow directly from a saved `SopWorkflowCheckpoint`.
+   * Automatically skips already-completed phases to prevent duplicate execution.
+   */
+  async resume(
+    parentContext: AgentContext,
+    phases: SopPhase[],
+    checkpoint?: SopWorkflowCheckpoint,
+  ): Promise<SopRunResult> {
+    const activeCheckpoint = checkpoint ?? (await this.getCheckpoint(parentContext));
+    if (!activeCheckpoint) {
+      // If no checkpoint found, start fresh run
+      return this.run(parentContext, phases);
+    }
+
+    const completedNames = new Set(activeCheckpoint.completedPhases.map((p) => p.phaseName));
+    const remainingPhases = phases.filter((p) => !completedNames.has(p.name));
+
+    return this.executePhases(parentContext, remainingPhases, {
+      completedPhases: [...activeCheckpoint.completedPhases],
+      startOutput: activeCheckpoint.lastOutput,
+      data: activeCheckpoint.data ?? {},
+    });
+  }
+
+  /**
+   * Core workflow execution loop.
+   */
+  private async executePhases(
+    parentContext: AgentContext,
+    phasesToRun: SopPhase[],
+    initialState: {
+      completedPhases: SopPhaseResult[];
+      startOutput?: string;
+      data: Record<string, unknown>;
+    },
+  ): Promise<SopRunResult> {
+    if (phasesToRun.length === 0 && initialState.completedPhases.length === 0) {
       return {
         phases: [],
         finalOutput: '',
@@ -70,118 +133,152 @@ export class SopRunner {
 
     if (this.options.signal?.aborted) {
       return {
-        phases: [],
-        finalOutput: '',
+        phases: initialState.completedPhases,
+        finalOutput: initialState.startOutput ?? '',
         requiresHumanReview: false,
         terminationReason: 'aborted',
       };
     }
 
-    const completedPhases: SopPhaseResult[] = [];
-    let phasesVisited = 0;
+    const completedPhases: SopPhaseResult[] = [...initialState.completedPhases];
+    let phasesVisited = completedPhases.length;
 
     const ctx: SopContext = {
       phaseHistory: completedPhases,
-      lastOutput: undefined,
-      data: initialData ?? {},
+      lastOutput: initialState.startOutput,
+      data: initialState.data,
     };
 
-    for (const phase of phases) {
-      // Infinite-cycle safety guard
+    for (const phase of phasesToRun) {
       phasesVisited++;
       if (phasesVisited > MAX_PHASES_VISITED) {
         throw new SopMaxTransitionsExceededError(phasesVisited, MAX_PHASES_VISITED);
       }
 
-      // Abort check between phases
       if (this.options.signal?.aborted) {
         return this.buildResult(completedPhases, 'aborted', false);
       }
 
-      // Execute phase with retry
+      // Execute phase with retry & guard evaluation
       const phaseStart = Date.now();
-      const result = await this.executePhaseWithRetry(parentContext, phase, ctx);
+      const phaseOutcome = await this.executePhaseWithGuardRetries(parentContext, phase, ctx);
       const durationMs = Date.now() - phaseStart;
 
       const phaseResult: SopPhaseResult = {
         phaseName: phase.name,
-        result,
+        result: phaseOutcome.lastResult,
         durationMs,
       };
 
-      // Phase hard-failed even after retries
-      if (result.status !== 'success') {
-        if (this.options.signal?.aborted || result.error === 'Execution was aborted') {
-          return this.buildResult(completedPhases, 'aborted', false);
-        }
+      if (phaseOutcome.aborted) {
+        return this.buildResult(completedPhases, 'aborted', false);
+      }
+
+      if (!phaseOutcome.success) {
         completedPhases.push(phaseResult);
-        throw new SopPhaseExecutionError(phase.name, phase.agentName, result.error ?? 'Unknown error');
+        if (phaseOutcome.guardFailed) {
+          const guardError = new SopGuardFailedError(phase.name, phase.agentName);
+          return {
+            phases: completedPhases,
+            finalOutput: phaseOutcome.lastResult.response,
+            requiresHumanReview: true,
+            terminationReason: 'guard_failed',
+            error: guardError.message,
+          };
+        }
+
+        throw new SopPhaseExecutionError(
+          phase.name,
+          phase.agentName,
+          phaseOutcome.lastResult.error ?? 'Unknown execution error',
+        );
       }
 
       completedPhases.push(phaseResult);
-
-      // Evaluate guard function
-      if (phase.guard && !phase.guard(result)) {
-        // Guard failed — halt workflow and flag for human review
-        ctx.lastOutput = result.response;
-        ctx.phaseHistory = [...completedPhases];
-        return this.buildResult(completedPhases, 'guard_failed', true);
-      }
-
-      // Thread output to next phase context
-      ctx.lastOutput = result.response;
+      ctx.lastOutput = phaseOutcome.lastResult.response;
       ctx.phaseHistory = [...completedPhases];
 
-      // Optional checkpoint after each phase
-      await this.savePhaseCheckpoint(parentContext, completedPhases);
+      // Checkpoint state after successfully completing phase
+      await this.savePhaseCheckpoint(parentContext, completedPhases, ctx.lastOutput, ctx.data);
     }
 
     return this.buildResult(completedPhases, 'completed', false);
   }
 
   // ---------------------------------------------------------------------------
-  // Phase execution with retry and timeout
+  // Phase execution with retries & guard evaluation
   // ---------------------------------------------------------------------------
 
-  private async executePhaseWithRetry(
+  private async executePhaseWithGuardRetries(
     parentContext: AgentContext,
     phase: SopPhase,
     ctx: SopContext,
-  ): Promise<SubAgentResult> {
-    const message = phase.buildMessage(ctx);
-    const task: SubAgentTask = {
-      agentName: phase.agentName,
-      message,
-      narrowing: phase.narrowing,
-      signal: this.options.signal,
-    };
-
+  ): Promise<{
+    success: boolean;
+    lastResult: SubAgentResult;
+    guardFailed: boolean;
+    aborted: boolean;
+  }> {
     const maxAttempts = this.options.retriesPerPhase + 1;
     let lastResult: SubAgentResult | null = null;
+    let guardFailed = false;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (this.options.signal?.aborted) {
         return {
-          agentName: phase.agentName,
-          status: 'failed',
-          response: '',
-          toolCount: 0,
-          error: 'Execution was aborted',
+          success: false,
+          lastResult: {
+            agentName: phase.agentName,
+            status: 'failed',
+            response: '',
+            toolCount: 0,
+            error: 'Execution was aborted',
+          },
+          guardFailed: false,
+          aborted: true,
         };
       }
 
+      const message = phase.buildMessage(ctx);
+      const task: SubAgentTask = {
+        agentName: phase.agentName,
+        message,
+        narrowing: phase.narrowing,
+        signal: this.options.signal,
+      };
+
       lastResult = await this.executeWithTimeout(parentContext, task);
+
+      if (this.options.signal?.aborted || lastResult.error === 'Execution was aborted') {
+        return { success: false, lastResult, guardFailed: false, aborted: true };
+      }
+
       if (lastResult.status === 'success') {
-        return lastResult;
+        // Evaluate guard function if defined
+        if (phase.guard) {
+          const guardPassed = phase.guard(lastResult);
+          if (guardPassed) {
+            return { success: true, lastResult, guardFailed: false, aborted: false };
+          }
+          // Guard returned false — note failure and attempt retry if available
+          guardFailed = true;
+        } else {
+          return { success: true, lastResult, guardFailed: false, aborted: false };
+        }
       }
     }
 
-    return lastResult ?? {
-      agentName: phase.agentName,
-      status: 'failed',
-      response: '',
-      toolCount: 0,
-      error: `Phase "${phase.name}" failed after ${maxAttempts} attempt(s)`,
+    return {
+      success: false,
+      lastResult: lastResult ?? {
+        agentName: phase.agentName,
+        status: 'failed',
+        response: '',
+        toolCount: 0,
+        error: `Phase "${phase.name}" failed after ${maxAttempts} attempt(s)`,
+      },
+      guardFailed,
+      aborted: false,
     };
   }
 
@@ -207,13 +304,29 @@ export class SopRunner {
 
     const abortPromise = new Promise<SubAgentResult>((resolve) => {
       if (activeSignal?.aborted) {
-        resolve({ agentName: task.agentName, status: 'failed', response: '', toolCount: 0, error: 'Execution was aborted' });
+        resolve({
+          agentName: task.agentName,
+          status: 'failed',
+          response: '',
+          toolCount: 0,
+          error: 'Execution was aborted',
+        });
         return;
       }
       if (activeSignal) {
         abortHandler = () =>
-          resolve({ agentName: task.agentName, status: 'failed', response: '', toolCount: 0, error: 'Execution was aborted' });
+          resolve({
+            agentName: task.agentName,
+            status: 'failed',
+            response: '',
+            toolCount: 0,
+            error: 'Execution was aborted',
+          });
         activeSignal.addEventListener('abort', abortHandler, { once: true });
+        // Microtask race double-check
+        if (activeSignal.aborted) {
+          abortHandler();
+        }
       }
     });
 
@@ -238,23 +351,27 @@ export class SopRunner {
     terminationReason: SopRunResult['terminationReason'],
     requiresHumanReview: boolean,
   ): SopRunResult {
-    const finalOutput = phases.length > 0
-      ? (phases[phases.length - 1].result.response)
-      : '';
+    const finalOutput = phases.length > 0 ? phases[phases.length - 1].result.response : '';
     return { phases, finalOutput, requiresHumanReview, terminationReason };
   }
 
   private async savePhaseCheckpoint(
     parentContext: AgentContext,
     completedPhases: SopPhaseResult[],
+    lastOutput?: string,
+    data?: Record<string, unknown>,
   ): Promise<void> {
     if (!this.options.stateStore) return;
-    const tenantId = parentContext.security.tenantId ?? 'default';
-    const key = `agentic:${tenantId}:sop:${parentContext.sessionId}:checkpoint`;
-    await this.options.stateStore.set(
-      key,
-      { completedPhaseNames: completedPhases.map((p) => p.phaseName) },
-      this.options.checkpointTtlSeconds,
-    );
+    const key = this.getCheckpointKey(parentContext);
+    const checkpoint: SopWorkflowCheckpoint = {
+      version: 1,
+      sessionId: parentContext.sessionId,
+      tenantId: parentContext.security.tenantId,
+      completedPhases: [...completedPhases],
+      lastOutput,
+      data,
+      savedAt: new Date().toISOString(),
+    };
+    await this.options.stateStore.set(key, checkpoint, this.options.checkpointTtlSeconds);
   }
 }

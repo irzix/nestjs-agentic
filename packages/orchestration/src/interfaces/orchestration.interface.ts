@@ -478,6 +478,32 @@ export interface SopRunnerOptions {
 }
 
 /**
+ * Checkpoint snapshot of an in-flight or completed SOP state-machine workflow.
+ */
+export interface SopWorkflowCheckpoint {
+  /** Checkpoint schema version. */
+  version: 1;
+
+  /** Parent session identifier. */
+  sessionId: string;
+
+  /** Tenant identifier for multi-tenant isolation. */
+  tenantId?: string;
+
+  /** Ordered list of completed phase results. */
+  completedPhases: SopPhaseResult[];
+
+  /** Output text produced by the last completed phase. */
+  lastOutput?: string;
+
+  /** Shared workflow metadata dictionary. */
+  data?: Record<string, unknown>;
+
+  /** ISO timestamp when the checkpoint was saved. */
+  savedAt: string;
+}
+
+/**
  * Result payload returned from a SOP state-machine workflow run.
  */
 export interface SopRunResult {
@@ -495,4 +521,7 @@ export interface SopRunResult {
 
   /** Reason the workflow terminated. */
   terminationReason: 'completed' | 'guard_failed' | 'aborted' | 'phase_error';
+
+  /** Detailed diagnostic or error message if the workflow halted or failed. */
+  error?: string;
 }

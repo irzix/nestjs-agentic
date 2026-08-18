@@ -102,24 +102,24 @@ export class DebateRunner {
 
       const fanOutResult = await parallelRunner.run(parentContext, tasks);
 
+      // Compute deterministic mathematical consensus score across successful debater results
+      const consensusScore = this.calculateConsensusScore(fanOutResult.results);
+
       const round: DebateRound = {
         roundNumber,
         results: fanOutResult.results,
-        consensusScore: fanOutResult.consensusScore,
+        consensusScore,
       };
       rounds.push(round);
 
-      // Early termination on consensus
-      if (
-        fanOutResult.consensusScore !== undefined &&
-        fanOutResult.consensusScore >= this.options.consensusThreshold
-      ) {
+      // Early termination on consensus convergence
+      if (consensusScore >= this.options.consensusThreshold) {
         const winner = this.pickWinner(fanOutResult.results);
         return {
           finalResponse: winner.response,
           winner: winner.agentName,
           rounds,
-          consensusScore: fanOutResult.consensusScore,
+          consensusScore,
           requiresHumanReview: false,
           terminationReason: 'consensus',
         };
@@ -145,6 +145,29 @@ export class DebateRunner {
     };
   }
 
+  /**
+   * Deterministically calculates the variance-based consensus convergence metric (0.0–1.0).
+   *
+   * Formally:
+   *   $$\text{Variance} = \frac{1}{N} \sum_{i=1}^N (s_i - \mu)^2$$
+   *   $$\text{Consensus} = 1 - \frac{\text{Variance}}{\text{MaxVariance}}$$
+   *
+   * Where $\text{MaxVariance} = 0.25$ for bounded $[0, 1]$ confidence scores.
+   * Debaters with missing scores default to 0.5 prior confidence.
+   */
+  calculateConsensusScore(results: SubAgentResult[]): number {
+    const successful = results.filter((r) => r.status === 'success');
+    if (successful.length === 0) return 0;
+    if (successful.length === 1) return successful[0].score ?? 1.0;
+
+    const scores = successful.map((r) => (r.score !== undefined ? Math.max(0, Math.min(1, r.score)) : 0.5));
+    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const variance = scores.reduce((acc, s) => acc + (s - mean) ** 2, 0) / scores.length;
+
+    // Normalize: max possible variance for [0, 1] range is 0.25
+    return Math.max(0, Math.min(1, 1 - variance / 0.25));
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -161,8 +184,18 @@ export class DebateRunner {
   }
 
   /**
+   * Sanitizes text to prevent structural delimiter collision or XML prompt injection.
+   */
+  private sanitizeDebateContent(text: string): string {
+    return text
+      .replace(/<!--/g, '&lt;!--')
+      .replace(/-->/g, '--&gt;')
+      .replace(/<\/(debater|debate_round)>/gi, '&lt;/$1&gt;');
+  }
+
+  /**
    * Builds the cross-critique transcript string prepended to the next round's prompt.
-   * Uses a custom `transcriptFormatterFn` if provided, otherwise uses the default format.
+   * Uses a custom `transcriptFormatterFn` if provided, otherwise uses XML-safe tags.
    */
   private buildTranscript(round: DebateRound): string {
     if (this.options.transcriptFormatterFn) {
@@ -171,10 +204,12 @@ export class DebateRunner {
     const lines = round.results
       .filter((r) => r.status === 'success')
       .map((r) => {
-        const scoreNote = r.score !== undefined ? ` (confidence: ${r.score})` : '';
-        return `[${r.agentName} argued${scoreNote}]: ${r.response}`;
+        const confidence = r.score !== undefined ? ` confidence="${r.score.toFixed(2)}"` : '';
+        const cleanContent = this.sanitizeDebateContent(r.response);
+        return `<debater name="${r.agentName}"${confidence}>\n${cleanContent}\n</debater>`;
       });
-    return `--- Round ${round.roundNumber} Arguments ---\n${lines.join('\n\n')}\n--- End of Round ${round.roundNumber} ---`;
+
+    return `<debate_round number="${round.roundNumber}">\n${lines.join('\n\n')}\n</debate_round>`;
   }
 
   /**
