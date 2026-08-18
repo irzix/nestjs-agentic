@@ -25,7 +25,7 @@ export interface UCurvePromptSection {
  * Options configuring UCurveContextFormatter assembly.
  */
 export interface UCurveFormatOptions {
-  /** Separator between sections. Default: `'\n\n---\n\n'` */
+  /** Separator between sections. Default: `'\n\n'` */
   sectionSeparator?: string;
   /** Whether to render section titles as Markdown headers (`### Title`). Default: `true` */
   renderTitles?: boolean;
@@ -134,7 +134,7 @@ export class UCurveContextFormatter {
     scoreExtractor: (item: T) => number,
     placementStrategy: 'primacy_first' | 'recency_first' = 'primacy_first',
   ): T[] {
-    if (!items || items.length <= 2) {
+    if (!items || items.length <= 1) {
       return items ? [...items] : [];
     }
 

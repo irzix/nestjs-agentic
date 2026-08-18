@@ -49,14 +49,17 @@ export async function runUShapedContextTests() {
     assert(false, 'Recency First reorder', String(err));
   }
 
-  // 3. Edge Cases: Empty, Single, Two, and Even Count (N=4, N=6)
+  // 3. Boundary Conditions: Empty, Single, Two Items (Primacy vs Recency), and Even Count (N=4, N=6)
   try {
     assert(UShapedContextStrategy.reorder([]).length === 0, 'Empty array returns empty array');
     assert(UShapedContextStrategy.reorder(['single'])[0] === 'single', 'Single item preserved');
 
-    const twoItems = ['a', 'b'];
-    const reorderedTwo = UShapedContextStrategy.reorder(twoItems);
-    assert(reorderedTwo[0] === 'a' && reorderedTwo[1] === 'b', 'Two items preserved');
+    const twoItems = ['top_item', 'second_item'];
+    const primacyTwo = UShapedContextStrategy.reorder(twoItems, 'primacy_first');
+    assert(primacyTwo[0] === 'top_item' && primacyTwo[1] === 'second_item', 'N=2 Primacy-first places top item at index 0');
+
+    const recencyTwo = UShapedContextStrategy.reorder(twoItems, 'recency_first');
+    assert(recencyTwo[0] === 'second_item' && recencyTwo[1] === 'top_item', 'N=2 Recency-first places top item at index 1');
 
     // Even count (N=4): [c1, c2, c3, c4] -> [c1, c3, c4, c2]
     const fourItems = ['1', '2', '3', '4'];
@@ -127,27 +130,49 @@ export async function runUShapedContextTests() {
     assert(false, 'UShapedContextStrategy.process() integration', String(err));
   }
 
-  // 5. maxChunks truncation before U-shape distribution
+  // 5. Negative Cases: Unsafe metadata types & Unmatched scores
   try {
-    const strategy = new UShapedContextStrategy({
-      maxChunks: 3,
-    });
-
-    const chunks: DocumentChunk[] = [
-      { id: '1', parentId: 'd', content: '1', metadata: {} },
-      { id: '2', parentId: 'd', content: '2', metadata: {} },
-      { id: '3', parentId: 'd', content: '3', metadata: {} },
-      { id: '4', parentId: 'd', content: '4', metadata: {} },
-      { id: '5', parentId: 'd', content: '5', metadata: {} },
+    const strategy = new UShapedContextStrategy();
+    const weirdChunks: DocumentChunk[] = [
+      { id: 'w1', parentId: 'd', content: 'Content 1', metadata: { title: { nested: 'bad' } as unknown as string } },
+      { id: 'w2', parentId: 'd', content: 'Content 2', metadata: { title: 42 as unknown as string } },
+      { id: 'w3', parentId: 'd', content: 'Content 3', metadata: {} },
     ];
 
-    const processed = strategy.process({ query: 'test', chunks });
-    assert(processed.chunks?.length === 3, 'maxChunks truncated chunks to 3');
-    assert(processed.chunks?.[0].id === '1', 'Truncated U-curve top is 1');
-    assert(processed.chunks?.[2].id === '2', 'Truncated U-curve bottom is 2');
-    assert(processed.chunks?.[1].id === '3', 'Truncated U-curve center is 3');
+    // Scores map with extra unmatched IDs
+    const scores = new Map<string, number>([
+      ['w1', 0.9],
+      ['unmatched_id_99', 0.99],
+    ]);
+
+    const result = strategy.process({ query: 'test', chunks: weirdChunks, scores });
+    assert(result.chunks?.length === 3, 'Handles unmatched scores map IDs gracefully');
+    assert(Boolean(result.compressedContext?.includes('[Reference: Chunk 1]')), 'Safe fallback for object title metadata');
+    assert(Boolean(result.compressedContext?.includes('[Reference: Chunk 2]')), 'Safe fallback for numeric title metadata');
+    assert(Boolean(result.compressedContext?.includes('[Reference: Chunk 3]')), 'Safe fallback for missing title metadata');
   } catch (err: unknown) {
-    assert(false, 'maxChunks truncation', String(err));
+    assert(false, 'Negative Cases: Unsafe metadata & unmatched scores', String(err));
+  }
+
+  // 6. Parameter Validation: Invalid maxChunks
+  try {
+    let threwRange = false;
+    try {
+      new UShapedContextStrategy({ maxChunks: -5 });
+    } catch (e) {
+      if (e instanceof RangeError) threwRange = true;
+    }
+    assert(threwRange, 'Rejects negative maxChunks with RangeError');
+
+    let threwZero = false;
+    try {
+      new UShapedContextStrategy({ maxChunks: 0 });
+    } catch (e) {
+      if (e instanceof RangeError) threwZero = true;
+    }
+    assert(threwZero, 'Rejects zero maxChunks with RangeError');
+  } catch (err: unknown) {
+    assert(false, 'Parameter validation', String(err));
   }
 
   if (failed > 0) {

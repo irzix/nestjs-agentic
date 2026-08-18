@@ -17,7 +17,7 @@ export interface UShapedContextStrategyOptions {
    */
   placementStrategy?: UShapePlacementStrategy;
 
-  /** Maximum number of chunks to retain in the U-shaped context. Default: unlimited */
+  /** Maximum number of chunks to retain in the U-shaped context. Must be a positive integer. */
   maxChunks?: number;
 
   /** Optional header string prepended to the formatted context string */
@@ -55,7 +55,12 @@ export class UShapedContextStrategy implements RAGStrategy {
    */
   constructor(options?: UShapedContextStrategyOptions) {
     this.placementStrategy = options?.placementStrategy ?? 'primacy_first';
-    this.maxChunks = options?.maxChunks;
+    if (options?.maxChunks !== undefined) {
+      if (typeof options.maxChunks !== 'number' || Number.isNaN(options.maxChunks) || options.maxChunks <= 0) {
+        throw new RangeError(`UShapedContextStrategy: maxChunks must be a positive integer, got ${options.maxChunks}`);
+      }
+      this.maxChunks = Math.floor(options.maxChunks);
+    }
     this.header = options?.header;
     this.footer = options?.footer;
     this.chunkSeparator = options?.chunkSeparator ?? '\n\n---\n\n';
@@ -72,7 +77,7 @@ export class UShapedContextStrategy implements RAGStrategy {
     rankedItems: T[],
     strategy: UShapePlacementStrategy = 'primacy_first',
   ): T[] {
-    if (!rankedItems || rankedItems.length <= 2) {
+    if (!rankedItems || rankedItems.length <= 1) {
       return rankedItems ? [...rankedItems] : [];
     }
 
@@ -123,16 +128,17 @@ export class UShapedContextStrategy implements RAGStrategy {
       return context;
     }
 
-    // Sort chunks by score if score map is provided and chunks are not pre-sorted
+    // Sort chunks by score if score map is provided
     if (context.scores && context.scores.size > 0) {
+      const scoreMap = context.scores;
       chunks = [...chunks].sort((a, b) => {
-        const scoreA = context.scores?.get(a.id) ?? 0;
-        const scoreB = context.scores?.get(b.id) ?? 0;
+        const scoreA = scoreMap.get(a.id) ?? 0;
+        const scoreB = scoreMap.get(b.id) ?? 0;
         return scoreB - scoreA;
       });
     }
 
-    // Apply maxChunks limit if configured
+    // Apply maxChunks limit AFTER sorting to ensure top-K relevance is retained
     if (this.maxChunks && this.maxChunks > 0 && chunks.length > this.maxChunks) {
       chunks = chunks.slice(0, this.maxChunks);
     }
@@ -143,9 +149,13 @@ export class UShapedContextStrategy implements RAGStrategy {
       this.placementStrategy,
     );
 
-    // Format chunk text
+    // Format chunk text with safe metadata title inspection
     const formattedChunks = uOrderedChunks.map((chunk, idx) => {
-      const title = (chunk.metadata?.title as string) ?? (chunk.metadata?.section as string) ?? `Chunk ${idx + 1}`;
+      const rawTitle = chunk.metadata?.title ?? chunk.metadata?.section;
+      const title =
+        typeof rawTitle === 'string' && rawTitle.trim().length > 0
+          ? rawTitle.trim()
+          : `Chunk ${idx + 1}`;
       return `[Reference: ${title}]\n${chunk.content}`;
     });
 

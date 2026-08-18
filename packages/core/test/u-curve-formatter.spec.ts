@@ -165,6 +165,17 @@ export async function runUCurveFormatterTests() {
     assert(recencyReordered[4].id === 'item_1', 'Test 5d: Recency-first puts #1 item at bottom');
     assert(recencyReordered[0].id === 'item_2', 'Test 5e: Recency-first puts #2 item at top');
     assert(recencyReordered[2].id === 'item_5', 'Test 5f: Recency-first puts lowest item in center');
+
+    // N=2 Boundary Test
+    const twoItems: RankedItem[] = [
+      { id: 'top', score: 1.0 },
+      { id: 'second', score: 0.5 },
+    ];
+    const primacyTwo = UCurveContextFormatter.reorderToUCurve(twoItems, (i) => i.score, 'primacy_first');
+    assert(primacyTwo[0].id === 'top' && primacyTwo[1].id === 'second', 'Test 5g: N=2 primacy-first puts top item at index 0');
+
+    const recencyTwo = UCurveContextFormatter.reorderToUCurve(twoItems, (i) => i.score, 'recency_first');
+    assert(recencyTwo[0].id === 'second' && recencyTwo[1].id === 'top', 'Test 5h: N=2 recency-first puts top item at index 1');
   } catch (err: unknown) {
     assert(false, 'Test 5: reorderToUCurve()', String(err));
   }
