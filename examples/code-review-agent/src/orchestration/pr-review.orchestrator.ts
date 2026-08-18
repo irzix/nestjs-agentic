@@ -66,13 +66,9 @@ export class PrReviewOrchestrator {
   async executeReview(options: OrchestratorRunOptions): Promise<SynthesizedPRReviewReport> {
     const tracer = options.tracer;
 
-    // 1. Prune noisy files and lockfiles from diff (with token budget cap)
+    // 1. Prune noisy files and lockfiles from diff via ContextPruner
     const prunerStart = Date.now();
-    let cappedDiff = options.rawDiff;
-    if (cappedDiff.length > 8000) {
-      cappedDiff = `${cappedDiff.slice(0, 8000)}\n\n[... Diff truncated: ${options.rawDiff.length - 8000} bytes omitted for token efficiency ...]`;
-    }
-    const { prunedDiff, ignoredFiles } = ContextPruner.pruneDiff(cappedDiff);
+    const { prunedDiff, ignoredFiles } = ContextPruner.pruneDiff(options.rawDiff);
     tracer?.record(
       'pruner',
       `✂️ [Context Pruner] Pruned diff (${options.rawDiff.length}B -> ${prunedDiff.length}B, excluded: ${ignoredFiles.join(', ') || 'none'})`,
@@ -207,8 +203,8 @@ export class PrReviewOrchestrator {
     const maxScore = Math.max(...assessments.map((a) => a.score));
     const scoreGap = maxScore - minScore;
 
-    // 7. Multi-Agent Debate Round (triggers when specialist scores diverge significantly)
-    const needsDebate = Boolean(this.agentRunner) && assessments.length > 1 && (!consensus.isHighAgreement || scoreGap > 0.25);
+    // 7. Multi-Agent Debate Round (triggers only when specialist scores diverge significantly)
+    const needsDebate = Boolean(this.agentRunner) && assessments.length > 1 && (!consensus.isHighAgreement && scoreGap > 0.30);
     if (needsDebate && this.agentRunner) {
       const debateStart = Date.now();
       const summaries = assessments
