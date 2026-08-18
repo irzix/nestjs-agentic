@@ -31,6 +31,8 @@ export class ProceduralMemoryStore implements AgentMemoryStore {
 
   /**
    * Saves or updates a procedural playbook in memory.
+   *
+   * @param playbook The procedural playbook structure to store.
    */
   async savePlaybook(playbook: ProceduralPlaybook): Promise<void> {
     const item: ProceduralPlaybook = {
@@ -44,6 +46,9 @@ export class ProceduralMemoryStore implements AgentMemoryStore {
 
   /**
    * Retrieves a procedural playbook by unique identifier.
+   *
+   * @param id Playbook identifier string.
+   * @returns The matching playbook or `null` if not found.
    */
   async getPlaybook(id: string): Promise<ProceduralPlaybook | null> {
     return this.playbooks.get(id) ?? null;
@@ -51,6 +56,9 @@ export class ProceduralMemoryStore implements AgentMemoryStore {
 
   /**
    * Deletes a procedural playbook by unique identifier.
+   *
+   * @param id Playbook identifier string to remove.
+   * @returns `true` if a playbook was deleted, `false` otherwise.
    */
   async deletePlaybook(id: string): Promise<boolean> {
     return this.playbooks.delete(id);
@@ -58,6 +66,8 @@ export class ProceduralMemoryStore implements AgentMemoryStore {
 
   /**
    * Lists all registered procedural playbooks.
+   *
+   * @returns Array of all stored `ProceduralPlaybook` definitions.
    */
   async listPlaybooks(): Promise<ProceduralPlaybook[]> {
     return Array.from(this.playbooks.values());
@@ -65,6 +75,10 @@ export class ProceduralMemoryStore implements AgentMemoryStore {
 
   /**
    * Matches and ranks procedural playbooks against a query trigger or topic.
+   *
+   * @param query Search query text or array of trigger keywords.
+   * @param options Match options (limit, score cutoff, prerequisite filters).
+   * @returns Ranked array of `ScoredPlaybook` entries sorted descending by match score.
    */
   async matchPlaybooks(
     query: string | string[],
@@ -136,6 +150,9 @@ export class ProceduralMemoryStore implements AgentMemoryStore {
 
   /**
    * Formats a procedural playbook into structured Markdown SOP prompt guidance.
+   *
+   * @param playbook The target procedural playbook.
+   * @returns Formatted Markdown string containing goal, prerequisites, and ordered steps.
    */
   formatPlaybookInstructions(playbook: ProceduralPlaybook): string {
     const lines: string[] = [];

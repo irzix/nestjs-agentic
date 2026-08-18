@@ -29,6 +29,9 @@ export class ExperienceLearner implements ExperienceEngine {
   /**
    * Evaluates an agent execution trajectory, extracts lessons learned from errors,
    * and automatically persists them into long-term memory for future self-correction.
+   *
+   * @param trajectory The captured execution trajectory.
+   * @returns Analytical critique and extracted rules.
    */
   async critiqueTrajectory(trajectory: AgentTrajectory): Promise<ReflectionResult> {
     const reflection = await this.reflectionEngine.critiqueTrajectory(trajectory);
@@ -53,6 +56,8 @@ export class ExperienceLearner implements ExperienceEngine {
 
   /**
    * Persists a learned lesson into memory or fallback storage.
+   *
+   * @param record The experience record to store.
    */
   async recordLesson(record: ExperienceRecord): Promise<void> {
     const item: ExperienceRecord = {
@@ -87,6 +92,10 @@ export class ExperienceLearner implements ExperienceEngine {
 
   /**
    * Recalls past learned lessons matching a task trigger or session tenant.
+   *
+   * @param trigger Prompt trigger key or task description.
+   * @param tenantId Optional tenant or session identifier.
+   * @returns Array of matching `ExperienceRecord` entries.
    */
   async recallLessons(trigger: string, tenantId?: string): Promise<ExperienceRecord[]> {
     const triggerKey = trigger.toLowerCase();
@@ -115,6 +124,10 @@ export class ExperienceLearner implements ExperienceEngine {
 
   /**
    * Formats relevant experiences into prompt guidance for an agent before execution.
+   *
+   * @param trigger Prompt trigger key or task description.
+   * @param tenantId Optional tenant or session identifier.
+   * @returns Formatted prompt guidance markdown string.
    */
   async buildGuidancePrompt(trigger: string, tenantId?: string): Promise<string> {
     const experiences = await this.recallLessons(trigger, tenantId);

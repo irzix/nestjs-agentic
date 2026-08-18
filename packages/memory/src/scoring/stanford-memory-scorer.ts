@@ -27,6 +27,11 @@ export class StanfordMemoryScorer {
   /**
    * Computes the exponential recency decay score for a memory record.
    * R(m) = decayRate^(Δt / decayUnitMs) ∈ [0, 1]
+   *
+   * @param record The target memory record.
+   * @param now Current timestamp reference. Defaults to `new Date()`.
+   * @param options Recency decay configuration parameters.
+   * @returns Normalized recency decay score in [0, 1].
    */
   static computeRecency(
     record: MemoryRecord,
@@ -58,6 +63,10 @@ export class StanfordMemoryScorer {
   /**
    * Computes or extracts the cognitive importance score of a memory record.
    * I(m) ∈ [0, 1]
+   *
+   * @param record The target memory record.
+   * @param customExtractor Optional custom function extracting importance rating.
+   * @returns Normalized cognitive importance score in [0, 1].
    */
   static computeImportance(
     record: MemoryRecord,
@@ -88,6 +97,11 @@ export class StanfordMemoryScorer {
   /**
    * Computes the semantic relevance score between a query and a memory record.
    * S(m, q) ∈ [0, 1]
+   *
+   * @param record The target memory record.
+   * @param query Search query text.
+   * @param queryEmbedding Optional pre-computed query embedding vector.
+   * @returns Normalized relevance score in [0, 1].
    */
   static computeRelevance(
     record: MemoryRecord,
@@ -141,6 +155,11 @@ export class StanfordMemoryScorer {
   /**
    * Ranks an array of memory candidates according to the Stanford Tri-Factor Formula.
    * Applies Min-Max pool normalization and linear weighting.
+   *
+   * @param candidates Array of candidate memory records.
+   * @param query Target search query or task trigger.
+   * @param options Scorer configuration options (weights, decay, cutoff).
+   * @returns Ranked array of `ScoredMemoryRecord` entries sorted descending by composite score.
    */
   static rankCandidates(
     candidates: MemoryRecord[],

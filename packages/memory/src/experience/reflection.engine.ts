@@ -1,9 +1,20 @@
 import type { AgentTrajectory, ReflectionResult } from '../interfaces/experience.interface';
 
+/**
+ * Production implementation of Trajectory Reflection and Self-Correction Critique.
+ * Implements the Reflexion framework (Shinn et al., MIT, NeurIPS 2023) to analyze
+ * execution trajectories, detect tool failures, and infer cognitive importance ratings.
+ *
+ * @see Shinn et al., "Reflexion: Language Agents with Verbal Reinforcement Learning" (arXiv:2303.11366)
+ */
 export class ReflectionEngine {
   /**
    * Analyzes an agent execution trajectory, detects tool execution errors,
-   * critiques failures (Reflexion pattern), and extracts actionable lessons learned.
+   * critiques failures (Reflexion pattern), and extracts actionable lessons learned
+   * with severity-based cognitive importance ratings.
+   *
+   * @param trajectory The captured execution trajectory.
+   * @returns Detailed critique, extracted self-correction lessons, and importance score.
    */
   async critiqueTrajectory(trajectory: AgentTrajectory): Promise<ReflectionResult> {
     const failedSteps = trajectory.steps.filter((s) => {

@@ -36,6 +36,9 @@ export class GenerativeMemoryStore implements AgentMemoryStore {
 
   /**
    * Saves a new memory record into the generative memory store.
+   * Automatically computes intrinsic cognitive importance and assigns timestamps.
+   *
+   * @param record The memory record to persist.
    */
   async save(record: MemoryRecord): Promise<void> {
     const item: MemoryRecord = {
@@ -54,6 +57,10 @@ export class GenerativeMemoryStore implements AgentMemoryStore {
 
   /**
    * Recalls top-K relevant memories ranked by the Stanford Tri-Factor Formula.
+   *
+   * @param query Search query text or task trigger.
+   * @param options Query and filter options (weights, decay, limit, score cutoff).
+   * @returns Array of matching `MemoryRecord` entries sorted descending by composite score.
    */
   async recall(query: string, options?: MemoryQueryOptions): Promise<MemoryRecord[]> {
     const scored = await this.recallScored(query, options);
@@ -62,6 +69,10 @@ export class GenerativeMemoryStore implements AgentMemoryStore {
 
   /**
    * Recalls memories along with their detailed Tri-Factor score components (Recency, Importance, Relevance).
+   *
+   * @param query Search query text or task trigger.
+   * @param options Query and filter options (weights, decay, limit, score cutoff).
+   * @returns Detailed `ScoredMemoryRecord` entries including individual factor breakdowns.
    */
   async recallScored(
     query: string,
@@ -103,7 +114,10 @@ export class GenerativeMemoryStore implements AgentMemoryStore {
   }
 
   /**
-   * Retrieves all records for a session without ranking.
+   * Retrieves all records for a session without applying ranking.
+   *
+   * @param sessionId Optional session identifier.
+   * @returns All stored `MemoryRecord` entries.
    */
   async getAll(sessionId?: string): Promise<MemoryRecord[]> {
     if (sessionId) {
@@ -113,7 +127,9 @@ export class GenerativeMemoryStore implements AgentMemoryStore {
   }
 
   /**
-   * Clears memory records for a session or the entire store.
+   * Clears memory records for a specific session or the entire store.
+   *
+   * @param sessionId Optional session identifier to clear.
    */
   async clear(sessionId?: string): Promise<void> {
     if (sessionId) {
