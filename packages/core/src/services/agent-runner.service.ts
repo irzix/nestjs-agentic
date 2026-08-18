@@ -19,6 +19,7 @@ import {
   RuntimeNotConfiguredError,
 } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
+import type { AgentDecoratorOptions } from '../decorators/agent.decorator';
 import type {
   AgentConfig,
   AgentContext,
@@ -306,12 +307,7 @@ export class AgentRunner {
     const history = await this.resolveResumeHistory(pending);
     const store = this.resolveSessionStore();
     const notifier = this.getNotifier();
-
-    const target = typeof agent === 'function' ? agent : agent.constructor;
-    const metadata = (Reflect.getMetadata(AGENT_METADATA, target) ??
-      (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined)) as
-      | { name?: string; model?: ModelConfig; cascade?: CascadeConfig }
-      | undefined;
+    const metadata = this.getAgentMetadata(agent);
 
     return this.executor.resume({
       agentName: pending.agentName,
@@ -415,6 +411,15 @@ export class AgentRunner {
     await store.set(this.sessionKey(context), record);
   }
 
+  private getAgentMetadata(agent: unknown): AgentDecoratorOptions | undefined {
+    if (!agent) return undefined;
+    const target = typeof agent === 'function' ? agent : (agent as object).constructor;
+    return (
+      Reflect.getMetadata(AGENT_METADATA, target) ??
+      (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined)
+    );
+  }
+
   private getAgentMap(): Map<string, AgentProvider> {
     let providers = Array.isArray(this.agentProviders) ? this.agentProviders : [];
     if (providers.length === 0) {
@@ -428,10 +433,7 @@ export class AgentRunner {
     const list = (Array.isArray(providers) ? providers : [providers]).flat(Infinity);
     for (const agent of list) {
       if (!agent) continue;
-      const target = typeof agent === 'function' ? agent : agent.constructor;
-      const metadata: { name: string } =
-        Reflect.getMetadata(AGENT_METADATA, target) ??
-        (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined);
+      const metadata = this.getAgentMetadata(agent);
       if (metadata?.name) {
         map.set(metadata.name, agent);
       }
@@ -564,11 +566,7 @@ export class AgentRunner {
       deadline,
     };
 
-    const target = typeof agent === 'function' ? agent : agent.constructor;
-    const metadata = (Reflect.getMetadata(AGENT_METADATA, target) ??
-      (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined)) as
-      | { name?: string; model?: ModelConfig; cascade?: CascadeConfig }
-      | undefined;
+    const metadata = this.getAgentMetadata(agent);
 
     return {
       config,
@@ -872,11 +870,7 @@ export class AgentRunner {
     const sessionStore = this.resolveSessionStore();
     const notifier = this.getNotifier();
 
-    const target = typeof agent === 'function' ? agent : agent.constructor;
-    const metadata = (Reflect.getMetadata(AGENT_METADATA, target) ??
-      (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined)) as
-      | { name?: string; model?: ModelConfig; cascade?: CascadeConfig }
-      | undefined;
+    const metadata = this.getAgentMetadata(agent);
 
     return this.executor.resumeCheckpoint({
       agentName,

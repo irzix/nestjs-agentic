@@ -52,12 +52,14 @@ export class ModelCascadeAdapter implements ModelAdapter {
         confidenceThreshold: 0.0,
         extractorFn: config.extractorFn,
       };
-      this.tiers = config.tiers && config.tiers.length > 0 ? config.tiers : [fastTier, reasoningTier];
+      this.tiers = [fastTier, reasoningTier];
       this.defaultThreshold = config.confidenceThreshold ?? 0.85;
       this.fallbackStrategy = config.fallbackStrategy ?? 'accept_last';
       this.onEscalate = config.onEscalate;
     } else {
-      throw new CascadeConfigurationError('Must provide either "tiers" array or both "fastModel" and "reasoningModel".');
+      throw new CascadeConfigurationError(
+        'Must provide either a non-empty "tiers" array or both "fastModel" and "reasoningModel".',
+      );
     }
 
     if (this.tiers.length === 0) {
@@ -69,16 +71,21 @@ export class ModelCascadeAdapter implements ModelAdapter {
    * Executes a model generation turn through the FrugalGPT cascade.
    */
   async generate(request: ModelRequest): Promise<CascadedModelResponse> {
+    if (request.signal?.aborted) {
+      throw request.signal.reason ?? new Error('Execution aborted.');
+    }
+
     const cumulativeUsage: ModelUsage = {
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
     };
 
-    let lastConfidence = 0;
-    let lastResponse: ModelResponse | null = null;
-
     for (let i = 0; i < this.tiers.length; i++) {
+      if (request.signal?.aborted) {
+        throw request.signal.reason ?? new Error('Execution aborted.');
+      }
+
       const tier = this.tiers[i];
       const isFinalTier = i === this.tiers.length - 1;
       const threshold = tier.confidenceThreshold ?? (isFinalTier ? 0.0 : this.defaultThreshold);
@@ -96,6 +103,10 @@ export class ModelCascadeAdapter implements ModelAdapter {
           tierResponse = await this.underlyingAdapter.generate(tierRequest);
         }
       } catch (err: unknown) {
+        if (request.signal?.aborted) {
+          throw request.signal.reason ?? err;
+        }
+
         // If non-final tier fails or times out, escalate to next tier
         if (!isFinalTier) {
           if (this.onEscalate) {
@@ -114,8 +125,6 @@ export class ModelCascadeAdapter implements ModelAdapter {
         throw err;
       }
 
-      lastResponse = tierResponse;
-
       // Accumulate token usage across all attempted tiers
       if (tierResponse.usage) {
         cumulativeUsage.inputTokens =
@@ -129,7 +138,6 @@ export class ModelCascadeAdapter implements ModelAdapter {
       // Evaluate confidence
       const extractor = tier.extractorFn ?? defaultConfidenceExtractor;
       const confidence = await extractor(tierResponse.content, tierResponse, tierRequest);
-      lastConfidence = confidence;
 
       // Check if threshold satisfied
       if (confidence >= threshold) {
@@ -149,6 +157,7 @@ export class ModelCascadeAdapter implements ModelAdapter {
         };
       }
 
+      // If final tier reached and threshold not met
       if (isFinalTier) {
         if (this.fallbackStrategy === 'throw') {
           throw new CascadeExhaustedError(
@@ -187,33 +196,13 @@ export class ModelCascadeAdapter implements ModelAdapter {
       }
     }
 
-    if (this.fallbackStrategy === 'throw') {
-      const finalModelName = this.tiers[this.tiers.length - 1].model.model;
-      throw new CascadeExhaustedError(
-        this.tiers.length,
-        lastConfidence,
-        this.defaultThreshold,
-        finalModelName,
-      );
-    }
-
-    // Default fallback: accept last response
-    return {
-      ...lastResponse!,
-      usage: cumulativeUsage,
-      cascadeMetadata: {
-        tiersAttempted: this.tiers.length,
-        finalTierIndex: this.tiers.length - 1,
-        finalModel: this.tiers[this.tiers.length - 1].model.model,
-        confidenceScore: lastConfidence,
-        cumulativeUsage,
-        escalated: this.tiers.length > 1,
-      },
-    };
+    // Safety fallback: unreachable in valid cascade loops
+    throw new CascadeConfigurationError('Cascade execution completed without resolving a model tier.');
   }
 
   /**
    * Streaming support for FrugalGPT cascading.
+   * If streaming is supported by the underlying adapter, streams the tokens for the accepted tier.
    */
   async *stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
     if (!this.underlyingAdapter.stream) {
@@ -222,9 +211,37 @@ export class ModelCascadeAdapter implements ModelAdapter {
       return;
     }
 
-    // Determine target tier via generation evaluation or direct final streaming
-    const res = await this.generate(request);
-    yield { type: 'response', response: res };
+    // Evaluate cascade tiers to identify target tier
+    const resolved = await this.generate(request);
+    
+    // Stream token chunks for the resolved final tier
+    const targetRequest: ModelRequest = {
+      ...request,
+      model: {
+        ...request.model,
+        model: resolved.cascadeMetadata?.finalModel ?? request.model.model,
+      },
+    };
+
+    let fullText = '';
+    for await (const chunk of this.underlyingAdapter.stream(targetRequest)) {
+      if (chunk.type === 'token') {
+        fullText += chunk.text;
+        yield chunk;
+      } else if (chunk.type === 'response') {
+        yield {
+          type: 'response',
+          response: {
+            ...chunk.response,
+            usage: resolved.usage,
+            cascadeMetadata: resolved.cascadeMetadata,
+          },
+        };
+        return;
+      }
+    }
+
+    yield { type: 'response', response: resolved };
   }
 
   private async executeWithTimeout(
@@ -232,7 +249,20 @@ export class ModelCascadeAdapter implements ModelAdapter {
     timeoutMs: number,
   ): Promise<ModelResponse> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(new Error(`Tier execution timed out after ${timeoutMs}ms`)), timeoutMs);
+
+    // Merge with caller signal if present
+    const onAbort = () => {
+      controller.abort(request.signal?.reason);
+    };
+
+    if (request.signal) {
+      if (request.signal.aborted) {
+        clearTimeout(timer);
+        throw request.signal.reason ?? new Error('Execution aborted.');
+      }
+      request.signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     try {
       const reqWithSignal: ModelRequest = {
@@ -242,6 +272,9 @@ export class ModelCascadeAdapter implements ModelAdapter {
       return await this.underlyingAdapter.generate(reqWithSignal);
     } finally {
       clearTimeout(timer);
+      if (request.signal) {
+        request.signal.removeEventListener('abort', onAbort);
+      }
     }
   }
 }

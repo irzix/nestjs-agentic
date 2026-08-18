@@ -40,30 +40,27 @@ export class ModelCascadeRouter {
   }
 
   /**
-   * Fast heuristic estimating query complexity to pre-select initial cascade tier.
+   * Estimates query complexity based on structural features (token/character volume, code fences)
+   * or a custom classifier function, completely independent of natural language keywords.
    */
-  static estimateComplexity(prompt: string): 'simple' | 'moderate' | 'complex' {
-    const len = (prompt ?? '').length;
-    const lower = (prompt ?? '').toLowerCase();
-
-    const complexKeywords = [
-      'prove',
-      'derive',
-      'optimize',
-      'refactor',
-      'analyze trade-offs',
-      'step by step',
-      'architecture',
-      'security vulnerability',
-      'mathematical proof',
-    ];
-
-    for (const kw of complexKeywords) {
-      if (lower.includes(kw)) return 'complex';
+  static estimateComplexity(
+    prompt: string,
+    classifierFn?: (prompt: string) => 'simple' | 'moderate' | 'complex',
+  ): 'simple' | 'moderate' | 'complex' {
+    if (classifierFn) {
+      return classifierFn(prompt);
     }
 
-    if (len > 1500) return 'complex';
-    if (len > 300) return 'moderate';
+    const text = prompt ?? '';
+    const len = text.length;
+
+    // Structural indicators: code fences, JSON schemas, nested structured data
+    if (text.includes('```') || (text.includes('{') && text.includes('}') && len > 300)) {
+      return len > 800 ? 'complex' : 'moderate';
+    }
+
+    if (len > 1200) return 'complex';
+    if (len > 250) return 'moderate';
     return 'simple';
   }
 }

@@ -297,13 +297,17 @@ export async function runModelCascadeTests() {
     assert(false, 'CascadeConfigurationError test', String(err));
   }
 
-  // 9. ModelCascadeRouter complexity estimation
+  // 9. ModelCascadeRouter structural complexity estimation
   try {
     assert(ModelCascadeRouter.estimateComplexity('What is 2+2?') === 'simple', 'Simple query complexity');
     assert(
-      ModelCascadeRouter.estimateComplexity('Please mathematically prove the consistency of Peano arithmetic step by step.') ===
+      ModelCascadeRouter.estimateComplexity('Code review:\n```typescript\nconst a = 1;\n```\n' + 'a'.repeat(900)) ===
         'complex',
-      'Complex mathematical query complexity',
+      'Long code fence query complexity',
+    );
+    assert(
+      ModelCascadeRouter.estimateComplexity('Custom prompt', () => 'complex') === 'complex',
+      'Custom classifier function support',
     );
   } catch (err: unknown) {
     assert(false, 'ModelCascadeRouter complexity estimation', String(err));
@@ -350,6 +354,166 @@ export async function runModelCascadeTests() {
     assert(result.output.includes('Your order #12345 has shipped!'), 'AgentRunner executes cascaded turn correctly');
   } catch (err: unknown) {
     assert(false, 'AgentRunner cascade integration', String(err));
+  }
+
+  // 11. Per-tier timeoutMs triggers escalation
+  try {
+    const mockAdapter: ModelAdapter = {
+      generate: async (req: ModelRequest) => {
+        if (req.model.model === 'slow-fast-model') {
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, 50);
+            if (req.signal) {
+              req.signal.addEventListener('abort', () => {
+                clearTimeout(timer);
+                reject(req.signal?.reason ?? new Error('Timed out'));
+              });
+            }
+          });
+          return { content: 'Slow response', usage: { totalTokens: 10 } };
+        }
+        return { content: 'Fast reasoning response. [Confidence: 0.95]', usage: { totalTokens: 20 } };
+      },
+    };
+
+    const cascade = new ModelCascadeAdapter(mockAdapter, {
+      tiers: [
+        { model: { model: 'slow-fast-model' }, timeoutMs: 10, confidenceThreshold: 0.85 },
+        { model: { model: 'reasoning-model' } },
+      ],
+    });
+
+    const result = await cascade.generate({
+      model: { model: 'default' },
+      messages: [{ role: 'user', content: 'Timeout test' }],
+      tools: [],
+      metadata: { sessionId: 's1', traceId: 't1', executionId: 'e1', iteration: 0 },
+    });
+
+    assert(result.cascadeMetadata?.tiersAttempted === 2, 'Timeout in tier 1 triggers escalation to tier 2');
+    assert(result.cascadeMetadata?.finalModel === 'reasoning-model', 'Final model is tier 2');
+  } catch (err: unknown) {
+    assert(false, 'Per-tier timeoutMs escalation', String(err));
+  }
+
+  // 12. Caller AbortSignal cancellation
+  try {
+    const controller = new AbortController();
+    controller.abort(new Error('Turn cancelled by client'));
+
+    const mockAdapter: ModelAdapter = {
+      generate: async () => ({ content: 'Should not run' }),
+    };
+
+    const cascade = new ModelCascadeAdapter(mockAdapter, {
+      fastModel: { model: 'm1' },
+      reasoningModel: { model: 'm2' },
+    });
+
+    let threwAbort = false;
+    try {
+      await cascade.generate({
+        model: { model: 'default' },
+        messages: [{ role: 'user', content: 'Abort test' }],
+        tools: [],
+        signal: controller.signal,
+        metadata: { sessionId: 's1', traceId: 't1', executionId: 'e1', iteration: 0 },
+      });
+    } catch (e: unknown) {
+      threwAbort = true;
+    }
+    assert(threwAbort, 'Caller AbortSignal cancels cascade execution');
+  } catch (err: unknown) {
+    assert(false, 'Caller AbortSignal cancellation', String(err));
+  }
+
+  // 13. Async extractor function support
+  try {
+    const mockAdapter: ModelAdapter = {
+      generate: async () => ({ content: 'Async test', usage: { totalTokens: 10 } }),
+    };
+
+    const cascade = new ModelCascadeAdapter(mockAdapter, {
+      fastModel: { model: 'm1' },
+      reasoningModel: { model: 'm2' },
+      extractorFn: async (content) => {
+        await new Promise((r) => setTimeout(r, 5));
+        return content.includes('Async') ? 0.99 : 0.10;
+      },
+    });
+
+    const result = await cascade.generate({
+      model: { model: 'default' },
+      messages: [{ role: 'user', content: 'Async' }],
+      tools: [],
+      metadata: { sessionId: 's1', traceId: 't1', executionId: 'e1', iteration: 0 },
+    });
+
+    assert(result.cascadeMetadata?.confidenceScore === 0.99, 'Async extractor evaluated correctly');
+    assert(result.cascadeMetadata?.tiersAttempted === 1, 'Async extractor early exits at tier 1');
+  } catch (err: unknown) {
+    assert(false, 'Async extractorFn support', String(err));
+  }
+
+  // 14. Streaming token propagation
+  try {
+    const mockAdapter: ModelAdapter = {
+      generate: async () => ({ content: 'Full text', usage: { totalTokens: 15 } }),
+      stream: async function* () {
+        yield { type: 'token', text: 'Hello ' };
+        yield { type: 'token', text: 'world!' };
+        yield {
+          type: 'response',
+          response: { content: 'Hello world!', usage: { totalTokens: 15 } },
+        };
+      },
+    };
+
+    const cascade = new ModelCascadeAdapter(mockAdapter, {
+      fastModel: { model: 'm1' },
+      reasoningModel: { model: 'm2' },
+    });
+
+    const tokens: string[] = [];
+    let receivedResponse = false;
+
+    for await (const chunk of cascade.stream({
+      model: { model: 'default' },
+      messages: [{ role: 'user', content: 'Stream test' }],
+      tools: [],
+      metadata: { sessionId: 's1', traceId: 't1', executionId: 'e1', iteration: 0 },
+    })) {
+      if (chunk.type === 'token') {
+        tokens.push(chunk.text);
+      } else if (chunk.type === 'response') {
+        receivedResponse = true;
+        assert(chunk.response.cascadeMetadata !== undefined, 'Stream final response includes cascadeMetadata');
+      }
+    }
+
+    assert(tokens.join('') === 'Hello world!', 'Stream correctly yields token chunks');
+    assert(receivedResponse, 'Stream finishes with complete response chunk');
+  } catch (err: unknown) {
+    assert(false, 'Streaming token propagation', String(err));
+  }
+
+  // 15. Configurable heuristic scoring options
+  try {
+    const customScore = extractHeuristicConfidence(
+      'Short',
+      { content: 'Short' },
+      { shortResponseScore: 0.15, minLength: 10 },
+    );
+    assert(customScore === 0.15, 'Custom shortResponseScore applied');
+
+    const customHedge = extractHeuristicConfidence(
+      'نتیجه ممکن است اشتباه باشد',
+      { content: 'نتیجه ممکن است اشتباه باشد' },
+      { additionalHedgePatterns: [/ممکن است اشتباه/i], uncertaintyPenalty: 0.45 },
+    );
+    assert(customHedge <= 0.40, 'Custom multilingual hedge pattern penalized');
+  } catch (err: unknown) {
+    assert(false, 'Configurable heuristic scoring options', String(err));
   }
 
   if (failed > 0) {

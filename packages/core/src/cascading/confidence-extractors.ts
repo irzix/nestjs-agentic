@@ -53,14 +53,42 @@ export function extractVerbalizedConfidence(content: string): number | null {
   return null;
 }
 
+export interface HeuristicConfidenceOptions {
+  /** Baseline confidence score assigned to structured non-empty prose. Default: 0.80 */
+  baselineScore?: number;
+  /** High confidence score assigned when explicit tool calls are requested. Default: 0.92 */
+  toolCallScore?: number;
+  /** Penalty subtracted for each detected uncertainty hedging phrase. Default: 0.30 */
+  uncertaintyPenalty?: number;
+  /** Bonus added when structured output (markdown code blocks, bullet points) is detected. Default: 0.10 */
+  structureBonus?: number;
+  /** Score assigned to very short or trivial responses under minLength. Default: 0.35 */
+  shortResponseScore?: number;
+  /** Minimum character length threshold for non-trivial responses. Default: 15 */
+  minLength?: number;
+  /** Custom additional uncertainty regex patterns to detect. */
+  additionalHedgePatterns?: RegExp[];
+}
+
 /**
  * Heuristically scores response confidence based on tool usage, answer completeness,
  * and uncertainty hedging expressions (Stanford FrugalGPT heuristic).
  */
-export function extractHeuristicConfidence(content: string, response: ModelResponse): number {
+export function extractHeuristicConfidence(
+  content: string,
+  response: ModelResponse,
+  options?: HeuristicConfidenceOptions,
+): number {
+  const toolScore = options?.toolCallScore ?? 0.92;
+  const baseline = options?.baselineScore ?? 0.80;
+  const penalty = options?.uncertaintyPenalty ?? 0.30;
+  const bonus = options?.structureBonus ?? 0.10;
+  const shortScore = options?.shortResponseScore ?? 0.35;
+  const minLen = options?.minLength ?? 15;
+
   // 1. Tool calls express direct, structured operational intent
   if (response.toolCalls && response.toolCalls.length > 0) {
-    return 0.92;
+    return toolScore;
   }
 
   const trimmed = (content ?? '').trim();
@@ -68,22 +96,26 @@ export function extractHeuristicConfidence(content: string, response: ModelRespo
     return 0.0;
   }
 
-  if (trimmed.length < 15) {
-    return 0.35;
+  if (trimmed.length < minLen) {
+    return shortScore;
   }
 
-  let score = 0.80; // Baseline for structured non-empty prose
+  let score = baseline;
 
   // 2. Penalize for explicit uncertainty hedging expressions
-  for (const hedgeRegex of UNCERTAINTY_HEDGES) {
+  const patterns = options?.additionalHedgePatterns
+    ? [...UNCERTAINTY_HEDGES, ...options.additionalHedgePatterns]
+    : UNCERTAINTY_HEDGES;
+
+  for (const hedgeRegex of patterns) {
     if (hedgeRegex.test(trimmed)) {
-      score -= 0.30;
+      score -= penalty;
     }
   }
 
   // 3. Reward structured output (markdown headers, code blocks, lists)
   if (trimmed.includes('```') || /^[*-]\s+/m.test(trimmed) || /^\d+\.\s+/m.test(trimmed)) {
-    score += 0.10;
+    score += bonus;
   }
 
   return Math.min(1.0, Math.max(0.0, Math.round(score * 100) / 100));
@@ -97,10 +129,11 @@ export function defaultConfidenceExtractor(
   content: string,
   response: ModelResponse,
   request: ModelRequest,
+  options?: HeuristicConfidenceOptions,
 ): number {
   const verbalized = extractVerbalizedConfidence(content);
   if (verbalized !== null) {
     return verbalized;
   }
-  return extractHeuristicConfidence(content, response);
+  return extractHeuristicConfidence(content, response, options);
 }
