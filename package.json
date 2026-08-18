@@ -25,8 +25,6 @@
     "packages/rag",
     "packages/orchestration",
     "packages/evaluation",
-    "packages/runtime-adk",
-    "packages/runtime-langgraph",
     "packages/model-openai",
     "packages/mcp",
     "packages/meta",
@@ -35,8 +33,6 @@
   ],
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
-    "@langchain/core": "^1.2.5",
-    "@langchain/langgraph": "^1.4.9",
     "@nestjs/testing": "^10.4.22",
     "@types/node": "^26.2.0",
     "openai": "^7.4.0",

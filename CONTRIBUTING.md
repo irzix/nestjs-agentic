@@ -24,18 +24,16 @@ The project uses npm workspaces. `npm install` at the root handles everything.
 
 ```text
 packages/
-  core/                 → NestJS primitives and governance boundary
+  core/                 → NestJS primitives and governance boundary (@nestjs-agentic/core)
   model-openai/         → OpenAI ModelAdapter (@nestjs-agentic/openai)
-  runtime-adk/          → Synthetic runtime prototype (@nestjs-agentic/adk)
-  runtime-langgraph/    → Limited LangChain/LangGraph compatibility adapter
-  memory/               → Experimental opt-in memory primitives
-  rag/                  → Experimental opt-in retrieval primitives
-  orchestration/        → Experimental delegation and refinement APIs
-  evaluation/           → Experimental metrics and benchmarks
+  mcp/                  → Model Context Protocol client (@nestjs-agentic/mcp)
+  memory/               → Stanford Tri-Factor scoring, procedural SOPs, and reflection (@nestjs-agentic/memory)
+  rag/                  → AST codebase chunking, vector stores, and GraphRAG (@nestjs-agentic/rag)
+  orchestration/        → Sub-agent delegation, parallel execution, and refinement (@nestjs-agentic/orchestration)
+  evaluation/           → Position-debiased judge and AgentBench metrics (@nestjs-agentic/evaluation)
 examples/
-  customer-support/     → ADK prototype evaluation example
-  financial-governance/ → Governance and mock-runtime example
-  langgraph-workflow/   → LangGraph adapter fallback evaluation
+  customer-support/     → Autonomous support agent and HITL approval example
+  financial-governance/ → Governance, policy evaluation, and multi-tier memory example
 apps/
   landing/              → Project website
 ```

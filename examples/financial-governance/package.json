@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "nestjs-agentic": "*",
-    "@nestjs-agentic/adk": "*",
     "@nestjs-agentic/memory": "*",
     "@nestjs-agentic/rag": "*",
     "@nestjs/common": "^10.0.0",

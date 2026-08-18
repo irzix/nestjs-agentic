@@ -31,19 +31,20 @@ NestJS service
 
 ## Current Status
 
-The current release line is `0.4.x`. Published does not mean production-ready, and breaking changes remain possible before 1.0.
+The current release line is `0.8.x`.
 
 | Area | Status | Scope |
 | --- | --- | --- |
 | Agents, tools, NestJS DI, policies, mock runtime | Available | Core decorators, discovery, context-bound execution, governance decisions, and deterministic tests. |
-| Built-in agent runtime | Available | Governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming. Requires a `ModelAdapter`. |
-| Other model providers | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same `ModelAdapter` contract. |
-| Human approval | Experimental | Approve/reject an individual process-local tool invocation; durable pause/resume is not available. |
+| Built-in agent runtime & Cascading | Available | Governed model-to-tool loop with argument validation, execution budgets, cancellation, streaming, and FrugalGPT model cascading. |
+| Model Context Protocol (MCP) | Available | `@nestjs-agentic/mcp` for Stdio and SSE remote tool discovery and authorization. |
+| Human approval & Durable HITL | Available | The runtime suspends a turn on `require_approval`; resumes durably via `ApprovalStore` and execution checkpoints. |
 | OpenAI model adapter | Available | `@nestjs-agentic/openai` for OpenAI and Chat Completions compatible endpoints. |
-| ADK prototype and LangGraph adapter | Experimental | The ADK-named package is a synthetic runtime prototype; the LangGraph package offers limited compatibility with adapter-specific limitations. |
-| Memory, RAG, experience, orchestration, evaluation | Experimental | Optional packages that applications must integrate explicitly. |
-| Durable execution and observability | Planned | Recovery, resumable approval, standardized tracing, and audit events. |
-| Vercel AI SDK and MCP | Planned | Future integrations over the common runtime and governance contracts. |
+| Cognitive Memory & SOP Playbooks | Available | `@nestjs-agentic/memory` for Stanford Tri-Factor scoring, procedural SOPs, and trajectory reflection. |
+| Context Attention & RAG | Available | `@nestjs-agentic/rag` for U-Shaped context assembly, AST codebase splitting, and GraphRAG. |
+| Debiased Evaluation & Trajectory Metrics | Available | `@nestjs-agentic/evaluation` for MT-Bench position-debiased judge and AgentBench metrics. |
+| Sub-Agent Orchestration | Available | `@nestjs-agentic/orchestration` for parallel delegation, bounded concurrency, and refinement. |
+| Persistence & Stores | Available | In-memory, Redis, and PostgreSQL drivers for Session, State, Approval, and Idempotency. |
 
 ## Installation
 
@@ -51,7 +52,7 @@ The current release line is `0.4.x`. Published does not mean production-ready, a
 npm install nestjs-agentic
 ```
 
-Use `MockRuntimeAdapter` for deterministic governance tests without a model API. The current `@nestjs-agentic/adk` package is a synthetic runtime prototype, while `@nestjs-agentic/langgraph` provides limited compatibility. Review their package READMEs before evaluation.
+Use `MockRuntimeAdapter` for deterministic governance tests without a model API.
 
 ## Minimal Governed Tool
 
@@ -94,8 +95,6 @@ export class OrderTools {
   }
 }
 ```
-
-The current approval continuation is stored as a process-local closure. Approval executes that pending tool invocation but does not resume the original model turn or survive a restart.
 
 ## Documentation
 
