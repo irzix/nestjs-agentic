@@ -3,8 +3,22 @@ import {
   ToolPrecisionMetric,
   TrajectoryInspectorMetric,
   type EvalDatasetItem,
-  type TrajectoryEfficiencyMetrics,
 } from '../src';
+
+function getNumberDetail(details: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = details?.[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function getBooleanDetail(details: Record<string, unknown> | undefined, key: string): boolean | undefined {
+  const value = details?.[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function getArrayDetail(details: Record<string, unknown> | undefined, key: string): unknown[] | undefined {
+  const value = details?.[key];
+  return Array.isArray(value) ? value : undefined;
+}
 
 export async function runTrajectoryMetricsTests() {
   console.log('📈 Running Trajectory Metrics Tests (AgentBench Efficiency & Precision)...\n');
@@ -41,7 +55,7 @@ export async function runTrajectoryMetricsTests() {
     const evalResult = metric.evaluate(item, result);
     assert(evalResult.passed === true, 'Test 1a: Error-free trajectory passes precision metric');
     assert(evalResult.score === 1.0, 'Test 1b: 100% success rate gives score 1.0');
-    assert((evalResult.details as any).successfulCalls === 2, 'Test 1c: 2 successful calls recorded');
+    assert(getNumberDetail(evalResult.details, 'successfulCalls') === 2, 'Test 1c: 2 successful calls recorded');
   } catch (err: unknown) {
     assert(false, 'Test 1: Perfect Tool Precision', String(err));
   }
@@ -68,8 +82,8 @@ export async function runTrajectoryMetricsTests() {
     // 2 successes out of 4 calls = 0.50 precision (below 0.75 threshold)
     assert(evalResult.passed === false, 'Test 2a: Fails when precision is 0.50 < 0.75 threshold');
     assert(evalResult.score === 0.50, 'Test 2b: Calculated precision is exactly 0.50 (2/4)');
-    assert((evalResult.details as any).failedCalls === 2, 'Test 2c: 2 failed calls recorded');
-    assert((evalResult.details as any).failedTools.length === 2, 'Test 2d: Failed tools list populated');
+    assert(getNumberDetail(evalResult.details, 'failedCalls') === 2, 'Test 2c: 2 failed calls recorded');
+    assert(getArrayDetail(evalResult.details, 'failedTools')?.length === 2, 'Test 2d: Failed tools list populated');
   } catch (err: unknown) {
     assert(false, 'Test 2: Tool Precision with Failures', String(err));
   }
@@ -114,10 +128,9 @@ export async function runTrajectoryMetricsTests() {
       ],
     };
     const evalOpt = inspector.evaluate(item, optimalResult);
-    const metricsOpt = evalOpt.details as unknown as TrajectoryEfficiencyMetrics;
     assert(evalOpt.passed === true, 'Test 4a: Optimal trajectory passes');
-    assert(metricsOpt.stepEfficiency === 1.0, 'Test 4b: Step efficiency is 1.0');
-    assert(metricsOpt.isOptimal === true, 'Test 4c: isOptimal is true');
+    assert(getNumberDetail(evalOpt.details, 'stepEfficiency') === 1.0, 'Test 4b: Step efficiency is 1.0');
+    assert(getBooleanDetail(evalOpt.details, 'isOptimal') === true, 'Test 4c: isOptimal is true');
 
     // Case B: Sub-optimal execution (4 steps executed for 2-step task = 50% step efficiency)
     const bloatedResult: AgentResult = {
@@ -131,9 +144,8 @@ export async function runTrajectoryMetricsTests() {
       ],
     };
     const evalBloat = inspector.evaluate(item, bloatedResult);
-    const metricsBloat = evalBloat.details as unknown as TrajectoryEfficiencyMetrics;
-    assert(metricsBloat.stepEfficiency === 0.5, 'Test 4d: Step efficiency is 2/4 = 0.50');
-    assert(metricsBloat.isOptimal === false, 'Test 4e: isOptimal is false');
+    assert(getNumberDetail(evalBloat.details, 'stepEfficiency') === 0.5, 'Test 4d: Step efficiency is 2/4 = 0.50');
+    assert(getBooleanDetail(evalBloat.details, 'isOptimal') === false, 'Test 4e: isOptimal is false');
     assert(evalBloat.score < 1.0, 'Test 4f: Score penalized for extra unnecessary steps');
   } catch (err: unknown) {
     assert(false, 'Test 4: Trajectory Step Efficiency', String(err));

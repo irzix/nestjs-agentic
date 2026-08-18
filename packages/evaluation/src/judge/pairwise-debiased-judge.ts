@@ -26,6 +26,20 @@ export interface PairwiseDebiasedJudgeOptions {
   tieThreshold?: number;
 }
 
+function normalizeScore(score: number): number {
+  if (!Number.isFinite(score)) {
+    throw new RangeError('Pairwise judge scores must be finite numbers');
+  }
+  return Math.min(1.0, Math.max(0.0, score));
+}
+
+function validateTieThreshold(tieThreshold: number): number {
+  if (!Number.isFinite(tieThreshold) || tieThreshold < 0 || tieThreshold > 1) {
+    throw new RangeError('tieThreshold must be a finite number between 0 and 1');
+  }
+  return tieThreshold;
+}
+
 /**
  * Pairwise LLM-as-a-Judge evaluator with automated position-swap debiasing.
  *
@@ -41,12 +55,11 @@ export class PairwiseDebiasedJudge {
 
   constructor(options: PairwiseDebiasedJudgeOptions) {
     this.judgeFn = options.judgeFn;
-    this.tieThreshold = options.tieThreshold ?? 0.05;
+    this.tieThreshold = validateTieThreshold(options.tieThreshold ?? 0.05);
   }
 
   /**
-   * Evaluates two candidate agent responses with automated position swapping,
-   * averaging scores across forward (A, B) and reverse (B, A) passes to eliminate position bias.
+   * O(1) time and memory; evaluates both presentation orders concurrently.
    *
    * @param input Pairwise comparison input (query, candidateA, candidateB, criteria, groundTruth).
    * @returns Debiased evaluation result with individual pass scores and position bias detection.
@@ -55,29 +68,17 @@ export class PairwiseDebiasedJudge {
     const { query, candidateA, candidateB, criteria, groundTruth } = input;
 
     // 1. Forward Pass: Candidate A presented first, Candidate B second
-    const forwardPass = await this.judgeFn(
-      query,
-      candidateA,
-      candidateB,
-      criteria,
-      groundTruth,
-    );
-
-    // 2. Reverse Pass: Candidate B presented first, Candidate A second
-    const reversePass = await this.judgeFn(
-      query,
-      candidateB,
-      candidateA,
-      criteria,
-      groundTruth,
-    );
+    const [forwardPass, reversePass] = await Promise.all([
+      this.judgeFn(query, candidateA, candidateB, criteria, groundTruth),
+      this.judgeFn(query, candidateB, candidateA, criteria, groundTruth),
+    ]);
 
     // Extract individual candidate scores
-    const scoreA_forward = Math.min(1.0, Math.max(0.0, forwardPass.scoreFirst));
-    const scoreB_forward = Math.min(1.0, Math.max(0.0, forwardPass.scoreSecond));
+    const scoreA_forward = normalizeScore(forwardPass.scoreFirst);
+    const scoreB_forward = normalizeScore(forwardPass.scoreSecond);
 
-    const scoreB_reverse = Math.min(1.0, Math.max(0.0, reversePass.scoreFirst));
-    const scoreA_reverse = Math.min(1.0, Math.max(0.0, reversePass.scoreSecond));
+    const scoreB_reverse = normalizeScore(reversePass.scoreFirst);
+    const scoreA_reverse = normalizeScore(reversePass.scoreSecond);
 
     // Calculate debiased mean scores
     const debiasedScoreA = Number(((scoreA_forward + scoreA_reverse) / 2).toFixed(4));

@@ -1,5 +1,6 @@
-import type { AgentResult, ToolCallRecord } from '@nestjs-agentic/core';
+import type { AgentResult } from '@nestjs-agentic/core';
 import type { EvalDatasetItem, EvalMetric, MetricResult } from '../interfaces/evaluation.interface';
+import { getToolFailureReason, isToolExecutionFailed } from './tool-result';
 
 /**
  * Options configuring ToolPrecisionMetric evaluation.
@@ -7,23 +8,6 @@ import type { EvalDatasetItem, EvalMetric, MetricResult } from '../interfaces/ev
 export interface ToolPrecisionMetricOptions {
   /** Minimum precision threshold (0.0 to 1.0) required to pass. Default: `0.8` */
   minPrecisionThreshold?: number;
-}
-
-/**
- * Checks if a ToolCallRecord represents a failed or errored tool execution.
- */
-function isToolExecutionFailed(call: ToolCallRecord): boolean {
-  if (call.result instanceof Error) return true;
-  if (typeof call.result === 'string' && (call.result.toLowerCase().startsWith('error') || call.result.toLowerCase().includes('failed'))) {
-    return true;
-  }
-  if (call.result && typeof call.result === 'object') {
-    const resObj = call.result as Record<string, unknown>;
-    if (resObj.success === false || resObj.isError === true || resObj.error !== undefined) {
-      return true;
-    }
-  }
-  return false;
 }
 
 /**
@@ -77,18 +61,9 @@ export class ToolPrecisionMetric implements EvalMetric {
     for (const call of toolCalls) {
       if (isToolExecutionFailed(call)) {
         failedCalls++;
-        const errDetail =
-          call.result instanceof Error
-            ? call.result.message
-            : typeof call.result === 'string'
-            ? call.result
-            : (call.result as Record<string, unknown>)?.reason ??
-              (call.result as Record<string, unknown>)?.error ??
-              'Tool execution failure';
-
         failedTools.push({
           toolName: call.toolName,
-          error: String(errDetail),
+          error: getToolFailureReason(call.result),
         });
       }
     }

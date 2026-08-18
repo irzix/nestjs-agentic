@@ -157,6 +157,38 @@ export async function runPairwiseJudgeTests() {
     assert(false, 'Test 4: Clamping and Helper', String(err));
   }
 
+  // 5. Invalid judge configuration and non-finite model output fail fast
+  try {
+    let invalidThresholdRejected = false;
+    try {
+      new PairwiseDebiasedJudge({
+        judgeFn: async () => ({ winner: 'tie', scoreFirst: 0.5, scoreSecond: 0.5, reasoning: '' }),
+        tieThreshold: -0.1,
+      });
+    } catch (error: unknown) {
+      invalidThresholdRejected = error instanceof RangeError;
+    }
+
+    const judge = new PairwiseDebiasedJudge({
+      judgeFn: async () => ({ winner: 'tie', scoreFirst: Number.NaN, scoreSecond: 0.5, reasoning: '' }),
+    });
+    let invalidScoreRejected = false;
+    try {
+      await judge.evaluate({
+        query: 'Test',
+        candidateA: { id: 'a', output: 'a' },
+        candidateB: { id: 'b', output: 'b' },
+      });
+    } catch (error: unknown) {
+      invalidScoreRejected = error instanceof RangeError;
+    }
+
+    assert(invalidThresholdRejected, 'Test 5a: Invalid tie threshold is rejected');
+    assert(invalidScoreRejected, 'Test 5b: Non-finite judge score is rejected');
+  } catch (err: unknown) {
+    assert(false, 'Test 5: Judge input validation', String(err));
+  }
+
   if (failed > 0) {
     throw new Error(`${failed} PairwiseDebiasedJudge test(s) failed.`);
   }

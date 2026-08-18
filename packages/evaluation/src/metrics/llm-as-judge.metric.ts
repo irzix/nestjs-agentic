@@ -28,12 +28,16 @@ export class LLMAsAJudgeMetric implements EvalMetric {
   async evaluate(item: EvalDatasetItem, result: AgentResult): Promise<MetricResult> {
     try {
       const { score, reason } = await this.judgeFn(item, result);
-      const passed = score >= this.minThreshold;
+      if (!Number.isFinite(score)) {
+        throw new RangeError('LLM judge must return a finite score');
+      }
+      const normalizedScore = Math.min(1.0, Math.max(0.0, score));
+      const passed = normalizedScore >= this.minThreshold;
 
       return {
         metricName: this.name,
         passed,
-        score: Math.min(1.0, Math.max(0.0, score)),
+        score: normalizedScore,
         reason: reason || (passed ? 'LLM Judge approved response' : 'LLM Judge rejected response'),
       };
     } catch (err: unknown) {

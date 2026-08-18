@@ -1,10 +1,11 @@
-import type { AgentResult, ToolCallRecord } from '@nestjs-agentic/core';
+import type { AgentResult } from '@nestjs-agentic/core';
 import type {
   EvalDatasetItem,
   EvalMetric,
   MetricResult,
   TrajectoryEfficiencyMetrics,
 } from '../interfaces/evaluation.interface';
+import { isToolExecutionFailed } from './tool-result';
 
 /**
  * Configuration options for TrajectoryInspectorMetric.
@@ -14,23 +15,6 @@ export interface TrajectoryInspectorOptions {
   minScoreThreshold?: number;
   /** Whether to penalize trajectories that exceed optimal steps. Default: `true` */
   penalizeExtraSteps?: boolean;
-}
-
-/**
- * Checks if a ToolCallRecord represents a failed tool execution.
- */
-function isToolFailed(call: ToolCallRecord): boolean {
-  if (call.result instanceof Error) return true;
-  if (typeof call.result === 'string' && (call.result.toLowerCase().startsWith('error') || call.result.toLowerCase().includes('failed'))) {
-    return true;
-  }
-  if (call.result && typeof call.result === 'object') {
-    const resObj = call.result as Record<string, unknown>;
-    if (resObj.success === false || resObj.isError === true || resObj.error !== undefined) {
-      return true;
-    }
-  }
-  return false;
 }
 
 /**
@@ -68,7 +52,7 @@ export class TrajectoryInspectorMetric implements EvalMetric {
     // Count failed/successful tool calls
     let failedToolCalls = 0;
     for (const call of toolCalls) {
-      if (isToolFailed(call)) {
+      if (isToolExecutionFailed(call)) {
         failedToolCalls++;
       }
     }
@@ -130,7 +114,7 @@ export class TrajectoryInspectorMetric implements EvalMetric {
 
         for (const call of matchingCalls) {
           for (const [argKey, expectedValue] of Object.entries(expectedArgs)) {
-            const actualValue = (call.args as Record<string, unknown>)?.[argKey];
+            const actualValue = call.args[argKey];
             if (actualValue !== expectedValue) {
               return {
                 metricName: this.name,

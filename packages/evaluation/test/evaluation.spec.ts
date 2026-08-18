@@ -153,6 +153,11 @@ export async function runEvaluationTests() {
     const judgeRes = await judge.evaluate(datasetItem, agentResult);
     assert(judgeRes.passed === true, 'Test 3a: LLMAsAJudgeMetric evaluated output score');
     assert(judgeRes.score === 0.95, 'Test 3b: LLMAsAJudgeMetric returned 0.95 score');
+
+    const outOfRangeJudge = new LLMAsAJudgeMetric(async () => ({ score: -0.2, reason: 'Invalid' }), 0.5);
+    const outOfRangeResult = await outOfRangeJudge.evaluate(datasetItem, agentResult);
+    assert(outOfRangeResult.passed === false, 'Test 3c: Pass state uses normalized judge score');
+    assert(outOfRangeResult.score === 0, 'Test 3d: Out-of-range judge score is normalized');
   } catch (err: any) {
     assert(false, 'Test 3: LLMAsAJudgeMetric', err.message);
   }
