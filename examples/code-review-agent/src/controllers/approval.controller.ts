@@ -22,7 +22,8 @@ export class ApprovalController {
     @Param('id') id: string,
     @Body() body: { action: 'approve' | 'reject'; maintainerToken?: string; reason?: string },
   ) {
-    if (!body.maintainerToken || body.maintainerToken !== 'valid-maintainer-token') {
+    const expectedSecret = process.env.MAINTAINER_APPROVAL_SECRET || 'valid-maintainer-token';
+    if (!body.maintainerToken || body.maintainerToken !== expectedSecret) {
       throw new UnauthorizedException('Maintainer authentication token required to settle approvals');
     }
 
