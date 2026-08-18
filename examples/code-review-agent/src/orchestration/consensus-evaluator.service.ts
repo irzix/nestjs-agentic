@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type { ReviewAssessment } from '../agents/schemas/review-output.schema';
 
 /**
@@ -20,7 +20,7 @@ export interface ConsensusResult {
 export class ConsensusEvaluatorService {
   private readonly highAgreementThreshold: number;
 
-  constructor(options?: { highAgreementThreshold?: number }) {
+  constructor(@Optional() options?: { highAgreementThreshold?: number }) {
     this.highAgreementThreshold = options?.highAgreementThreshold ?? 0.80;
   }
 

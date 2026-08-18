@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import {
   AstCodebaseSplitter,
   GraphDependencyStrategy,
@@ -23,7 +23,7 @@ export class CodebaseRAGService {
   private readonly astSplitter: AstCodebaseSplitter;
   private readonly graphProvider: InMemoryKnowledgeGraphProvider;
 
-  constructor(embeddingProvider?: EmbeddingProvider) {
+  constructor(@Optional() embeddingProvider?: EmbeddingProvider) {
     const provider = embeddingProvider || new MockEmbeddingProvider();
     this.astSplitter = new AstCodebaseSplitter({
       maxChunkSize: 1500,
