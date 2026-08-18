@@ -9,6 +9,9 @@ import { ArchitectureReviewerAgent } from '../agents/architecture-reviewer.agent
 import { QualityReviewerAgent } from '../agents/quality-reviewer.agent';
 import { LeadSynthesizerAgent } from '../agents/lead-synthesizer.agent';
 import { ConsensusEvaluatorService } from './consensus-evaluator.service';
+import { NjentExperienceService } from '../memory/experience-learner.service';
+import { ReviewQualityEvaluatorService } from '../evaluation/review-quality-evaluator.service';
+import { NjentAuditLogger } from '../audit/njent-audit-logger.service';
 import type { ReviewAssessment, SynthesizedPRReviewReport } from '../agents/schemas/review-output.schema';
 import type { NjentTriggerEvent } from '../interfaces/webhook.interface';
 
@@ -21,6 +24,8 @@ export interface OrchestratorRunOptions {
   architecturalRules?: string[];
   episodicLessons?: string[];
   mockAssessments?: ReviewAssessment[];
+  /** Resolved changed file paths from the diff (used to query RAG). */
+  changedFilePaths?: string[];
 }
 
 /**
@@ -35,6 +40,9 @@ export class PrReviewOrchestrator {
     private readonly ragService: CodebaseRAGService,
     private readonly leadSynthesizer: LeadSynthesizerAgent,
     private readonly consensusEvaluator: ConsensusEvaluatorService,
+    private readonly experienceService: NjentExperienceService,
+    private readonly qualityEvaluator: ReviewQualityEvaluatorService,
+    private readonly auditLogger: NjentAuditLogger,
     @Optional() private readonly agentRunner?: AgentRunner,
   ) {
     if (this.agentRunner) {
@@ -56,15 +64,24 @@ export class PrReviewOrchestrator {
     // 1. Prune noisy files and lockfiles from diff
     const { prunedDiff } = ContextPruner.pruneDiff(options.rawDiff);
 
-    // 2. Query AST Codebase RAG context based on modified symbols
-    const retrievedAstContext = await this.ragService.retrieveContext(options.triggerEvent.repoFullName);
+    // 2. Query AST Codebase RAG context.
+    // Use the changed file paths (e.g. "src/foo.ts src/bar.ts") as the semantic query so
+    // the RAG retrieval targets the actual symbols modified by this PR, not the repo name.
+    const ragQuery = options.changedFilePaths?.join(' ') || options.triggerEvent.repoFullName;
+    const retrievedAstContext = await this.ragService.retrieveContext(ragQuery);
 
-    // 3. Assemble U-Curve attention prompt
+    // 3. Fetch maintainer episodic lessons to prevent repeating known false-positives
+    const episodicLessons = options.episodicLessons ??
+      await this.experienceService.getRelevantLessons(
+        `pr-review ${options.triggerEvent.repoFullName} ${ragQuery}`,
+      );
+
+    // 4. Assemble U-Curve attention prompt
     const assembledPrompt = UCurvePromptAssembler.assemble({
       systemInstructions: 'Review pull request diff for security, architectural integrity, and code quality.',
       architecturalRules: options.architecturalRules,
       astCodebaseContext: retrievedAstContext,
-      episodicLessons: options.episodicLessons,
+      episodicLessons,
       prDiff: prunedDiff,
       triggerComment: options.triggerEvent.triggerComment,
     });
@@ -150,7 +167,37 @@ export class PrReviewOrchestrator {
     // 5. Calculate consensus convergence
     const consensus = this.consensusEvaluator.evaluateConsensus(assessments);
 
-    // 6. Synthesize final PR report
+    // 6. Validate diff boundaries — drop issues pointing to lines not in the diff (hallucination filter)
+    const allIssues = assessments.flatMap((a) => a.issues || []);
+    const diffLineMap = new Map<string, Set<number>>();
+    for (const line of options.rawDiff.split('\n')) {
+      const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
+      if (fileMatch) diffLineMap.set(fileMatch[1], new Set());
+    }
+    let lineNum = 0;
+    let currentFile = '';
+    for (const line of options.rawDiff.split('\n')) {
+      const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
+      if (fileMatch) { currentFile = fileMatch[1]; lineNum = 0; }
+      if (line.startsWith('@@')) {
+        const m = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
+        if (m) lineNum = parseInt(m[1], 10) - 1;
+      }
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        lineNum++;
+        diffLineMap.get(currentFile)?.add(lineNum);
+      } else if (!line.startsWith('-')) {
+        lineNum++;
+      }
+    }
+    if (allIssues.length > 0 && diffLineMap.size > 0) {
+      const { droppedIssues } = this.qualityEvaluator.validateDiffBoundaries(allIssues, diffLineMap);
+      if (droppedIssues.length > 0) {
+        console.log(`[Njent] Dropped ${droppedIssues.length} hallucinated issue(s) outside diff boundaries.`);
+      }
+    }
+
+    // 7. Synthesize final PR report
     return this.leadSynthesizer.synthesize(assessments, consensus.consensusScore);
   }
 
@@ -184,16 +231,34 @@ export class PrReviewOrchestrator {
       }
     }
 
-    // 2. Execute multi-agent review
+    // 2. Parse changed TypeScript files from the diff and fetch their source
+    const changedFilePaths = PrReviewOrchestrator.parseDiffFilePaths(rawDiff);
+    if (token && event.repoFullName && changedFilePaths.length > 0) {
+      const fileContents = await PrReviewOrchestrator.fetchChangedFileContents(
+        token,
+        event.repoFullName,
+        changedFilePaths,
+      );
+      if (fileContents.length > 0) {
+        const indexed = await this.ragService.ingestCodebase(fileContents);
+        console.log(`[Njent] RAG: indexed ${indexed} chunks from ${fileContents.length} changed files.`);
+      }
+    }
+
+    // 3. Execute multi-agent review with real RAG context
+    const reviewStart = Date.now();
     const report = await this.executeReview({
       rawDiff,
       triggerEvent: event,
+      changedFilePaths,
     });
+    const durationMs = Date.now() - reviewStart;
 
     // 3. Post review summary comment to GitHub PR if token is available
     if (token && event.repoFullName && event.prNumber) {
       try {
-        const modelName = process.env.MODEL_NAME || (process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o');
+        const modelName = process.env.MODEL_NAME || process.env.OPENAI_MODEL_NAME || 'gpt-4o';
+        const embeddingModelName = process.env.EMBEDDING_MODEL || (process.env.OPENROUTER_API_KEY ? 'perplexity/pplx-embed-v1-0.6b' : 'text-embedding-3-small');
         const sessionId = `sess_pr_${event.prNumber}_${Date.now()}`;
 
         const pipelineAccordion = `
@@ -201,20 +266,23 @@ export class PrReviewOrchestrator {
 <summary><b>🔍 nestjs-agentic Execution Pipeline & Telemetry (Click to expand)</b></summary>
 
 #### 🏗️ Multi-Agent Architecture Pipeline
-1. **🛡️ Ingress Security & Context Pruning**: HMAC-SHA256 verified, collaborator authorized via \`CollaboratorGuard\`, and lockfiles pruned via \`ContextPruner\`.
-2. **🧠 AST Codebase RAG**: Extracted TypeScript AST nodes and mapped dependency graph via \`@nestjs-agentic/rag\`.
-3. **⚡ Parallel Specialist Execution**: Ran \`SecurityReviewerAgent\`, \`ArchitectureReviewerAgent\`, and \`QualityReviewerAgent\` concurrently via \`@nestjs-agentic/orchestration\`.
-4. **📊 Mathematical Consensus**: Calculated variance and convergence score (${(report.consensusScore * 100).toFixed(1)}%) via \`ConsensusEvaluatorService\`.
-5. **⚖️ Quality Gate**: Evaluated against hallucination boundaries and MT-Bench debiasing via \`@nestjs-agentic/evaluation\`.
-6. **📈 OpenTelemetry GenAI Tracing**: Audited event emitted conforming to CNCF GenAI Semantic Conventions.
+1. **🛡️ Ingress Security & Context Pruning**: HMAC-SHA256 verified, collaborator authorized via \`CollaboratorGuard\`, lockfiles pruned via \`ContextPruner\`.
+2. **🧠 AST Codebase RAG**: Changed files indexed via \`AstCodebaseSplitter\` + \`HybridVectorStore\` (BM25 + dense cosine similarity).
+3. **🗂️ Episodic Memory Recall**: Retrieved maintainer lessons via \`NjentExperienceService\` → \`ExperienceLearner\` to suppress known false-positives.
+4. **⚡ Parallel Specialist Execution**: Ran \`SecurityReviewerAgent\`, \`ArchitectureReviewerAgent\`, and \`QualityReviewerAgent\` concurrently via \`@nestjs-agentic/orchestration\`.
+5. **📊 Mathematical Consensus**: Calculated variance and convergence score (${(report.consensusScore * 100).toFixed(1)}%) via \`ConsensusEvaluatorService\`.
+6. **⚖️ Diff Boundary Validation**: Filtered hallucinated line references via \`ReviewQualityEvaluatorService.validateDiffBoundaries()\`.
+7. **📈 OpenTelemetry GenAI Tracing**: Audit event emitted conforming to CNCF GenAI Semantic Conventions via \`NjentAuditLogger\`.
 
 #### ⏱️ Runtime & Telemetry Metadata
 | Metric | Value |
 | :--- | :--- |
 | **Model** | \`${modelName}\` |
+| **Embedding Model** | \`${embeddingModelName}\` |
 | **Framework** | \`nestjs-agentic v0.7.0\` |
 | **Consensus Score** | \`${(report.consensusScore * 100).toFixed(1)}%\` |
 | **Overall Confidence** | \`${(report.overallScore * 100).toFixed(1)}%\` |
+| **Duration** | \`${durationMs}ms\` |
 | **Session ID** | \`${sessionId}\` |
 
 </details>`;
@@ -234,9 +302,76 @@ export class PrReviewOrchestrator {
             body: JSON.stringify({ body: commentBody }),
           },
         );
+
+        // Emit OpenTelemetry GenAI Semantic Conventions audit event
+        this.auditLogger.logReviewCompleted({
+          sessionId,
+          traceId: `tr_pr_${event.prNumber}`,
+          repo: event.repoFullName,
+          prNumber: event.prNumber!,
+          report,
+          durationMs,
+        });
       } catch (postErr) {
         console.error('[Njent] Failed to post review comment to GitHub PR:', postErr);
       }
     }
+  }
+  /**
+   * Parses the paths of TypeScript/JavaScript source files modified in a unified diff.
+   *
+   * @param diff Raw unified diff text.
+   * @returns Deduplicated array of changed file paths (`.ts`, `.js`, `.tsx`, `.jsx` only).
+   */
+  private static parseDiffFilePaths(diff: string): string[] {
+    const paths = new Set<string>();
+    for (const line of diff.split('\n')) {
+      // Match "--- a/path/to/file.ts" or "+++ b/path/to/file.ts" lines
+      const match = line.match(/^(?:\+\+\+|---) [ab]\/(.+\.(ts|js|tsx|jsx))$/);
+      if (match && !match[1].endsWith('.d.ts')) {
+        paths.add(match[1]);
+      }
+    }
+    return Array.from(paths);
+  }
+
+  /**
+   * Fetches the raw source content of changed files via the GitHub Contents API.
+   * Files that cannot be fetched (deleted, binary, etc.) are silently skipped.
+   *
+   * @param token GitHub personal access token.
+   * @param repoFullName Repository full name, e.g. `"irzix/nestjs-agentic"`.
+   * @param filePaths Relative file paths within the repository.
+   * @returns Array of objects with `filePath` and decoded `content`.
+   */
+  private static async fetchChangedFileContents(
+    token: string,
+    repoFullName: string,
+    filePaths: string[],
+  ): Promise<Array<{ filePath: string; content: string }>> {
+    const results: Array<{ filePath: string; content: string }> = [];
+    for (const filePath of filePaths) {
+      try {
+        const response = await fetch(
+          `https://api.github.com/repos/${repoFullName}/contents/${encodeURIComponent(filePath)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github.v3+json',
+              'User-Agent': 'Njent-Code-Review-Agent',
+            },
+          },
+        );
+        if (!response.ok) continue;
+        const data = (await response.json()) as { content?: string; encoding?: string };
+        if (data.encoding === 'base64' && data.content) {
+          const decoded = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
+          results.push({ filePath, content: decoded });
+        }
+      } catch {
+        // Silently skip files that cannot be fetched (deleted, moved, etc.)
+      }
+    }
+    return results;
   }
 }

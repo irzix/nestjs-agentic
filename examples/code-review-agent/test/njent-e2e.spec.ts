@@ -89,7 +89,7 @@ diff --git a/src/orders/refund.service.ts b/src/orders/refund.service.ts
   // STAGE 2: AST CODEBASE RAG & GRAPH DEPENDENCY EXTRACTION
   // ==========================================================
   console.log('\n▶️ Stage 2: AST Codebase RAG & Graph Dependencies...');
-  const ragService = new CodebaseRAGService();
+  const ragService = new CodebaseRAGService(new (await import('@nestjs-agentic/rag')).MockEmbeddingProvider());
   const indexedChunks = await ragService.ingestCodebase([
     {
       filePath: 'src/orders/refund-limit.policy.ts',
@@ -121,7 +121,7 @@ export class RefundService {
   console.log('\n▶️ Stage 3: Multi-Agent Orchestration & Consensus Evaluation...');
   const leadSynthesizer = new LeadSynthesizerAgent();
   const consensusEvaluator = new ConsensusEvaluatorService();
-  const orchestrator = new PrReviewOrchestrator(ragService, leadSynthesizer, consensusEvaluator);
+  const orchestrator = new PrReviewOrchestrator(ragService, leadSynthesizer, consensusEvaluator, new (require('../src/memory/experience-learner.service')).NjentExperienceService(), new (require('../src/evaluation/review-quality-evaluator.service')).ReviewQualityEvaluatorService(), new (require('../src/audit/njent-audit-logger.service')).NjentAuditLogger());
 
   const mockSpecialistFindings: ReviewAssessment[] = [
     {
