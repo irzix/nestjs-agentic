@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/mcp",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Model Context Protocol (MCP) client transport, dynamic tool provider, and secure execution runtime for nestjs-agentic.",
   "repository": {
     "type": "git",
@@ -20,7 +20,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@nestjs-agentic/core": "^0.6.0"
+    "@nestjs-agentic/core": "^0.7.0"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",
