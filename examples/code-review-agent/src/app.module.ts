@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AgenticModule } from 'nestjs-agentic';
+import { OpenAiModelAdapter } from '@nestjs-agentic/openai';
 import { WebhookController, NJENT_REVIEW_SERVICE } from './webhooks/webhook.controller';
 import { ApprovalController } from './controllers/approval.controller';
 import { GitHubSignatureGuard } from './guards/github-signature.guard';
@@ -20,6 +21,10 @@ import { ReviewQualityEvaluatorService } from './evaluation/review-quality-evalu
 import { NjentExperienceService } from './memory/experience-learner.service';
 import { NjentAuditLogger } from './audit/njent-audit-logger.service';
 
+const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
+const baseUrl = process.env.OPENAI_BASE_URL || (process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined);
+const model = process.env.MODEL_NAME || (process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o');
+
 /**
  * Main application module for Njent Code Review and Governance Agent.
  */
@@ -27,9 +32,15 @@ import { NjentAuditLogger } from './audit/njent-audit-logger.service';
   imports: [
     AgenticModule.forRoot({
       defaultModel: {
-        model: 'gpt-4o',
+        model,
         provider: 'openai',
       },
+      modelAdapter: apiKey
+        ? new OpenAiModelAdapter({
+            apiKey,
+            baseUrl,
+          })
+        : undefined,
       approvalTtlSeconds: 86400,
     }),
     AgenticModule.forFeature({
