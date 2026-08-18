@@ -18,6 +18,7 @@ export * from './strategies/contextual-compression.strategy';
 export * from './strategies/reranker.strategy';
 export * from './strategies/graph-rag.strategy';
 export * from './strategies/graph-dependency.strategy';
+export * from './strategies/u-shaped-context.strategy';
 export * from './graph/in-memory-graph.provider';
 export * from './stores/hybrid-vector.store';
 export * from './engines/knowledge-base';

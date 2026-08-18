@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.0] - 2026-08-18
 
-- **Stanford Tri-Factor Memory Scoring & Procedural Playbook Stores (`@nestjs-agentic/memory`, `@nestjs-agentic/experience`)** (#50):
+- **U-Shaped Context Assembler for Lost-in-the-Middle Attention Mitigation (`@nestjs-agentic/rag`, `@nestjs-agentic/core`)** (#52):
+  - Implementation of empirical attention optimization from Stanford University & UC Berkeley research (*Liu et al., TACL 2024, arXiv:2307.03172 — "Lost in the Middle: How Language Models Use Long Contexts"*).
+  - `UShapedContextStrategy` (`@nestjs-agentic/rag`): Post-retrieval RAG strategy distributing retrieved documents into an alternating U-shaped array ($[c_1, c_3, c_5, \dots, c_6, c_4, c_2]$) ensuring highest-ranked documents occupy the high-attention Primacy (top) and Recency (bottom) edges, while low-relevance documents sit in the middle valley.
+  - `UCurveContextFormatter` (`@nestjs-agentic/core`): High-level prompt assembler organizing disparate agent prompt segments (`critical_primacy`, `high`, `medium_reference`, `critical_recency`) according to the empirical attention curve with secondary order tie-breaking.
+  - Generic reordering utility `UCurveContextFormatter.reorderToUCurve()` supporting both `primacy_first` and `recency_first` placement modes.
+- **Stanford Tri-Factor Memory Scoring & Procedural Playbook Stores (`@nestjs-agentic/memory`)** (#50):
   - Implementation of foundational cognitive memory retrieval from Stanford University & Google research (*Park et al., 2023, arXiv:2304.03442 — Generative Agents*): $\text{Score}(m, q) = \alpha \cdot \hat{R}(m) + \beta \cdot \hat{I}(m) + \gamma \cdot \hat{S}(m, q)$.
   - `StanfordMemoryScorer`: Exponential recency decay ($e^{-\lambda \Delta t}$), cognitive importance ($[0, 1]$), and semantic relevance (vector cosine or token overlap) with Min-Max candidate pool normalization.
   - `GenerativeMemoryStore`: High-level memory store providing top-$K$ Tri-Factor ranked recall (`recall` and `recallScored`) with configurable weights and time horizons.
