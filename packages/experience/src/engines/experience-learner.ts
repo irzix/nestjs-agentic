@@ -33,6 +33,7 @@ export class ExperienceLearner implements ExperienceEngine {
           taskTrigger: trajectory.goal,
           pattern: reflection.critique ?? 'Execution Failure',
           lesson,
+          importance: reflection.importance ?? 0.5,
           timestamp: new Date(),
         });
       }
@@ -48,6 +49,7 @@ export class ExperienceLearner implements ExperienceEngine {
     const item: ExperienceRecord = {
       ...record,
       id: record.id || randomUUID(),
+      importance: record.importance ?? 0.5,
       timestamp: record.timestamp || new Date(),
     };
 
@@ -56,12 +58,14 @@ export class ExperienceLearner implements ExperienceEngine {
         id: item.id,
         sessionId: item.tenantId ?? 'global_experience',
         type: 'episodic',
+        importance: item.importance,
         content: `[Learned Lesson for ${item.taskTrigger}]: ${item.lesson}`,
         metadata: {
           agentName: item.agentName,
           taskTrigger: item.taskTrigger,
           pattern: item.pattern,
           lesson: item.lesson,
+          importance: item.importance,
         },
       });
     }

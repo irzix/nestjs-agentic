@@ -134,11 +134,77 @@ export async function runExperienceTests() {
     assert(false, 'Test 5: Memory Integration', err.message);
   }
 
+  // TEST 6: Severity-based Cognitive Importance Scoring
+  try {
+    const engine = new ReflectionEngine();
+    const secResult = await engine.critiqueTrajectory({
+      sessionId: 'sess_sec',
+      agentName: 'auth-agent',
+      goal: 'Delete production database',
+      success: false,
+      steps: [
+        {
+          stepIndex: 1,
+          toolName: 'dropTable',
+          error: 'Unauthorized: missing finance_officer permission role',
+        },
+      ],
+    });
+    assert(secResult.importance === 0.95, 'Test 6a: Security authorization violation yields importance 0.95');
+
+    const envResult = await engine.critiqueTrajectory({
+      sessionId: 'sess_env',
+      agentName: 'ci-agent',
+      goal: 'Install packages',
+      success: false,
+      steps: [
+        {
+          stepIndex: 1,
+          toolName: 'exec',
+          error: 'npm ERR! peer dependency mismatch, use pnpm instead',
+        },
+      ],
+    });
+    assert(envResult.importance === 0.70, 'Test 6b: Package manager mismatch yields importance 0.70');
+  } catch (err: unknown) {
+    assert(false, 'Test 6: Severity Importance Scoring', (err as Error).message);
+  }
+
+  // TEST 7: ExperienceLearner with GenerativeMemoryStore Tri-Factor Decay
+  try {
+    const generativeStore = new GenerativeMemoryStore();
+    const learner = new ExperienceLearner({ memoryStore: generativeStore });
+
+    await learner.critiqueTrajectory({
+      sessionId: 'sess_tri_exp',
+      agentName: 'gov-agent',
+      goal: 'Execute Wire Transfer',
+      success: false,
+      steps: [
+        {
+          stepIndex: 1,
+          toolName: 'transfer',
+          error: 'Unauthorized: finance_officer role required',
+        },
+      ],
+    });
+
+    const guidance = await learner.buildGuidancePrompt('Wire Transfer', 'sess_tri_exp');
+    assert(
+      guidance.includes('finance_officer'),
+      'Test 7a: Tri-Factor GenerativeMemoryStore retrieves high-importance lesson',
+    );
+  } catch (err: unknown) {
+    assert(false, 'Test 7: GenerativeMemoryStore Integration', (err as Error).message);
+  }
+
   console.log(`\n  📊 Experience Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Experience Unit Tests Failed');
   }
 }
+
+import { GenerativeMemoryStore } from '@nestjs-agentic/memory';
 
 if (require.main === module) {
   runExperienceTests().catch(() => process.exit(1));

@@ -26,6 +26,8 @@ export class ReflectionEngine {
     const lessonsLearned: string[] = [];
     const critiques: string[] = [];
 
+    let maxImportance = 0.50; // Default baseline for general errors
+
     for (const failedStep of failedSteps) {
       const toolName = failedStep.toolName ?? 'unknown_tool';
       const resObj =
@@ -42,13 +44,21 @@ export class ReflectionEngine {
       const critiqueStr = `Tool "${toolName}" failed on step ${failedStep.stepIndex}: ${errDetail}`;
       critiques.push(critiqueStr);
 
-      // Automated Reflection pattern extraction
-      if (errDetail.toLowerCase().includes('npm') && errDetail.toLowerCase().includes('pnpm')) {
+      const errLower = errDetail.toLowerCase();
+
+      // Automated Reflection pattern extraction & Cognitive Importance assignment
+      if (errLower.includes('npm') && errLower.includes('pnpm')) {
         lessonsLearned.push(`Use "pnpm" package manager instead of "npm" for this project.`);
-      } else if (errDetail.toLowerCase().includes('permission') || errDetail.toLowerCase().includes('role') || errDetail.toLowerCase().includes('finance_officer')) {
+        maxImportance = Math.max(maxImportance, 0.70);
+      } else if (errLower.includes('permission') || errLower.includes('role') || errLower.includes('finance_officer') || errLower.includes('unauthorized')) {
         lessonsLearned.push(`Verify required authorization role (e.g. finance_officer) before invoking "${toolName}".`);
-      } else if (errDetail.toLowerCase().includes('rate') || errDetail.toLowerCase().includes('limit')) {
+        maxImportance = Math.max(maxImportance, 0.95);
+      } else if (errLower.includes('transfer') || errLower.includes('ledger') || errLower.includes('payment')) {
+        lessonsLearned.push(`Validate account balance and transaction idempotency before calling "${toolName}".`);
+        maxImportance = Math.max(maxImportance, 0.90);
+      } else if (errLower.includes('rate') || errLower.includes('limit') || errLower.includes('timeout')) {
         lessonsLearned.push(`Throttle tool calls or wait before retrying "${toolName}".`);
+        maxImportance = Math.max(maxImportance, 0.60);
       } else {
         lessonsLearned.push(`Verify input parameters and precondition checks for tool "${toolName}": ${errDetail}`);
       }
@@ -63,6 +73,7 @@ export class ReflectionEngine {
       critique: critiques.join(' | '),
       lessonsLearned,
       suggestedPromptAdjustment,
+      importance: maxImportance,
     };
   }
 }
