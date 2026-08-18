@@ -3,13 +3,16 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
+# Optimize Node memory for VPS build containers
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+
 # Copy root monorepo files for dependencies
 COPY package*.json tsconfig.base.json ./
 COPY packages/ packages/
 COPY examples/code-review-agent/ examples/code-review-agent/
 
-# Install and build
-RUN npm ci
+# Install dependencies and build all packages
+RUN npm ci --prefer-offline --no-audit
 RUN npm run build
 
 # Production runtime stage
@@ -20,10 +23,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
+# Copy built workspace and dependencies
 COPY package*.json ./
-COPY packages/ packages/
-COPY --from=builder /app/examples/code-review-agent/dist ./examples/code-review-agent/dist
-COPY --from=builder /app/examples/code-review-agent/package*.json ./examples/code-review-agent/
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/examples/code-review-agent ./examples/code-review-agent
 COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000

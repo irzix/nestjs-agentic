@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.github
+.agents
+.gemini
+.idea
+.vscode
+coverage
+*.log
+*.tsbuildinfo
+.DS_Store
