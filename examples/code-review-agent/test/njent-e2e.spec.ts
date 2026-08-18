@@ -89,7 +89,7 @@ diff --git a/src/orders/refund.service.ts b/src/orders/refund.service.ts
   // STAGE 2: AST CODEBASE RAG & GRAPH DEPENDENCY EXTRACTION
   // ==========================================================
   console.log('\n▶️ Stage 2: AST Codebase RAG & Graph Dependencies...');
-  const ragService = new CodebaseRAGService();
+  const ragService = new CodebaseRAGService(new (await import('@nestjs-agentic/rag')).MockEmbeddingProvider());
   const indexedChunks = await ragService.ingestCodebase([
     {
       filePath: 'src/orders/refund-limit.policy.ts',

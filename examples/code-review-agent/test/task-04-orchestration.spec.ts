@@ -36,7 +36,7 @@ async function runTask04Tests() {
   console.log(`  ✅ PASS: Test 2: Divergence detected with degraded consensus (${lowResult.consensusScore})`);
 
   // Test 3: End-to-End Orchestrator Run
-  const ragService = new CodebaseRAGService();
+  const ragService = new CodebaseRAGService(new (require('@nestjs-agentic/rag')).MockEmbeddingProvider());
   const leadSynthesizer = new LeadSynthesizerAgent();
   const orchestrator = new PrReviewOrchestrator(ragService, leadSynthesizer, consensusEvaluator);
 

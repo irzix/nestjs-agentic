@@ -21,6 +21,8 @@ export interface OrchestratorRunOptions {
   architecturalRules?: string[];
   episodicLessons?: string[];
   mockAssessments?: ReviewAssessment[];
+  /** Resolved changed file paths from the diff (used to query RAG). */
+  changedFilePaths?: string[];
 }
 
 /**
@@ -56,8 +58,11 @@ export class PrReviewOrchestrator {
     // 1. Prune noisy files and lockfiles from diff
     const { prunedDiff } = ContextPruner.pruneDiff(options.rawDiff);
 
-    // 2. Query AST Codebase RAG context based on modified symbols
-    const retrievedAstContext = await this.ragService.retrieveContext(options.triggerEvent.repoFullName);
+    // 2. Query AST Codebase RAG context.
+    // Use the changed file paths (e.g. "src/foo.ts src/bar.ts") as the semantic query so
+    // the RAG retrieval targets the actual symbols modified by this PR, not the repo name.
+    const ragQuery = options.changedFilePaths?.join(' ') || options.triggerEvent.repoFullName;
+    const retrievedAstContext = await this.ragService.retrieveContext(ragQuery);
 
     // 3. Assemble U-Curve attention prompt
     const assembledPrompt = UCurvePromptAssembler.assemble({
@@ -184,10 +189,25 @@ export class PrReviewOrchestrator {
       }
     }
 
-    // 2. Execute multi-agent review
+    // 2. Parse changed TypeScript files from the diff and fetch their source
+    const changedFilePaths = PrReviewOrchestrator.parseDiffFilePaths(rawDiff);
+    if (token && event.repoFullName && changedFilePaths.length > 0) {
+      const fileContents = await PrReviewOrchestrator.fetchChangedFileContents(
+        token,
+        event.repoFullName,
+        changedFilePaths,
+      );
+      if (fileContents.length > 0) {
+        const indexed = await this.ragService.ingestCodebase(fileContents);
+        console.log(`[Njent] RAG: indexed ${indexed} chunks from ${fileContents.length} changed files.`);
+      }
+    }
+
+    // 3. Execute multi-agent review with real RAG context
     const report = await this.executeReview({
       rawDiff,
       triggerEvent: event,
+      changedFilePaths,
     });
 
     // 3. Post review summary comment to GitHub PR if token is available
@@ -238,5 +258,62 @@ export class PrReviewOrchestrator {
         console.error('[Njent] Failed to post review comment to GitHub PR:', postErr);
       }
     }
+  }
+  /**
+   * Parses the paths of TypeScript/JavaScript source files modified in a unified diff.
+   *
+   * @param diff Raw unified diff text.
+   * @returns Deduplicated array of changed file paths (`.ts`, `.js`, `.tsx`, `.jsx` only).
+   */
+  private static parseDiffFilePaths(diff: string): string[] {
+    const paths = new Set<string>();
+    for (const line of diff.split('\n')) {
+      // Match "--- a/path/to/file.ts" or "+++ b/path/to/file.ts" lines
+      const match = line.match(/^(?:\+\+\+|---) [ab]\/(.+\.(ts|js|tsx|jsx))$/);
+      if (match && !match[1].endsWith('.d.ts')) {
+        paths.add(match[1]);
+      }
+    }
+    return Array.from(paths);
+  }
+
+  /**
+   * Fetches the raw source content of changed files via the GitHub Contents API.
+   * Files that cannot be fetched (deleted, binary, etc.) are silently skipped.
+   *
+   * @param token GitHub personal access token.
+   * @param repoFullName Repository full name, e.g. `"irzix/nestjs-agentic"`.
+   * @param filePaths Relative file paths within the repository.
+   * @returns Array of objects with `filePath` and decoded `content`.
+   */
+  private static async fetchChangedFileContents(
+    token: string,
+    repoFullName: string,
+    filePaths: string[],
+  ): Promise<Array<{ filePath: string; content: string }>> {
+    const results: Array<{ filePath: string; content: string }> = [];
+    for (const filePath of filePaths) {
+      try {
+        const response = await fetch(
+          `https://api.github.com/repos/${repoFullName}/contents/${encodeURIComponent(filePath)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github.v3+json',
+              'User-Agent': 'Njent-Code-Review-Agent',
+            },
+          },
+        );
+        if (!response.ok) continue;
+        const data = (await response.json()) as { content?: string; encoding?: string };
+        if (data.encoding === 'base64' && data.content) {
+          const decoded = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
+          results.push({ filePath, content: decoded });
+        }
+      } catch {
+        // Silently skip files that cannot be fetched (deleted, moved, etc.)
+      }
+    }
+    return results;
   }
 }

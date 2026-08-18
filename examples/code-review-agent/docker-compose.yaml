@@ -14,9 +14,11 @@ services:
       - PORT=3000
       - DATABASE_URL=postgresql://njent_user:njent_password@postgres:5432/njent_db?sslmode=disable
       - REDIS_URL=redis://redis:6379/0
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - MODEL_NAME=${MODEL_NAME:-openai/gpt-4o}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-perplexity/pplx-embed-v1-0.6b}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     depends_on:

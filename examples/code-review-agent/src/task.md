@@ -1,0 +1,5 @@
+- [x] app.module.ts — Provide OpenAIEmbeddingAdapter (Perplexity via OpenRouter) as EMBEDDING_PROVIDER token
+- [ ] codebase-rag.service.ts — Inject EMBEDDING_PROVIDER, wire HybridVectorStore
+- [ ] pr-review.orchestrator.ts — parseDiffFilePaths → fetchFileContents → ingestCodebase → retrieveContext with correct query
+- [ ] npm test — verify all tests pass
+- [ ] commit + push + PR + merge

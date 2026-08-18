@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AgenticModule } from 'nestjs-agentic';
 import { OpenAiModelAdapter } from '@nestjs-agentic/openai';
+import { OpenAIEmbeddingAdapter, MockEmbeddingProvider } from '@nestjs-agentic/rag';
+import { EMBEDDING_PROVIDER } from './rag/embedding.tokens';
 import { WebhookController, NJENT_REVIEW_SERVICE } from './webhooks/webhook.controller';
 import { ApprovalController } from './controllers/approval.controller';
 import { GitHubSignatureGuard } from './guards/github-signature.guard';
@@ -24,6 +26,20 @@ import { NjentAuditLogger } from './audit/njent-audit-logger.service';
 const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
 const baseUrl = process.env.OPENAI_BASE_URL || (process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined);
 const model = process.env.MODEL_NAME || (process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o');
+
+/**
+ * Instantiates a real OpenAI-compatible embedding adapter targeting
+ * `perplexity/pplx-embed-v1-0.6b` via OpenRouter when an API key is present.
+ * Falls back to `MockEmbeddingProvider` for local / CI environments.
+ */
+const embeddingModel = process.env.EMBEDDING_MODEL || 'perplexity/pplx-embed-v1-0.6b';
+const embeddingProvider = apiKey
+  ? new OpenAIEmbeddingAdapter({
+      apiKey,
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: embeddingModel,
+    })
+  : new MockEmbeddingProvider();
 
 /**
  * Main application module for Njent Code Review and Governance Agent.
@@ -60,6 +76,10 @@ const model = process.env.MODEL_NAME || (process.env.OPENROUTER_API_KEY ? 'opena
     GitHubSignatureGuard,
     CollaboratorGuard,
     RateLimiterGuard,
+    {
+      provide: EMBEDDING_PROVIDER,
+      useValue: embeddingProvider,
+    },
     CodebaseRAGService,
     ConsensusEvaluatorService,
     PrReviewOrchestrator,

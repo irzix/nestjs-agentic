@@ -4,7 +4,7 @@ import { CodebaseRAGService } from '../src/rag/codebase-rag.service';
 async function runTask02Tests() {
   console.log('🧪 Running Njent Task 02: AST Codebase RAG & Hybrid Search Tests...\n');
 
-  const ragService = new CodebaseRAGService();
+  const ragService = new CodebaseRAGService(new (require('@nestjs-agentic/rag')).MockEmbeddingProvider());
 
   const sampleFiles = [
     {

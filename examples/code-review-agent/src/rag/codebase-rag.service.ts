@@ -1,16 +1,17 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import {
   AstCodebaseSplitter,
   GraphDependencyStrategy,
+  HybridVectorStore,
   InMemoryKnowledgeGraphProvider,
   KnowledgeBase,
-  MockEmbeddingProvider,
   ParentChildHydrationStrategy,
   QueryExpansionStrategy,
   RAGPipeline,
   UShapedContextStrategy,
 } from '@nestjs-agentic/rag';
 import type { Document, DocumentChunk, EmbeddingProvider } from '@nestjs-agentic/rag';
+import { EMBEDDING_PROVIDER } from './embedding.tokens';
 
 /**
  * Service managing AST codebase indexing, GraphRAG dependency tracing,
@@ -23,15 +24,25 @@ export class CodebaseRAGService {
   private readonly astSplitter: AstCodebaseSplitter;
   private readonly graphProvider: InMemoryKnowledgeGraphProvider;
 
-  constructor(@Optional() embeddingProvider?: EmbeddingProvider) {
-    const provider = embeddingProvider || new MockEmbeddingProvider();
+  /**
+   * @param embeddingProvider Injected embedding provider (real or mock).
+   *   When `OPENROUTER_API_KEY` is set, resolves to `OpenAIEmbeddingAdapter`
+   *   targeting `perplexity/pplx-embed-v1-0.6b` via OpenRouter.
+   *   Falls back to `MockEmbeddingProvider` in local / CI environments.
+   */
+  constructor(@Inject(EMBEDDING_PROVIDER) embeddingProvider: EmbeddingProvider) {
     this.astSplitter = new AstCodebaseSplitter({
       maxChunkSize: 1500,
       splitClassMethods: true,
     });
 
+    // HybridVectorStore uses the injected embedding provider for cosine-similarity
+    // dense retrieval backed by the real (or mock) embedding model.
+    const vectorStore = new HybridVectorStore({ embeddingProvider });
+
     this.knowledgeBase = new KnowledgeBase({
       splitter: this.astSplitter,
+      vectorStore,
     });
 
     this.graphProvider = new InMemoryKnowledgeGraphProvider();
