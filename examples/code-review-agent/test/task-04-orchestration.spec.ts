@@ -38,7 +38,7 @@ async function runTask04Tests() {
   // Test 3: End-to-End Orchestrator Run
   const ragService = new CodebaseRAGService(new (require('@nestjs-agentic/rag')).MockEmbeddingProvider());
   const leadSynthesizer = new LeadSynthesizerAgent();
-  const orchestrator = new PrReviewOrchestrator(ragService, leadSynthesizer, consensusEvaluator);
+  const orchestrator = new PrReviewOrchestrator(ragService, leadSynthesizer, consensusEvaluator, new (require('../src/memory/experience-learner.service')).NjentExperienceService(), new (require('../src/evaluation/review-quality-evaluator.service')).ReviewQualityEvaluatorService(), new (require('../src/audit/njent-audit-logger.service')).NjentAuditLogger());
 
   const rawDiff = `diff --git a/src/orders/orders.service.ts b/src/orders/orders.service.ts
 --- a/src/orders/orders.service.ts

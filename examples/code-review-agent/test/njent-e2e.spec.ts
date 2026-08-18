@@ -121,7 +121,7 @@ export class RefundService {
   console.log('\n▶️ Stage 3: Multi-Agent Orchestration & Consensus Evaluation...');
   const leadSynthesizer = new LeadSynthesizerAgent();
   const consensusEvaluator = new ConsensusEvaluatorService();
-  const orchestrator = new PrReviewOrchestrator(ragService, leadSynthesizer, consensusEvaluator);
+  const orchestrator = new PrReviewOrchestrator(ragService, leadSynthesizer, consensusEvaluator, new (require('../src/memory/experience-learner.service')).NjentExperienceService(), new (require('../src/evaluation/review-quality-evaluator.service')).ReviewQualityEvaluatorService(), new (require('../src/audit/njent-audit-logger.service')).NjentAuditLogger());
 
   const mockSpecialistFindings: ReviewAssessment[] = [
     {

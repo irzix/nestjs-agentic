@@ -9,6 +9,9 @@ import { ArchitectureReviewerAgent } from '../agents/architecture-reviewer.agent
 import { QualityReviewerAgent } from '../agents/quality-reviewer.agent';
 import { LeadSynthesizerAgent } from '../agents/lead-synthesizer.agent';
 import { ConsensusEvaluatorService } from './consensus-evaluator.service';
+import { NjentExperienceService } from '../memory/experience-learner.service';
+import { ReviewQualityEvaluatorService } from '../evaluation/review-quality-evaluator.service';
+import { NjentAuditLogger } from '../audit/njent-audit-logger.service';
 import type { ReviewAssessment, SynthesizedPRReviewReport } from '../agents/schemas/review-output.schema';
 import type { NjentTriggerEvent } from '../interfaces/webhook.interface';
 
@@ -37,6 +40,9 @@ export class PrReviewOrchestrator {
     private readonly ragService: CodebaseRAGService,
     private readonly leadSynthesizer: LeadSynthesizerAgent,
     private readonly consensusEvaluator: ConsensusEvaluatorService,
+    private readonly experienceService: NjentExperienceService,
+    private readonly qualityEvaluator: ReviewQualityEvaluatorService,
+    private readonly auditLogger: NjentAuditLogger,
     @Optional() private readonly agentRunner?: AgentRunner,
   ) {
     if (this.agentRunner) {
@@ -64,12 +70,18 @@ export class PrReviewOrchestrator {
     const ragQuery = options.changedFilePaths?.join(' ') || options.triggerEvent.repoFullName;
     const retrievedAstContext = await this.ragService.retrieveContext(ragQuery);
 
-    // 3. Assemble U-Curve attention prompt
+    // 3. Fetch maintainer episodic lessons to prevent repeating known false-positives
+    const episodicLessons = options.episodicLessons ??
+      await this.experienceService.getRelevantLessons(
+        `pr-review ${options.triggerEvent.repoFullName} ${ragQuery}`,
+      );
+
+    // 4. Assemble U-Curve attention prompt
     const assembledPrompt = UCurvePromptAssembler.assemble({
       systemInstructions: 'Review pull request diff for security, architectural integrity, and code quality.',
       architecturalRules: options.architecturalRules,
       astCodebaseContext: retrievedAstContext,
-      episodicLessons: options.episodicLessons,
+      episodicLessons,
       prDiff: prunedDiff,
       triggerComment: options.triggerEvent.triggerComment,
     });
@@ -155,7 +167,37 @@ export class PrReviewOrchestrator {
     // 5. Calculate consensus convergence
     const consensus = this.consensusEvaluator.evaluateConsensus(assessments);
 
-    // 6. Synthesize final PR report
+    // 6. Validate diff boundaries — drop issues pointing to lines not in the diff (hallucination filter)
+    const allIssues = assessments.flatMap((a) => a.issues || []);
+    const diffLineMap = new Map<string, Set<number>>();
+    for (const line of options.rawDiff.split('\n')) {
+      const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
+      if (fileMatch) diffLineMap.set(fileMatch[1], new Set());
+    }
+    let lineNum = 0;
+    let currentFile = '';
+    for (const line of options.rawDiff.split('\n')) {
+      const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
+      if (fileMatch) { currentFile = fileMatch[1]; lineNum = 0; }
+      if (line.startsWith('@@')) {
+        const m = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
+        if (m) lineNum = parseInt(m[1], 10) - 1;
+      }
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        lineNum++;
+        diffLineMap.get(currentFile)?.add(lineNum);
+      } else if (!line.startsWith('-')) {
+        lineNum++;
+      }
+    }
+    if (allIssues.length > 0 && diffLineMap.size > 0) {
+      const { droppedIssues } = this.qualityEvaluator.validateDiffBoundaries(allIssues, diffLineMap);
+      if (droppedIssues.length > 0) {
+        console.log(`[Njent] Dropped ${droppedIssues.length} hallucinated issue(s) outside diff boundaries.`);
+      }
+    }
+
+    // 7. Synthesize final PR report
     return this.leadSynthesizer.synthesize(assessments, consensus.consensusScore);
   }
 
@@ -204,11 +246,13 @@ export class PrReviewOrchestrator {
     }
 
     // 3. Execute multi-agent review with real RAG context
+    const reviewStart = Date.now();
     const report = await this.executeReview({
       rawDiff,
       triggerEvent: event,
       changedFilePaths,
     });
+    const durationMs = Date.now() - reviewStart;
 
     // 3. Post review summary comment to GitHub PR if token is available
     if (token && event.repoFullName && event.prNumber) {
@@ -221,20 +265,23 @@ export class PrReviewOrchestrator {
 <summary><b>🔍 nestjs-agentic Execution Pipeline & Telemetry (Click to expand)</b></summary>
 
 #### 🏗️ Multi-Agent Architecture Pipeline
-1. **🛡️ Ingress Security & Context Pruning**: HMAC-SHA256 verified, collaborator authorized via \`CollaboratorGuard\`, and lockfiles pruned via \`ContextPruner\`.
-2. **🧠 AST Codebase RAG**: Extracted TypeScript AST nodes and mapped dependency graph via \`@nestjs-agentic/rag\`.
-3. **⚡ Parallel Specialist Execution**: Ran \`SecurityReviewerAgent\`, \`ArchitectureReviewerAgent\`, and \`QualityReviewerAgent\` concurrently via \`@nestjs-agentic/orchestration\`.
-4. **📊 Mathematical Consensus**: Calculated variance and convergence score (${(report.consensusScore * 100).toFixed(1)}%) via \`ConsensusEvaluatorService\`.
-5. **⚖️ Quality Gate**: Evaluated against hallucination boundaries and MT-Bench debiasing via \`@nestjs-agentic/evaluation\`.
-6. **📈 OpenTelemetry GenAI Tracing**: Audited event emitted conforming to CNCF GenAI Semantic Conventions.
+1. **🛡️ Ingress Security & Context Pruning**: HMAC-SHA256 verified, collaborator authorized via \`CollaboratorGuard\`, lockfiles pruned via \`ContextPruner\`.
+2. **🧠 AST Codebase RAG (Perplexity Embeddings)**: Changed files indexed via \`AstCodebaseSplitter\` + \`HybridVectorStore\` (BM25 + cosine similarity on \`pplx-embed-v1-0.6b\`).
+3. **🗂️ Episodic Memory Recall**: Retrieved maintainer lessons via \`NjentExperienceService\` → \`ExperienceLearner\` to suppress known false-positives.
+4. **⚡ Parallel Specialist Execution**: Ran \`SecurityReviewerAgent\`, \`ArchitectureReviewerAgent\`, and \`QualityReviewerAgent\` concurrently via \`@nestjs-agentic/orchestration\`.
+5. **📊 Mathematical Consensus**: Calculated variance and convergence score (${(report.consensusScore * 100).toFixed(1)}%) via \`ConsensusEvaluatorService\`.
+6. **⚖️ Diff Boundary Validation**: Filtered hallucinated line references via \`ReviewQualityEvaluatorService.validateDiffBoundaries()\`.
+7. **📈 OpenTelemetry GenAI Tracing**: Audit event emitted conforming to CNCF GenAI Semantic Conventions via \`NjentAuditLogger\`.
 
 #### ⏱️ Runtime & Telemetry Metadata
 | Metric | Value |
 | :--- | :--- |
 | **Model** | \`${modelName}\` |
+| **Embedding Model** | \`perplexity/pplx-embed-v1-0.6b\` |
 | **Framework** | \`nestjs-agentic v0.7.0\` |
 | **Consensus Score** | \`${(report.consensusScore * 100).toFixed(1)}%\` |
 | **Overall Confidence** | \`${(report.overallScore * 100).toFixed(1)}%\` |
+| **Duration** | \`${durationMs}ms\` |
 | **Session ID** | \`${sessionId}\` |
 
 </details>`;
@@ -254,6 +301,16 @@ export class PrReviewOrchestrator {
             body: JSON.stringify({ body: commentBody }),
           },
         );
+
+        // Emit OpenTelemetry GenAI Semantic Conventions audit event
+        this.auditLogger.logReviewCompleted({
+          sessionId,
+          traceId: `tr_pr_${event.prNumber}`,
+          repo: event.repoFullName,
+          prNumber: event.prNumber!,
+          report,
+          durationMs,
+        });
       } catch (postErr) {
         console.error('[Njent] Failed to post review comment to GitHub PR:', postErr);
       }
