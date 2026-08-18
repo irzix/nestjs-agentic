@@ -7,8 +7,8 @@ services:
       dockerfile: examples/code-review-agent/Dockerfile
     container_name: njent-agent
     restart: always
-    ports:
-      - '3000:3000'
+    expose:
+      - '3000'
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -31,8 +31,8 @@ services:
       POSTGRES_USER: njent_user
       POSTGRES_PASSWORD: njent_password
       POSTGRES_DB: njent_db
-    ports:
-      - '5432:5432'
+    expose:
+      - '5432'
     volumes:
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
       - njent_pgdata:/var/lib/postgresql/data
@@ -41,8 +41,8 @@ services:
     image: redis:7-alpine
     container_name: njent-redis
     restart: always
-    ports:
-      - '6379:6379'
+    expose:
+      - '6379'
     volumes:
       - njent_redisdata:/data
 
