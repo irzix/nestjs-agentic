@@ -51,12 +51,23 @@ const embeddingProvider = apiKey
         model,
         provider: 'openai',
       },
+      // Global execution guardrails to prevent runaway token costs and infinite loops
+      limits: {
+        // Cumulative token budget across prompt input, parallel sub-agents, and debate rounds
+        maxTotalTokens: parseInt(process.env.MAX_TOTAL_TOKENS || '16000', 10),
+        // Maximum interaction rounds per turn
+        maxIterations: 4,
+        // Overall execution timeout in milliseconds (45s)
+        timeoutMs: 45000,
+      },
       modelAdapter: apiKey
         ? new OpenAiModelAdapter({
             apiKey,
             baseUrl,
-            maxTokens: parseInt(process.env.MAX_TOKENS || '700', 10),
-            maxCompletionTokens: parseInt(process.env.MAX_TOKENS || '700', 10),
+            // Output token cap: 2500 tokens ensures full JSON assessments and inline suggestions without mid-generation truncation
+            maxTokens: Math.max(1000, Math.min(8000, parseInt(process.env.MAX_TOKENS || '2500', 10) || 2500)),
+            maxCompletionTokens: Math.max(1000, Math.min(8000, parseInt(process.env.MAX_TOKENS || '2500', 10) || 2500)),
+            // Low temperature for deterministic, structured JSON review outputs
             temperature: 0.1,
           })
         : undefined,
