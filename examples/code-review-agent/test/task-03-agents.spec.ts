@@ -74,7 +74,31 @@ async function runTask03Tests() {
   assert.ok(patches[0].includes('+process.env.SECRET_KEY'));
   console.log('  ✅ PASS: Test 4: CodeFixer generated valid unified git diff patch');
 
-  console.log('\n🎉 All 4 Task 03 Specialist Agents tests passed successfully!\n');
+  // Test 5: Issue Deduplication & Score Clamping
+  const duplicateIssuesAssessments: ReviewAssessment[] = [
+    {
+      reviewerName: 'Sec',
+      category: 'security',
+      score: 1.5, // should clamp to 1.0
+      passed: true,
+      summary: '',
+      issues: [
+        { filePath: 'src/app.ts', line: 10, category: 'security', severity: 'high', title: 'Hardcoded Secret', description: 'desc 1', suggestedFix: 'fix1' },
+        { filePath: 'src/app.ts', line: 10, category: 'security', severity: 'critical', title: 'Hardcoded Secret', description: 'desc 2' }, // duplicate same category/title, higher severity without fix
+        { filePath: 'src/app.ts', line: 10, category: 'architecture', severity: 'medium', title: 'Missing DI', description: 'distinct issue same line' }, // distinct category same line
+      ],
+      strengths: [],
+    },
+  ];
+
+  const dedupReport = leadAgent.synthesize(duplicateIssuesAssessments, 1.0);
+  assert.strictEqual(dedupReport.inlineIssues.length, 2, 'Should deduplicate exact duplicate but preserve distinct same-line issue');
+  assert.strictEqual(dedupReport.inlineIssues[0].severity, 'critical', 'Should retain critical severity');
+  assert.strictEqual(dedupReport.inlineIssues[0].suggestedFix, 'fix1', 'Should retain suggestedFix from merged duplicate');
+  assert.strictEqual(dedupReport.specialistScores['Sec'], 1.0, 'Should clamp 1.5 score to 1.0');
+  console.log('  ✅ PASS: Test 5: Issue deduplication merges duplicates, preserves same-line distinct issues, and clamps scores');
+
+  console.log('\n🎉 All 5 Task 03 Specialist Agents tests passed successfully!\n');
 }
 
 runTask03Tests().catch((err) => {
