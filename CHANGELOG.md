@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-08-17
+
+- **Aggregation Strategy Semantics (`@nestjs-agentic/orchestration`)** (#36):
+  - `firstSuccess` (reworked): True `Promise.race` with internal `AbortController`; first success immediately cancels all remaining in-flight sub-agents.
+  - `bestOf` (new): Runs all sub-agents in parallel, then selects the best result via a user-supplied `evaluatorFn` or highest `score` fallback.
+  - `fallbackChain` (new): Sequential cascade executing sub-agents one-by-one in order, stopping at the first success.
+  - `consensusMerge` (enhanced): Variance-based `consensusScore` convergence metric (0.0–1.0) computed from sub-agent scores.
+  - `ParallelRunResult` extended with `selectedAgent` and `consensusScore` metadata fields.
+  - `ParallelSubAgentRunner` refactored: extracted `executeWithRetry` and `delegateWithTimeout` to eliminate code duplication.
+
 ## [0.7.0] - 2026-08-16
 
 - **Resumable, Budget-Aware Refinement Loops with Checkpointing (`@nestjs-agentic/orchestration`)**:

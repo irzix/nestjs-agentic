@@ -74,8 +74,9 @@ export class SupervisorService {
 ```typescript
 import { ParallelSubAgentRunner } from '@nestjs-agentic/orchestration';
 
+// Strategy: 'allSettled' | 'firstSuccess' | 'bestOf' | 'consensusMerge' | 'fallbackChain'
 const parallelRunner = new ParallelSubAgentRunner(runner, {
-  aggregationStrategy: 'consensusMerge', // 'allSettled' | 'firstSuccess' | 'consensusMerge'
+  aggregationStrategy: 'consensusMerge',
   timeoutMs: 45000,
   maxConcurrency: 3, // Bound concurrent sub-agent executions
   retriesPerSubAgent: 1,
@@ -90,6 +91,56 @@ const runResult = await parallelRunner.run(parentContext, [
 
 console.log(`Completed: ${runResult.successCount} succeeded, ${runResult.failedCount} failed.`);
 console.log('Synthesized Response:\n', runResult.combinedResponse);
+```
+
+#### Evaluator-Driven Best-of-N (`bestOf`)
+
+```typescript
+const bestOfRunner = new ParallelSubAgentRunner(runner, {
+  aggregationStrategy: 'bestOf',
+  evaluatorFn: (results) => {
+    // Custom evaluator: pick the most comprehensive response
+    return results.reduce((best, r) =>
+      r.response.length > best.response.length ? r : best,
+    );
+  },
+});
+
+const result = await bestOfRunner.run(parentContext, [
+  { agentName: 'writer_a', message: 'Draft executive summary' },
+  { agentName: 'writer_b', message: 'Draft executive summary' },
+]);
+
+console.log(`Selected: ${result.selectedAgent}`);
+```
+
+#### Race with Fast Cancellation (`firstSuccess`)
+
+```typescript
+const raceRunner = new ParallelSubAgentRunner(runner, {
+  aggregationStrategy: 'firstSuccess', // First success cancels all losers
+});
+
+const result = await raceRunner.run(parentContext, [
+  { agentName: 'fast_agent', message: 'Summarize Q4 data' },
+  { agentName: 'deep_agent', message: 'Summarize Q4 data' },
+]);
+// Only the winner is returned; losers are aborted via AbortController
+```
+
+#### Sequential Fallback Chain (`fallbackChain`)
+
+```typescript
+const cascadeRunner = new ParallelSubAgentRunner(runner, {
+  aggregationStrategy: 'fallbackChain', // Try each agent in order; stop on success
+  retriesPerSubAgent: 1,
+});
+
+const result = await cascadeRunner.run(parentContext, [
+  { agentName: 'gpt4_agent', message: prompt },     // Try first
+  { agentName: 'claude_agent', message: prompt },    // Fallback if GPT-4 fails
+  { agentName: 'gemini_agent', message: prompt },    // Last resort
+]);
 ```
 
 ### 3. Resumable, Budget-Aware Refinement Loops (`RefinementLoopRunner`)
