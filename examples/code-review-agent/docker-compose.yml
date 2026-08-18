@@ -1,6 +1,23 @@
 version: '3.8'
 
 services:
+  app:
+    build:
+      context: ../..
+      dockerfile: examples/code-review-agent/Dockerfile
+    container_name: njent-agent
+    restart: always
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://njent_user:njent_password@postgres:5432/njent_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: njent-postgres
