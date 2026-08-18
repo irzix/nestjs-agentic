@@ -164,3 +164,37 @@ export class CheckpointNotFoundError extends AgenticError {
     super(`Execution checkpoint "${identifier}" was not found or has expired.`);
   }
 }
+
+/**
+ * Base error class for all FrugalGPT model cascading exceptions.
+ */
+export class CascadeError extends AgenticError {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+/**
+ * Raised when all model cascade tiers are exhausted without reaching the required confidence threshold.
+ */
+export class CascadeExhaustedError extends CascadeError {
+  constructor(
+    readonly tiersAttempted: number,
+    readonly lastConfidence: number,
+    readonly threshold: number,
+    readonly lastModelName: string,
+  ) {
+    super(
+      `Model cascade exhausted: Attempted ${tiersAttempted} tiers. Final model "${lastModelName}" achieved confidence ${lastConfidence.toFixed(2)}, below required threshold ${threshold.toFixed(2)}.`,
+    );
+  }
+}
+
+/**
+ * Raised when an invalid or malformed cascade configuration is supplied.
+ */
+export class CascadeConfigurationError extends CascadeError {
+  constructor(readonly reason: string) {
+    super(`Invalid Model Cascade configuration: ${reason}`);
+  }
+}

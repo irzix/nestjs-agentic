@@ -19,6 +19,7 @@ import {
   RuntimeNotConfiguredError,
 } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
+import type { AgentDecoratorOptions } from '../decorators/agent.decorator';
 import type {
   AgentConfig,
   AgentContext,
@@ -30,6 +31,7 @@ import type {
   ApprovalStore,
   AuditOptions,
   AuditSink,
+  CascadeConfig,
   IdempotencyStore,
   ModelConfig,
   PendingApproval,
@@ -129,11 +131,15 @@ export interface RunInput {
     traceId?: string;
     parentTraceId?: string;
     rootTraceId?: string;
+    signal?: AbortSignal;
+    deadline?: Date;
   };
   /** Overrides agent and module execution budgets for this run. */
   limits?: ExecutionLimits;
   /** Overrides the agent and module tool error strategy for this run. */
   toolErrorHandling?: ToolErrorHandling;
+  /** FrugalGPT model cascading configuration (fastModel -> reasoningModel). */
+  cascade?: CascadeConfig;
   /**
    * Set false to run this turn without replaying or saving conversation history.
    * Defaults to the module session setting.
@@ -159,6 +165,7 @@ export interface RecoverCheckpointOptions {
 export interface PreparedRun {
   config: AgentConfig;
   model: ModelConfig;
+  cascade?: CascadeConfig;
   context: AgentContext;
   tools: ResolvedTool[];
   limits?: ExecutionLimits;
@@ -300,12 +307,14 @@ export class AgentRunner {
     const history = await this.resolveResumeHistory(pending);
     const store = this.resolveSessionStore();
     const notifier = this.getNotifier();
+    const metadata = this.getAgentMetadata(agent);
 
     return this.executor.resume({
       agentName: pending.agentName,
       observerNotifier: notifier,
       sessionId: pending.context.sessionId,
-      model: config.model ?? this.options.defaultModel,
+      model: config.model ?? metadata?.model ?? this.options.defaultModel,
+      cascade: config.cascade ?? metadata?.cascade,
       tools: await this.buildTools(config.tools, pending.context, pending.agentName),
       traceId: pending.context.traceId,
       instructions: config.instructions,
@@ -402,6 +411,15 @@ export class AgentRunner {
     await store.set(this.sessionKey(context), record);
   }
 
+  private getAgentMetadata(agent: unknown): AgentDecoratorOptions | undefined {
+    if (!agent) return undefined;
+    const target = typeof agent === 'function' ? agent : (agent as object).constructor;
+    return (
+      Reflect.getMetadata(AGENT_METADATA, target) ??
+      (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined)
+    );
+  }
+
   private getAgentMap(): Map<string, AgentProvider> {
     let providers = Array.isArray(this.agentProviders) ? this.agentProviders : [];
     if (providers.length === 0) {
@@ -415,10 +433,7 @@ export class AgentRunner {
     const list = (Array.isArray(providers) ? providers : [providers]).flat(Infinity);
     for (const agent of list) {
       if (!agent) continue;
-      const target = typeof agent === 'function' ? agent : agent.constructor;
-      const metadata: { name: string } =
-        Reflect.getMetadata(AGENT_METADATA, target) ??
-        (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined);
+      const metadata = this.getAgentMetadata(agent);
       if (metadata?.name) {
         map.set(metadata.name, agent);
       }
@@ -551,9 +566,12 @@ export class AgentRunner {
       deadline,
     };
 
+    const metadata = this.getAgentMetadata(agent);
+
     return {
       config,
-      model: config.model ?? this.options.defaultModel,
+      model: config.model ?? metadata?.model ?? this.options.defaultModel,
+      cascade: input.cascade ?? config.cascade ?? metadata?.cascade,
       context,
       tools: await this.buildTools(config.tools, context, agentName),
       limits,
@@ -606,6 +624,7 @@ export class AgentRunner {
           sessionId: input.sessionId,
           message: input.message,
           model: prepared.model,
+          cascade: prepared.cascade,
           tools: prepared.tools,
           instructions: prepared.config.instructions,
           traceId: prepared.context.traceId,
@@ -698,6 +717,7 @@ export class AgentRunner {
           sessionId: input.sessionId,
           message: input.message,
           model: prepared.model,
+          cascade: prepared.cascade,
           tools: prepared.tools,
           instructions: prepared.config.instructions,
           traceId: prepared.context.traceId,
@@ -850,12 +870,15 @@ export class AgentRunner {
     const sessionStore = this.resolveSessionStore();
     const notifier = this.getNotifier();
 
+    const metadata = this.getAgentMetadata(agent);
+
     return this.executor.resumeCheckpoint({
       agentName,
       observerNotifier: notifier,
       sessionId: checkpoint.sessionId,
       checkpoint,
-      model: config.model ?? this.options.defaultModel,
+      model: config.model ?? metadata?.model ?? this.options.defaultModel,
+      cascade: config.cascade ?? metadata?.cascade,
       tools,
       instructions: config.instructions,
       traceId: context.traceId,

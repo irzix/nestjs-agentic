@@ -100,9 +100,8 @@ Goal: deliver production ecosystem adapters, GraphRAG, advanced memory, and cost
 - [ ] AST-aware codebase chunking and GraphRAG dependency traversal in `@nestjs-agentic/rag` ([#51](https://github.com/irzix/nestjs-agentic/issues/51)).
 - [ ] U-Shaped context assembler utility to mitigate Lost-in-the-Middle degradation ([#52](https://github.com/irzix/nestjs-agentic/issues/52)).
 - [ ] Stanford tri-factor memory retrieval scoring and procedural memory stores ([#50](https://github.com/irzix/nestjs-agentic/issues/50)).
-- [ ] FrugalGPT model cascading and confidence-threshold routing ([#54](https://github.com/irzix/nestjs-agentic/issues/54)).
+- [x] FrugalGPT model cascading and confidence-threshold routing ([#54](https://github.com/irzix/nestjs-agentic/issues/54)).
 - [ ] LLM-as-a-Judge position-debiasing and trajectory metrics in `@nestjs-agentic/evaluation` ([#55](https://github.com/irzix/nestjs-agentic/issues/55)).
-- [ ] Anthropic Claude ModelAdapter ([#39](https://github.com/irzix/nestjs-agentic/issues/39)) & Google Gemini ModelAdapter ([#40](https://github.com/irzix/nestjs-agentic/issues/40)).
 
 ---
 

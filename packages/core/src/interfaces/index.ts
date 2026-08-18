@@ -12,3 +12,4 @@ export * from './runtime.interface';
 export * from './session.interface';
 export * from './state-store.interface';
 export * from './tool.interface';
+export * from './cascade.interface';

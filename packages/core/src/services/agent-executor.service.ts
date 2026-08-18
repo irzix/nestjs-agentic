@@ -29,6 +29,8 @@ import {
   type ModelUsage,
 } from '../interfaces/model.interface';
 import type { AgentResult, ModelConfig } from '../interfaces/runtime.interface';
+import type { CascadeConfig } from '../interfaces/cascade.interface';
+import { ModelCascadeAdapter } from '../cascading/model-cascade.adapter';
 import type { AgentStreamEvent } from '../interfaces/agent-stream.interface';
 import type {
   ResolvedTool,
@@ -44,6 +46,7 @@ export interface AgentExecutionInput {
   sessionId: string;
   message: string;
   model: ModelConfig;
+  cascade?: CascadeConfig;
   tools: ResolvedTool[];
   agentName?: string;
   instructions?: string;
@@ -84,6 +87,7 @@ export interface AgentExecutionInput {
 interface ExecutorRequestContext {
   sessionId: string;
   model: ModelConfig;
+  cascade?: CascadeConfig;
   tools: ResolvedTool[];
   agentName?: string;
   traceId?: string;
@@ -177,6 +181,14 @@ export class AgentExecutor {
     return Boolean(this.modelAdapter);
   }
 
+  private resolveEffectiveAdapter(cascade?: CascadeConfig): ModelAdapter {
+    const baseAdapter = this.requireAdapter();
+    if (cascade) {
+      return new ModelCascadeAdapter(baseAdapter, cascade);
+    }
+    return baseAdapter;
+  }
+
   private createRequestContext(
     input: AgentExecutionInput | AgentResumeInput | AgentResumeCheckpointInput,
   ): ExecutorRequestContext {
@@ -187,6 +199,7 @@ export class AgentExecutor {
     return {
       sessionId: input.sessionId,
       model: input.model,
+      cascade: (input as AgentExecutionInput).cascade,
       tools: input.tools,
       traceId: input.traceId,
       parentTraceId: (input as AgentExecutionInput).parentTraceId,
@@ -198,7 +211,7 @@ export class AgentExecutor {
   }
 
   async execute(input: AgentExecutionInput): Promise<AgentResult> {
-    const adapter = this.requireAdapter();
+    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
@@ -217,7 +230,7 @@ export class AgentExecutor {
   }
 
   async *stream(input: AgentExecutionInput): AsyncIterable<AgentStreamEvent> {
-    const adapter = this.requireAdapter();
+    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
@@ -243,7 +256,7 @@ export class AgentExecutor {
    * result, until it produces a final answer or suspends again.
    */
   async resume(input: AgentResumeInput): Promise<AgentResult> {
-    const adapter = this.requireAdapter();
+    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createResumedState(input);
@@ -263,7 +276,7 @@ export class AgentExecutor {
 
   /** Streaming counterpart of {@link resume}. */
   async *resumeStream(input: AgentResumeInput): AsyncIterable<AgentStreamEvent> {
-    const adapter = this.requireAdapter();
+    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createResumedState(input);
@@ -285,7 +298,7 @@ export class AgentExecutor {
    * Resumes an execution turn directly from an InFlightCheckpoint snapshot.
    */
   async resumeCheckpoint(input: AgentResumeCheckpointInput): Promise<AgentResult> {
-    const adapter = this.requireAdapter();
+    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createCheckpointState(input);

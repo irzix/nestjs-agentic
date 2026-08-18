@@ -12,4 +12,5 @@ export * from './adapters';
 export * from './policies';
 export * from './testing';
 export * from './utils';
+export * from './cascading';
 export * from './agentic.module';

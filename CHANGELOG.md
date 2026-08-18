@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.0] - 2026-08-18
 
+- **FrugalGPT Model Cascading & Confidence-Threshold Routing (`@nestjs-agentic/core`)** (#54):
+  - Native implementation of Stanford University FrugalGPT research (*Chen et al., NeurIPS 2023, arXiv:2305.05176*) reducing LLM API spend by 50–85% with zero accuracy degradation.
+  - `ModelCascadeAdapter`: Provider-neutral `ModelAdapter` implementation executing sequential model cascades ($M_1 \rightarrow M_2 \rightarrow \dots \rightarrow M_k$) gated by confidence threshold $\tau \in [0, 1]$.
+  - `ModelCascadeRouter`: High-level cascade routing and complexity heuristic pre-selection (`estimateComplexity`).
+  - Confidence scoring algorithms: Verbalized confidence extraction (`extractVerbalizedConfidence`), heuristic uncertainty hedging analysis (`extractHeuristicConfidence`), and tool call intent reward.
+  - Token accounting: Cumulative token aggregation across all attempted cascade tiers into `ModelUsage`.
+  - Resilience & error escalation: Seamlessly escalates to frontier reasoning tiers on per-tier timeouts or network exceptions.
+  - Native NestJS integration: `@Agent({ cascade: { fastModel, reasoningModel, confidenceThreshold } })` and per-run override via `RunInput.cascade`.
 - **Model Context Protocol (MCP) Client Transport & Dynamic Tool Provider (`@nestjs-agentic/mcp`)** (#41):
   - `StdioClientTransport`: Sandboxed execution of local CLI/Docker/Python tool servers over standard I/O streams with newline-delimited JSON-RPC 2.0 framing and process supervisor cleanup.
   - `SseClientTransport`: Remote HTTP Server-Sent Events transport client with HTTP POST JSON-RPC request dispatch and authentication header support.

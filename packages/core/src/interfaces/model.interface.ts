@@ -75,6 +75,7 @@ export interface ModelResponse {
   toolCalls?: ModelToolCall[];
   usage?: ModelUsage;
   finishReason?: ModelFinishReason;
+  [key: string]: unknown;
 }
 
 /** Incremental output emitted by adapters that support streaming. */
