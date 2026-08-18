@@ -103,4 +103,64 @@ export class PrReviewOrchestrator {
     // 6. Synthesize final PR report
     return this.leadSynthesizer.synthesize(assessments, consensus.consensusScore);
   }
+
+  /**
+   * Dispatches review execution from an incoming GitHub webhook trigger event.
+   *
+   * @param event Parsed GitHub trigger event.
+   */
+  async handleTrigger(event: NjentTriggerEvent): Promise<void> {
+    const token = process.env.GITHUB_TOKEN;
+    let rawDiff = 'diff --git a/src/sample.ts b/src/sample.ts\n+export class SampleService {}';
+
+    // 1. Fetch real PR diff from GitHub if token is provided
+    if (token && event.repoFullName && event.prNumber) {
+      try {
+        const response = await fetch(
+          `https://api.github.com/repos/${event.repoFullName}/pulls/${event.prNumber}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github.v3.diff',
+              'User-Agent': 'Njent-Code-Review-Agent',
+            },
+          },
+        );
+        if (response.ok) {
+          rawDiff = await response.text();
+        }
+      } catch (fetchErr) {
+        console.warn('[Njent] Could not fetch real PR diff from GitHub API, using fallback:', fetchErr);
+      }
+    }
+
+    // 2. Execute multi-agent review
+    const report = await this.executeReview({
+      rawDiff,
+      triggerEvent: event,
+    });
+
+    // 3. Post review summary comment to GitHub PR if token is available
+    if (token && event.repoFullName && event.prNumber) {
+      try {
+        const commentBody = `### 🤖 Njent Autonomous Code Review Summary\n\n**Decision:** \`${report.overallStatus}\` (Confidence: ${(report.overallScore * 100).toFixed(0)}%, Consensus: ${(report.consensusScore * 100).toFixed(0)}%)\n\n${report.summaryMarkdown}\n\n---\n*Reviewed autonomously by [nestjs-agentic](https://github.com/irzix/nestjs-agentic)*`;
+
+        await fetch(
+          `https://api.github.com/repos/${event.repoFullName}/issues/${event.prNumber}/comments`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github.v3+json',
+              'Content-Type': 'application/json',
+              'User-Agent': 'Njent-Code-Review-Agent',
+            },
+            body: JSON.stringify({ body: commentBody }),
+          },
+        );
+      } catch (postErr) {
+        console.error('[Njent] Failed to post review comment to GitHub PR:', postErr);
+      }
+    }
+  }
 }
