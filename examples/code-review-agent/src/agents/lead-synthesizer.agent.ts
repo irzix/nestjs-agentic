@@ -103,7 +103,18 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
         const existingRank = severityRank[existing.severity] || 0;
         const currentRank = severityRank[issue.severity] || 0;
         if (currentRank > existingRank) {
-          map.set(key, issue);
+          map.set(key, {
+            ...issue,
+            suggestedFix: issue.suggestedFix || existing.suggestedFix,
+            ruleReference: issue.ruleReference || existing.ruleReference,
+          });
+        } else {
+          if (!existing.suggestedFix && issue.suggestedFix) {
+            existing.suggestedFix = issue.suggestedFix;
+          }
+          if (!existing.ruleReference && issue.ruleReference) {
+            existing.ruleReference = issue.ruleReference;
+          }
         }
       }
     }
@@ -128,7 +139,9 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
     ];
 
     for (const a of assessments) {
-      const score = typeof a.score === 'number' && !isNaN(a.score) ? a.score : 0.85;
+      const score = typeof a.score === 'number' && Number.isFinite(a.score)
+        ? Math.max(0.0, Math.min(1.0, a.score))
+        : 0.50;
       const passText = a.passed ? '✅ Pass' : '⚠️ Attention';
       lines.push(`| **${a.reviewerName}** | \`${a.category}\` | ${(score * 100).toFixed(0)}% | ${passText} |`);
     }
