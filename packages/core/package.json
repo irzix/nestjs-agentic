@@ -37,8 +37,8 @@
     "llm",
     "hitl",
     "tools",
-    "gemini",
-    "adk"
+    "governance",
+    "mcp"
   ],
   "license": "MIT"
 }

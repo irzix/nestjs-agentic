@@ -11,9 +11,7 @@
       "@nestjs-agentic/orchestration",
       "@nestjs-agentic/evaluation",
       "@nestjs-agentic/openai",
-      "@nestjs-agentic/mcp",
-      "@nestjs-agentic/adk",
-      "@nestjs-agentic/langgraph"
+      "@nestjs-agentic/mcp"
     ]
   ],
   "linked": [],
