@@ -5,7 +5,7 @@ import type {
   MetricResult,
   TrajectoryEfficiencyMetrics,
 } from '../interfaces/evaluation.interface';
-import { isToolExecutionFailed } from './tool-result';
+import { isRecord, isToolExecutionFailed } from './tool-result';
 
 /**
  * Configuration options for TrajectoryInspectorMetric.
@@ -114,7 +114,7 @@ export class TrajectoryInspectorMetric implements EvalMetric {
 
         for (const call of matchingCalls) {
           for (const [argKey, expectedValue] of Object.entries(expectedArgs)) {
-            const actualValue = call.args[argKey];
+            const actualValue = isRecord(call.args) ? call.args[argKey] : undefined;
             if (actualValue !== expectedValue) {
               return {
                 metricName: this.name,

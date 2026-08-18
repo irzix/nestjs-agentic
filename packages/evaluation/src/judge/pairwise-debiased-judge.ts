@@ -81,8 +81,8 @@ export class PairwiseDebiasedJudge {
     const scoreA_reverse = normalizeScore(reversePass.scoreSecond);
 
     // Calculate debiased mean scores
-    const debiasedScoreA = Number(((scoreA_forward + scoreA_reverse) / 2).toFixed(4));
-    const debiasedScoreB = Number(((scoreB_forward + scoreB_reverse) / 2).toFixed(4));
+    const debiasedScoreA = Math.round(((scoreA_forward + scoreA_reverse) / 2) * 10000) / 10000;
+    const debiasedScoreB = Math.round(((scoreB_forward + scoreB_reverse) / 2) * 10000) / 10000;
 
     // Determine winners in each directional pass
     const forwardWinner =
