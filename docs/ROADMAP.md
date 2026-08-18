@@ -1,6 +1,6 @@
 # Product Roadmap
 
-This roadmap outlines the past releases, current development priorities, and future direction of `nestjs-agentic`.
+This roadmap outlines past releases, current development priorities, and the forward direction of `nestjs-agentic`.
 
 ---
 
@@ -24,13 +24,14 @@ This roadmap outlines the past releases, current development priorities, and fut
 
 | Package | Status | Role |
 |---|---|---|
-| [`nestjs-agentic`](packages/core) | **Production-intent (v0.5)** | Independent governed agent runtime, model contracts, lifecycle, tool policies, streaming, approvals, and observability. |
-| [`@nestjs-agentic/openai`](packages/model-openai) | **Production-intent (v0.5)** | OpenAI and ChatCompletions compatible provider adapter. |
-| [`@nestjs-agentic/orchestration`](packages/orchestration) | **Experimental (v0.4)** | Sub-agent delegation, parallel execution, SOP state machines, and refinement loops. |
-| [`@nestjs-agentic/memory`](packages/memory) | **Experimental (v0.2)** | Stanford tri-factor scoring, short-term, semantic, episodic, procedural SOP playbooks, and experience reflection. |
-| [`@nestjs-agentic/rag`](packages/rag) | **Experimental (v0.2)** | AST chunking, vector stores, hybrid search, and GraphRAG primitives. |
-| [`@nestjs-agentic/evaluation`](packages/evaluation) | **Experimental (v0.2)** | LLM-as-a-Judge debiasing, trajectory metrics, and benchmark reporting. |
-| [`@nestjs-agentic/mcp`](packages/mcp) | **Production-intent (v0.8)** | Native Model Context Protocol client transport and tool provider. |
+| [`nestjs-agentic`](packages/meta) | **Available (v0.7)** | Meta package re-exporting core primitives and decorators. |
+| [`@nestjs-agentic/core`](packages/core) | **Available (v0.7)** | Governed runtime, lifecycle, tool policies, streaming, approvals, FrugalGPT model cascading, and store contracts. |
+| [`@nestjs-agentic/openai`](packages/model-openai) | **Available (v0.7)** | OpenAI and ChatCompletions compatible provider adapter. |
+| [`@nestjs-agentic/mcp`](packages/mcp) | **Available (v0.7)** | Native Model Context Protocol client transport, tool discovery, and governance. |
+| [`@nestjs-agentic/memory`](packages/memory) | **Available (v0.7)** | Stanford tri-factor scoring, short-term, semantic, episodic, procedural SOP playbooks, and experience reflection. |
+| [`@nestjs-agentic/rag`](packages/rag) | **Available (v0.7)** | AST code splitting, hybrid vector store, GraphRAG relational traversal, and U-Shaped context assembly. |
+| [`@nestjs-agentic/orchestration`](packages/orchestration) | **Available (v0.7)** | Sub-agent delegation, parallel execution with bounded concurrency, and refinement loops. |
+| [`@nestjs-agentic/evaluation`](packages/evaluation) | **Available (v0.7)** | MT-Bench position-debiased judge, AgentBench trajectory metrics, and benchmark reporting. |
 
 ---
 
@@ -42,7 +43,7 @@ Version numbers are directional and tracked via GitHub milestones.
 
 > **Status: Complete**
 
-Goal: run a complete, governed agent turn without requiring LangGraph or another orchestration framework.
+Goal: run a complete, governed agent turn without requiring LangGraph or external orchestration frameworks.
 
 - [x] Define vendor-neutral model, message, tool-call, and usage contracts (`ModelAdapter`).
 - [x] Implement the complete model-to-tool loop: model response, governed tool execution, tool results, and final response (`AgentExecutor`).
@@ -75,7 +76,7 @@ Goal: make executions safe to pause, recover, inspect, and operate in production
 
 ### 0.7 — Reliable Orchestration
 
-> **Status: Planned** | [Milestone 0.7](https://github.com/irzix/nestjs-agentic/milestone/3)
+> **Status: Complete** | [Milestone 0.7](https://github.com/irzix/nestjs-agentic/milestone/3)
 
 Goal: build multi-agent coordination on the same guarantees as single-agent execution.
 
@@ -89,7 +90,7 @@ Goal: build multi-agent coordination on the same guarantees as single-agent exec
 
 ### 0.8 — Ecosystem & Production Adapters
 
-> **Status: Planned** | [Milestone 0.8](https://github.com/irzix/nestjs-agentic/milestone/4)
+> **Status: Complete** | [Milestone 0.8](https://github.com/irzix/nestjs-agentic/milestone/4)
 
 Goal: deliver production ecosystem adapters, GraphRAG, advanced memory, and cost optimization.
 
@@ -102,8 +103,23 @@ Goal: deliver production ecosystem adapters, GraphRAG, advanced memory, and cost
 
 ---
 
+### 0.9 — Njent: Autonomous Code Review & PR Governance Agent
+
+> **Status: In Progress** | [Milestone 0.9](https://github.com/irzix/nestjs-agentic/milestone/5)
+
+Goal: deliver the flagship production reference agent unifying all 8 ecosystem packages into an enterprise-grade GitHub PR review bot ([Epic #61](https://github.com/irzix/nestjs-agentic/issues/61)).
+
+- [ ] AST Codebase indexing and GraphRAG dependency graph for target repositories (`@nestjs-agentic/rag`).
+- [ ] U-Curve context formatting and FrugalGPT model cascading for cost-effective review rounds (`@nestjs-agentic/core`).
+- [ ] Stanford Tri-Factor cognitive memory and procedural review SOPs (`@nestjs-agentic/memory`).
+- [ ] Multi-agent specialized reviewers (Security, Performance, NestJS Architecture) with bounded concurrency (`@nestjs-agentic/orchestration`).
+- [ ] Position-debiased quality evaluation for review comments before publishing (`@nestjs-agentic/evaluation`).
+- [ ] Human-in-the-loop (HITL) approval policy for autonomous code fixes and PR modifications (`@nestjs-agentic/core`).
+
+---
+
 ### 1.0 — Production Release (GA)
 
-> **Status: Planned** | [Milestone 1.0](https://github.com/irzix/nestjs-agentic/milestone/5)
+> **Status: Planned** | [Milestone 1.0](https://github.com/irzix/nestjs-agentic/milestone/6)
 
-General availability: end-to-end multi-tenant enterprise reliability, crash recovery, and proven performance across all 14 pillars.
+General availability: frozen public APIs, zero breaking changes guarantee, multi-tenant enterprise reliability, and proven performance across all 14 pillars.
