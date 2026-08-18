@@ -19,8 +19,8 @@
     "paths": {
       "@nestjs-agentic/core": ["./packages/core/dist/index.d.ts"],
       "@nestjs-agentic/core/*": ["./packages/core/dist/*"],
-      "@nestjs-agentic/adk": ["./packages/runtime-adk/dist/index.d.ts"],
-      "@nestjs-agentic/adk/*": ["./packages/runtime-adk/dist/*"],
+      "@nestjs-agentic/mcp": ["./packages/mcp/dist/index.d.ts"],
+      "@nestjs-agentic/mcp/*": ["./packages/mcp/dist/*"],
       "@nestjs-agentic/memory": ["./packages/memory/dist/index.d.ts"],
       "@nestjs-agentic/memory/*": ["./packages/memory/dist/*"],
       "@nestjs-agentic/rag": ["./packages/rag/dist/index.d.ts"],

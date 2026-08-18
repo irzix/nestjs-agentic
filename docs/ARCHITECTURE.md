@@ -20,13 +20,11 @@ Application
     |     @nestjs-agentic/openai
     |     custom ModelAdapter
     |
-    +-- or an external runtime adapter
-    |     @nestjs-agentic/adk
-    |     @nestjs-agentic/langgraph
+    +-- or an application-owned runtime adapter
     |     custom RuntimeAdapter
     |
     +-- optional capability packages
-          memory, experience, rag, orchestration, evaluation
+          memory, rag, orchestration, evaluation, mcp
 ```
 
 | Package area | Responsibility |
@@ -210,9 +208,7 @@ interface RuntimeAdapter {
 
 `AgentRunner` prefers the built-in runtime when a `ModelAdapter` is registered and otherwise uses the registered `RuntimeAdapter`, so existing applications keep working unchanged. This contract does not standardize model messages, tool-call rounds, usage, cancellation, or provider errors, so adapters written against it can differ in behavior.
 
-- `MockRuntimeAdapter` supports deterministic framework tests.
-- `AdkRuntimeAdapter` is an experimental synthetic runtime prototype published under `@nestjs-agentic/adk`; it does not currently integrate with provider-native ADK APIs.
-- `LangGraphRuntimeAdapter` supports LangChain model and LangGraph checkpointer types, but does not currently compile or execute a LangGraph `StateGraph`.
+- `MockRuntimeAdapter` supports deterministic framework tests and governance assertions.
 
 The independent runtime milestone will move common model and tool-loop behavior behind framework-owned contracts while keeping provider integrations optional.
 

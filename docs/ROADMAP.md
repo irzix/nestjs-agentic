@@ -30,9 +30,7 @@ This roadmap outlines the past releases, current development priorities, and fut
 | [`@nestjs-agentic/memory`](packages/memory) | **Experimental (v0.2)** | Stanford tri-factor scoring, short-term, semantic, episodic, procedural SOP playbooks, and experience reflection. |
 | [`@nestjs-agentic/rag`](packages/rag) | **Experimental (v0.2)** | AST chunking, vector stores, hybrid search, and GraphRAG primitives. |
 | [`@nestjs-agentic/evaluation`](packages/evaluation) | **Experimental (v0.2)** | LLM-as-a-Judge debiasing, trajectory metrics, and benchmark reporting. |
-| [`@nestjs-agentic/mcp`](packages/mcp) | **Planned (v0.8)** | Native Model Context Protocol client transport and tool provider. |
-| [`@nestjs-agentic/adk`](packages/runtime-adk) | **Deprecated Prototype** | Early experimental runtime prototype (to be deprecated). |
-| [`@nestjs-agentic/langgraph`](packages/runtime-langgraph) | **Deprecated Prototype** | Early LangChain/LangGraph adapter (to be reworked as model adapter). |
+| [`@nestjs-agentic/mcp`](packages/mcp) | **Production-intent (v0.8)** | Native Model Context Protocol client transport and tool provider. |
 
 ---
 

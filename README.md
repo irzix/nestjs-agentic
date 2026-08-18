@@ -38,17 +38,16 @@ The current release line is `0.6.x`. Core primitives, persistence adapters, and 
 | Area | Status | Scope |
 | --- | --- | --- |
 | Agents, tools, and NestJS DI | Available | Decorators, discovery, feature registration, and context-bound tools. |
-| Tool governance | Available | `allow`, `deny`, and `require_approval` before framework-managed tool execution. |
-| Model Context Protocol (MCP) | Available | `@nestjs-agentic/mcp` for Stdio and SSE remote tool discovery and execution. |
-| Built-in agent runtime | Available | Model-to-tool loop, argument validation, execution budgets, cancellation, and streaming. Needs a `ModelAdapter`. |
-| OpenAI model adapter | Available | `@nestjs-agentic/openai` for OpenAI and Chat Completions compatible endpoints such as Azure, Ollama, vLLM, Groq, and OpenRouter. |
-| Mock runtime and mock model | Available | Deterministic agent, tool, policy, and loop testing without a model API. |
-| Other model providers | Planned | Anthropic, Google, and Vercel AI SDK adapters will follow the same contract. |
-| Human approval & HITL | Available | The runtime suspends a turn on `require_approval`; resumes durably via `ApprovalStore` and execution checkpoints. |
-| Persistence adapters | Available | In-memory, Redis, and PostgreSQL drivers for `SessionStore`, `StateStore`, `ApprovalStore`, and `IdempotencyStore`. |
-| Durable execution checkpoints | Available | In-flight execution checkpoints, crash recovery, and turn resumption without re-executing completed side-effects. |
-| ADK prototype and LangGraph adapter | Experimental | `@nestjs-agentic/adk` is currently a synthetic runtime prototype; `@nestjs-agentic/langgraph` provides compatibility with adapter-specific behavior. |
-| Memory, RAG, experience, orchestration, evaluation | Experimental | Opt-in packages available for evaluation and feedback. |
+| Tool governance & HITL | Available | `allow`, `deny`, and `require_approval` before execution; resumes durably via `ApprovalStore`. |
+| Model Context Protocol (MCP) | Available | `@nestjs-agentic/mcp` for Stdio and SSE remote tool discovery, authorization, and execution. |
+| Built-in runtime & Model Cascading | Available | Loop execution, streaming, budgets, and FrugalGPT confidence-threshold model cascading. |
+| OpenAI & Chat-Completions adapter | Available | `@nestjs-agentic/openai` for OpenAI, Azure, Ollama, vLLM, Groq, and OpenRouter. |
+| Cognitive Memory & SOP Playbooks | Available | `@nestjs-agentic/memory` for Stanford Tri-Factor scoring, SOP playbooks, and reflection. |
+| U-Shaped Context Assembler | Available | `@nestjs-agentic/rag` & `@nestjs-agentic/core` for Lost-in-the-Middle attention mitigation. |
+| Codebase AST & GraphRAG | Available | `@nestjs-agentic/rag` for AST code splitting, hybrid vector store, and graph traversal. |
+| Debiased Evaluation & Trajectory Metrics | Available | `@nestjs-agentic/evaluation` for MT-Bench position-debiased judge and AgentBench metrics. |
+| Persistence & Durable Checkpoints | Available | In-memory, Redis, and PostgreSQL drivers for Session, State, Approval, and Idempotency. |
+| Sub-Agent Orchestration | Available | `@nestjs-agentic/orchestration` for parallel delegation, bounded concurrency, and refinement. |
 
 See the [product roadmap](docs/ROADMAP.md) for milestones and production-readiness criteria.
 
@@ -64,8 +63,6 @@ See the [product roadmap](docs/ROADMAP.md) for milestones and production-readine
 | [`@nestjs-agentic/rag`](packages/rag) | Retrieval strategies, vector stores, and knowledge-graph primitives |
 | [`@nestjs-agentic/orchestration`](packages/orchestration) | Sub-agent delegation, parallel execution, and refinement loops |
 | [`@nestjs-agentic/evaluation`](packages/evaluation) | Metrics, benchmark execution, and reporting |
-| [`@nestjs-agentic/adk`](packages/runtime-adk) | Experimental runtime prototype, not a provider integration |
-| [`@nestjs-agentic/langgraph`](packages/runtime-langgraph) | Experimental LangChain and LangGraph compatibility adapter |
 
 ## Installation
 
@@ -87,8 +84,6 @@ npm install @nestjs-agentic/memory
 npm install @nestjs-agentic/rag @nestjs-agentic/memory
 npm install @nestjs-agentic/orchestration
 npm install @nestjs-agentic/evaluation
-npm install @nestjs-agentic/adk
-npm install @nestjs-agentic/langgraph @langchain/core @langchain/langgraph
 ```
 
 ## Quick Start
@@ -284,9 +279,7 @@ export class MyModelAdapter implements ModelAdapter {
 }
 ```
 
-The core package does not import model or graph SDKs. Applications that already own an external runtime can still register a `RuntimeAdapter` through `RUNTIME_ADAPTER`, which continues to receive whole turns.
-
-The current `@nestjs-agentic/adk` package is a synthetic runtime prototype, while `@nestjs-agentic/langgraph` provides limited compatibility with LangChain model and checkpointer types. Both are experimental, and the roadmap moves them onto the common contracts.
+The core package does not import external model SDKs. Custom model adapters implement `ModelAdapter` directly, while the framework manages loop execution, policy enforcement, budgets, and streaming.
 
 ## Documentation
 
