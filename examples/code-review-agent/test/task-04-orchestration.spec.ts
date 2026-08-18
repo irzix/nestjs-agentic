@@ -68,7 +68,21 @@ async function runTask04Tests() {
   assert.ok(report.specialistScores['SecurityReviewer'] === 0.95);
   console.log('  ✅ PASS: Test 3: Orchestrator executed full review pipeline and synthesized report');
 
-  console.log('\n🎉 All 3 Task 04 Orchestration tests passed successfully!\n');
+  // Test 4: ExecutionTracer Timeline & Log Output
+  const { ExecutionTracer } = require('../src/audit/execution-tracer');
+  const tracer = new ExecutionTracer();
+  tracer.record('ingress', '🛡️ Ingress HMAC verified');
+  tracer.record('rag', '🧠 AST RAG queried', 42);
+  const events = tracer.getEvents();
+  assert.strictEqual(events.length, 2);
+  assert.strictEqual(events[0].stage, 'ingress');
+  assert.strictEqual(events[1].durationMs, 42);
+  const log = tracer.formatLog();
+  assert.ok(log.includes('🛡️ Ingress HMAC verified'));
+  assert.ok(log.includes('(42ms)'));
+  console.log('  ✅ PASS: Test 4: ExecutionTracer recorded and formatted millisecond trace log');
+
+  console.log('\n🎉 All 4 Task 04 Orchestration tests passed successfully!\n');
 }
 
 runTask04Tests().catch((err) => {
