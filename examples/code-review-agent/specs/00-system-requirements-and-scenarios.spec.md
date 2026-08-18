@@ -49,7 +49,7 @@
 * **Trigger:** Maintainer comments `@njent false-positive <explanation>` in reply to a bot comment.
 * **Workflow:**
   1. `NjentExperienceService` extracts the flagged code pattern and maintainer explanation.
-  2. Saves an episodic record to `EpisodicExperienceStore` in `@nestjs-agentic/experience`.
+  2. Saves an episodic record to `ExperienceLearner` in `@nestjs-agentic/memory`.
   3. Future reviews retrieve these lessons to suppress duplicate false positives.
 
 ---

@@ -17,7 +17,7 @@
 * **Core Terminology Breakdown:**
   * **Context:** Ephemeral active prompt payload (Sanitized PR diff + Retrieved AST chunks + Instructions).
   * **State:** Execution machine status (`running`, `suspended_for_approval`, `completed`) tracked per turn.
-  * **Memory:** Cross-turn conversational history (`RedisSessionStore`) and maintainer feedback (`@nestjs-agentic/experience`).
+  * **Memory:** Cross-turn conversational history (`RedisSessionStore`) and maintainer feedback (`@nestjs-agentic/memory`).
   * **Knowledge:** Persistent indexed codebase AST and roadmap guidelines stored in PostgreSQL (`pgvector`).
   * **Chunks:** AST-delimited semantic code units (classes, interfaces, methods) rather than arbitrary character splits.
 * **Agent Lifecycle:** `Webhook Ingress` ➔ `RBAC Check` ➔ `RAG Retrieval` ➔ `Reasoning Loop` ➔ `Policy Interceptor` ➔ `Quality Evaluation` ➔ `PR Comment Egress`.
