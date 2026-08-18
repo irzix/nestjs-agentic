@@ -149,6 +149,7 @@ export class SubAgentDelegator {
         status: 'success',
         response: runResult.output || '',
         toolCount: runResult.toolCalls?.length || 0,
+        score: (runResult as unknown as { score?: number }).score,
         tokens: runResult.usage
           ? {
               inputTokens: runResult.usage.inputTokens ?? 0,
