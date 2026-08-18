@@ -19,7 +19,6 @@ services:
       - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - MAINTAINER_APPROVAL_SECRET=${MAINTAINER_APPROVAL_SECRET:-valid-maintainer-token}
     depends_on:
       - postgres
       - redis
