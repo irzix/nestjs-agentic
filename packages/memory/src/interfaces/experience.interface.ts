@@ -56,6 +56,9 @@ export interface ReflectionResult {
 
   /** Suggested prompt guidance adjustments for future agent runs. */
   suggestedPromptAdjustment?: string;
+
+  /** Cognitive importance rating of the critique in [0, 1] based on failure severity. */
+  importance?: number;
 }
 
 /**
@@ -82,6 +85,9 @@ export interface ExperienceRecord {
 
   /** Confidence or quality score of the learned lesson. */
   score?: number;
+
+  /** Cognitive importance score in [0, 1] for Stanford Tri-Factor memory ranking. */
+  importance?: number;
 
   /** Timestamp when the lesson was learned. */
   timestamp?: Date;

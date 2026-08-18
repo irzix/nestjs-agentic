@@ -172,15 +172,24 @@ export async function runMemoryTests() {
     const summarized = summarizer.summarizeRecords(records);
     assert(summarized.length < records.length, 'Test 7a: TokenBudgetSummarizer compressed records');
     assert(summarized[0].content.includes('Summary of'), 'Test 7b: Summary record created');
-  } catch (err: any) {
-    assert(false, 'Test 7: TokenBudgetSummarizer', err.message);
+  } catch (err: unknown) {
+    assert(false, 'Test 7: TokenBudgetSummarizer', (err as Error).message);
   }
 
-  console.log(`\n  📊 Memory Test Results: ${passed} passed, ${failed} failed.\n`);
+  console.log(`\n  📊 Core Memory Stores Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Memory Unit Tests Failed');
   }
+
+  // Execute Stanford Tri-Factor Scorer, Procedural Memory, and Experience Test Suites
+  await runStanfordScorerTests();
+  await runProceduralMemoryTests();
+  await runExperienceTests();
 }
+
+import { runStanfordScorerTests } from './stanford-scorer.spec';
+import { runProceduralMemoryTests } from './procedural-memory.spec';
+import { runExperienceTests } from './experience.spec';
 
 if (require.main === module) {
   runMemoryTests().catch(() => process.exit(1));

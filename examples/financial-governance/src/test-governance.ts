@@ -4,11 +4,11 @@ import type { AgentStreamEvent, ToolExecutionResult } from 'nestjs-agentic';
 import {
   CompositeMemory,
   EpisodicMemory,
+  ExperienceLearner,
   ScratchpadMemory,
   SemanticMemory,
   ShortTermMemory,
 } from '@nestjs-agentic/memory';
-import { ExperienceLearner } from '@nestjs-agentic/experience';
 import {
   ContextualCompressionStrategy,
   GraphRAGStrategy,

@@ -1,12 +1,24 @@
 import { randomUUID } from 'crypto';
-import type { AgentMemoryStore, MemoryRecord } from '@nestjs-agentic/memory';
-import type { ExperienceEngine, ExperienceRecord, AgentTrajectory, ReflectionResult } from '../interfaces/experience.interface';
-import { ReflectionEngine } from './reflection.engine';
+import type { AgentMemoryStore } from '../interfaces/memory.interface';
+import type {
+  AgentTrajectory,
+  ExperienceEngine,
+  ExperienceRecord,
+  ReflectionResult,
+} from '../interfaces/experience.interface';
+import { ReflectionEngine, type ReflectionEngineOptions } from './reflection.engine';
 
 export interface ExperienceLearnerOptions {
+  /** Optional memory store for persisting learned lessons */
   memoryStore?: AgentMemoryStore;
+  /** Options configuring the underlying ReflectionEngine */
+  reflectionOptions?: ReflectionEngineOptions;
 }
 
+/**
+ * Trajectory experience learner that critiques execution traces, extracts
+ * self-correcting rules, and persists them into cognitive memory.
+ */
 export class ExperienceLearner implements ExperienceEngine {
   private readonly memoryStore?: AgentMemoryStore;
   private readonly reflectionEngine: ReflectionEngine;
@@ -14,12 +26,15 @@ export class ExperienceLearner implements ExperienceEngine {
 
   constructor(options?: ExperienceLearnerOptions) {
     this.memoryStore = options?.memoryStore;
-    this.reflectionEngine = new ReflectionEngine();
+    this.reflectionEngine = new ReflectionEngine(options?.reflectionOptions);
   }
 
   /**
    * Evaluates an agent execution trajectory, extracts lessons learned from errors,
    * and automatically persists them into long-term memory for future self-correction.
+   *
+   * @param trajectory The captured execution trajectory.
+   * @returns Analytical critique and extracted rules.
    */
   async critiqueTrajectory(trajectory: AgentTrajectory): Promise<ReflectionResult> {
     const reflection = await this.reflectionEngine.critiqueTrajectory(trajectory);
@@ -33,6 +48,7 @@ export class ExperienceLearner implements ExperienceEngine {
           taskTrigger: trajectory.goal,
           pattern: reflection.critique ?? 'Execution Failure',
           lesson,
+          importance: reflection.importance ?? 0.5,
           timestamp: new Date(),
         });
       }
@@ -42,12 +58,15 @@ export class ExperienceLearner implements ExperienceEngine {
   }
 
   /**
-   * Persists a learned lesson into memory or fallback storage.
+   * Persists a learned lesson or failure pattern into memory.
+   *
+   * @param record The experience record to store.
    */
   async recordLesson(record: ExperienceRecord): Promise<void> {
     const item: ExperienceRecord = {
       ...record,
       id: record.id || randomUUID(),
+      importance: record.importance ?? 0.5,
       timestamp: record.timestamp || new Date(),
     };
 
@@ -56,12 +75,14 @@ export class ExperienceLearner implements ExperienceEngine {
         id: item.id,
         sessionId: item.tenantId ?? 'global_experience',
         type: 'episodic',
+        importance: item.importance,
         content: `[Learned Lesson for ${item.taskTrigger}]: ${item.lesson}`,
         metadata: {
           agentName: item.agentName,
           taskTrigger: item.taskTrigger,
           pattern: item.pattern,
           lesson: item.lesson,
+          importance: item.importance,
         },
       });
     }
@@ -73,7 +94,35 @@ export class ExperienceLearner implements ExperienceEngine {
   }
 
   /**
+   * Records a successful pattern or best practice into cognitive memory.
+   *
+   * @param taskTrigger Task description or trigger keyword.
+   * @param bestPractice Recommended practice learned from successful execution.
+   * @param options Additional metadata and importance score.
+   */
+  async recordBestPractice(
+    taskTrigger: string,
+    bestPractice: string,
+    options?: { agentName?: string; tenantId?: string; importance?: number },
+  ): Promise<void> {
+    await this.recordLesson({
+      id: randomUUID(),
+      agentName: options?.agentName ?? 'governed-agent',
+      tenantId: options?.tenantId,
+      taskTrigger,
+      pattern: 'Successful Execution Pattern',
+      lesson: bestPractice,
+      importance: options?.importance ?? 0.65,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
    * Recalls past learned lessons matching a task trigger or session tenant.
+   *
+   * @param trigger Prompt trigger key or task description.
+   * @param tenantId Optional tenant or session identifier.
+   * @returns Array of matching `ExperienceRecord` entries.
    */
   async recallLessons(trigger: string, tenantId?: string): Promise<ExperienceRecord[]> {
     const triggerKey = trigger.toLowerCase();
@@ -83,13 +132,14 @@ export class ExperienceLearner implements ExperienceEngine {
       const recalled = await this.memoryStore.recall(trigger, {
         sessionId: tenantId ?? 'global_experience',
       });
-      const memoryRecords: ExperienceRecord[] = recalled.map((r: MemoryRecord) => ({
+      const memoryRecords: ExperienceRecord[] = recalled.map((r) => ({
         id: r.id,
         tenantId: r.sessionId,
         agentName: (r.metadata?.agentName as string) ?? 'unknown',
         taskTrigger: (r.metadata?.taskTrigger as string) ?? trigger,
         pattern: (r.metadata?.pattern as string) ?? 'Historical Pattern',
         lesson: (r.metadata?.lesson as string) ?? r.content,
+        importance: r.importance ?? (r.metadata?.importance as number) ?? 0.5,
         timestamp: r.timestamp,
       }));
 
@@ -101,6 +151,10 @@ export class ExperienceLearner implements ExperienceEngine {
 
   /**
    * Formats relevant experiences into prompt guidance for an agent before execution.
+   *
+   * @param trigger Prompt trigger key or task description.
+   * @param tenantId Optional tenant or session identifier.
+   * @returns Formatted prompt guidance markdown string.
    */
   async buildGuidancePrompt(trigger: string, tenantId?: string): Promise<string> {
     const experiences = await this.recallLessons(trigger, tenantId);

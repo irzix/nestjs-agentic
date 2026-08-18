@@ -60,9 +60,8 @@ See the [product roadmap](docs/ROADMAP.md) for milestones and production-readine
 | [`@nestjs-agentic/core`](packages/core) | Agents, tools, policies, approvals, the built-in runtime, and the adapter contracts |
 | [`@nestjs-agentic/mcp`](packages/mcp) | Model Context Protocol (MCP) client transport and tool provider |
 | [`@nestjs-agentic/openai`](packages/model-openai) | OpenAI `ModelAdapter`, also covering Chat Completions compatible endpoints |
-| [`@nestjs-agentic/memory`](packages/memory) | Short-term, semantic, episodic, and scratchpad memory primitives |
+| [`@nestjs-agentic/memory`](packages/memory) | Stanford Tri-Factor cognitive scoring, procedural SOP playbooks, and experience reflection |
 | [`@nestjs-agentic/rag`](packages/rag) | Retrieval strategies, vector stores, and knowledge-graph primitives |
-| [`@nestjs-agentic/experience`](packages/experience) | Reflection and experience learning over memory |
 | [`@nestjs-agentic/orchestration`](packages/orchestration) | Sub-agent delegation, parallel execution, and refinement loops |
 | [`@nestjs-agentic/evaluation`](packages/evaluation) | Metrics, benchmark execution, and reporting |
 | [`@nestjs-agentic/adk`](packages/runtime-adk) | Experimental runtime prototype, not a provider integration |
@@ -86,7 +85,6 @@ Optional packages:
 npm install @nestjs-agentic/mcp
 npm install @nestjs-agentic/memory
 npm install @nestjs-agentic/rag @nestjs-agentic/memory
-npm install @nestjs-agentic/experience @nestjs-agentic/memory
 npm install @nestjs-agentic/orchestration
 npm install @nestjs-agentic/evaluation
 npm install @nestjs-agentic/adk

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.0] - 2026-08-18
 
+- **Stanford Tri-Factor Memory Scoring & Procedural Playbook Stores (`@nestjs-agentic/memory`, `@nestjs-agentic/experience`)** (#50):
+  - Implementation of foundational cognitive memory retrieval from Stanford University & Google research (*Park et al., 2023, arXiv:2304.03442 — Generative Agents*): $\text{Score}(m, q) = \alpha \cdot \hat{R}(m) + \beta \cdot \hat{I}(m) + \gamma \cdot \hat{S}(m, q)$.
+  - `StanfordMemoryScorer`: Exponential recency decay ($e^{-\lambda \Delta t}$), cognitive importance ($[0, 1]$), and semantic relevance (vector cosine or token overlap) with Min-Max candidate pool normalization.
+  - `GenerativeMemoryStore`: High-level memory store providing top-$K$ Tri-Factor ranked recall (`recall` and `recallScored`) with configurable weights and time horizons.
+  - `ProceduralMemoryStore` & `ProceduralPlaybook`: Deterministic Standard Operating Procedure (SOP) memory for multi-step playbooks, prerequisites, error recovery (`retry`, `skip`, `abort`, `escalate_hitl`), multi-trigger lookup (`matchPlaybooks`), and direct markdown instruction formatting (`formatPlaybookInstructions`).
+  - Cognitive importance in `ReflectionEngine` & `ExperienceLearner` (*Reflexion, Shinn et al., MIT*): Dynamically infers failure severity (security roles: $0.95$, financial ledgers: $0.90$, package managers: $0.70$) and retains lessons in `GenerativeMemoryStore` for time-decayed self-correcting guidance.
 - **FrugalGPT Model Cascading & Confidence-Threshold Routing (`@nestjs-agentic/core`)** (#54):
   - Native implementation of Stanford University FrugalGPT research (*Chen et al., NeurIPS 2023, arXiv:2305.05176*) reducing LLM API spend by 50–85% with zero accuracy degradation.
   - `ModelCascadeAdapter`: Provider-neutral `ModelAdapter` implementation executing sequential model cascades ($M_1 \rightarrow M_2 \rightarrow \dots \rightarrow M_k$) gated by confidence threshold $\tau \in [0, 1]$.
