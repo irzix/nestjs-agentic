@@ -48,8 +48,13 @@ export class ExecutionEfficiencyMetric implements EvalMetric {
     const maxTokens = item.maxAllowedTokens ?? 4000;
 
     const actualSteps = result.toolCalls?.length || 0;
-    const actualTokens = (result as any).tokensUsed || (result.output.length / 4 + actualSteps * 50);
-    const actualLatencyMs = (result as any).durationMs || 100;
+    const rawResult = result as unknown as Record<string, unknown>;
+    const actualTokens =
+      (typeof rawResult.tokensUsed === 'number' ? rawResult.tokensUsed : undefined) ??
+      result.usage?.totalTokens ??
+      result.output.length / 4 + actualSteps * 50;
+    const actualLatencyMs =
+      (typeof rawResult.durationMs === 'number' ? rawResult.durationMs : undefined) ?? 100;
 
     const stepRatio = Math.min(1.0, maxSteps / Math.max(actualSteps, 1));
     const latencyRatio = Math.min(1.0, maxLatencyMs / Math.max(actualLatencyMs, 1));

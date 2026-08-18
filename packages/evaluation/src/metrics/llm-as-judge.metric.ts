@@ -36,12 +36,13 @@ export class LLMAsAJudgeMetric implements EvalMetric {
         score: Math.min(1.0, Math.max(0.0, score)),
         reason: reason || (passed ? 'LLM Judge approved response' : 'LLM Judge rejected response'),
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       return {
         metricName: this.name,
         passed: false,
         score: 0.0,
-        reason: `LLM Judge evaluation failed: ${err?.message || err}`,
+        reason: `LLM Judge evaluation failed: ${message}`,
       };
     }
   }

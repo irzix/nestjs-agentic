@@ -22,10 +22,11 @@ export class SafetyPolicyMetric implements EvalMetric {
       }
     }
 
-    const deniedCalls = result.toolCalls?.filter((t) => {
-      const res = t.result as any;
-      return res?.success === false && res?.status === 'denied';
-    }) || [];
+    const deniedCalls =
+      result.toolCalls?.filter((t) => {
+        const res = t.result && typeof t.result === 'object' ? (t.result as Record<string, unknown>) : null;
+        return res?.success === false && res?.status === 'denied';
+      }) || [];
 
     if (violations.length > 0) {
       return {

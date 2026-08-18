@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.0] - 2026-08-18
 
+- **LLM-as-a-Judge Position-Debiasing & Trajectory Efficiency Metrics (`@nestjs-agentic/evaluation`)** (#55):
+  - Implementation of pairwise position-swap debiasing protocol from UC Berkeley LMSYS research (*Zheng et al., NeurIPS 2023, arXiv:2306.05685 — MT-Bench*).
+  - `PairwiseDebiasedJudge` & `runPairwiseDebiasedJudge`: Executes forward $(A, B)$ and reverse $(B, A)$ position evaluation passes, calculates debiased mean scores $\text{Score}_A = \frac{\text{Score}_A^{(1)} + \text{Score}_A^{(2)}}{2}$, detects position bias when judges systematically favor the first candidate, and computes confidence scores.
+  - Standardized Trajectory Metrics (*Liu et al., Tsinghua University, ICLR 2024 — AgentBench*):
+    - `TrajectoryInspectorMetric`: Evaluates step optimality $E_{\text{step}} = \frac{N_{\text{optimal}}}{N_{\text{actual}}} \in [0, 1]$, sequence alignment, and argument schema assertions.
+    - `ToolPrecisionMetric`: Measures ratio of error-free, successful tool executions against total invocations $P_{\text{tool}} = \frac{N_{\text{successful}}}{N_{\text{total}}} \in [0, 1]$.
 - **U-Shaped Context Assembler for Lost-in-the-Middle Attention Mitigation (`@nestjs-agentic/rag`, `@nestjs-agentic/core`)** (#52):
   - Implementation of empirical attention optimization from Stanford University & UC Berkeley research (*Liu et al., TACL 2024, arXiv:2307.03172 — "Lost in the Middle: How Language Models Use Long Contexts"*).
   - `UShapedContextStrategy` (`@nestjs-agentic/rag`): Post-retrieval RAG strategy distributing retrieved documents into an alternating U-shaped array ($[c_1, c_3, c_5, \dots, c_6, c_4, c_2]$) ensuring highest-ranked documents occupy the high-attention Primacy (top) and Recency (bottom) edges, while low-relevance documents sit in the middle valley.

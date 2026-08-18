@@ -1,4 +1,3 @@
-import 'reflect-metadata';
 import {
   Agent,
   AgentRunner,
@@ -6,15 +5,19 @@ import {
   LocalToolProvider,
   ToolDiscoveryService,
 } from '@nestjs-agentic/core';
+import 'reflect-metadata';
 import {
   AccuracyGroundTruthMetric,
   BenchmarkRunner,
-  ExecutionEfficiencyMetric,
   EvalReporter,
+  ExecutionEfficiencyMetric,
   LLMAsAJudgeMetric,
   SafetyPolicyMetric,
   TrajectoryInspectorMetric,
 } from '../src';
+import { runPairwiseJudgeTests } from './pairwise-judge.spec';
+import { runTrajectoryMetricsTests } from './trajectory-metrics.spec';
+
 
 export async function runEvaluationTests() {
   console.log('🧪 Running @nestjs-agentic/evaluation Comprehensive Unit Tests...\n');
@@ -177,12 +180,15 @@ export async function runEvaluationTests() {
     assert(false, 'Test 4: Multi-Trial Variance Analysis', err.message);
   }
 
-  console.log(`\n  📊 Evaluation Test Results: ${passed} passed, ${failed} failed.\n`);
+  console.log(`\n  📊 Core Evaluation Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Evaluation Unit Tests Failed');
   }
-}
 
+  // Run Position-Debiased Judge and Trajectory Efficiency Tests
+  await runPairwiseJudgeTests();
+  await runTrajectoryMetricsTests();
+}
 if (require.main === module) {
   runEvaluationTests().catch(() => process.exit(1));
 }

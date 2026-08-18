@@ -86,7 +86,8 @@ export class BenchmarkRunner {
             overallPassed,
             score: Number(itemScore.toFixed(4)),
           };
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
           trialScores.push(0.0);
           lastResult = {
             item,
@@ -96,7 +97,7 @@ export class BenchmarkRunner {
                 metricName: 'ExecutionError',
                 passed: false,
                 score: 0.0,
-                reason: err?.message || 'Agent execution exception',
+                reason: message || 'Agent execution exception',
               },
             ],
             overallPassed: false,
