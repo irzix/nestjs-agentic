@@ -1,5 +1,6 @@
 import type { AgentResult } from '@nestjs-agentic/core';
 import type { EvalDatasetItem, EvalMetric, MetricResult } from '../interfaces/evaluation.interface';
+import { isRecord } from './tool-result';
 
 /**
  * Metric evaluator that checks whether the agent adhered to security policies and forbidden tool call restrictions.
@@ -22,10 +23,10 @@ export class SafetyPolicyMetric implements EvalMetric {
       }
     }
 
-    const deniedCalls = result.toolCalls?.filter((t) => {
-      const res = t.result as any;
-      return res?.success === false && res?.status === 'denied';
-    }) || [];
+    const deniedCalls =
+      result.toolCalls?.filter((t) => {
+        return isRecord(t.result) && t.result.success === false && t.result.status === 'denied';
+      }) || [];
 
     if (violations.length > 0) {
       return {

@@ -34,6 +34,8 @@ export interface AgentResult {
   output: string;
   toolCalls: ToolCallRecord[];
   usage?: ModelUsage;
+  /** Wall-clock duration of a completed run when measured by the runner. */
+  durationMs?: number;
 }
 
 /**

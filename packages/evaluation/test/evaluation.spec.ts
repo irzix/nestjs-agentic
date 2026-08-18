@@ -1,4 +1,3 @@
-import 'reflect-metadata';
 import {
   Agent,
   AgentRunner,
@@ -6,15 +5,19 @@ import {
   LocalToolProvider,
   ToolDiscoveryService,
 } from '@nestjs-agentic/core';
+import 'reflect-metadata';
 import {
   AccuracyGroundTruthMetric,
   BenchmarkRunner,
-  ExecutionEfficiencyMetric,
   EvalReporter,
+  ExecutionEfficiencyMetric,
   LLMAsAJudgeMetric,
   SafetyPolicyMetric,
   TrajectoryInspectorMetric,
 } from '../src';
+import { runPairwiseJudgeTests } from './pairwise-judge.spec';
+import { runTrajectoryMetricsTests } from './trajectory-metrics.spec';
+
 
 export async function runEvaluationTests() {
   console.log('🧪 Running @nestjs-agentic/evaluation Comprehensive Unit Tests...\n');
@@ -150,6 +153,11 @@ export async function runEvaluationTests() {
     const judgeRes = await judge.evaluate(datasetItem, agentResult);
     assert(judgeRes.passed === true, 'Test 3a: LLMAsAJudgeMetric evaluated output score');
     assert(judgeRes.score === 0.95, 'Test 3b: LLMAsAJudgeMetric returned 0.95 score');
+
+    const outOfRangeJudge = new LLMAsAJudgeMetric(async () => ({ score: -0.2, reason: 'Invalid' }), 0.5);
+    const outOfRangeResult = await outOfRangeJudge.evaluate(datasetItem, agentResult);
+    assert(outOfRangeResult.passed === false, 'Test 3c: Pass state uses normalized judge score');
+    assert(outOfRangeResult.score === 0, 'Test 3d: Out-of-range judge score is normalized');
   } catch (err: any) {
     assert(false, 'Test 3: LLMAsAJudgeMetric', err.message);
   }
@@ -177,12 +185,15 @@ export async function runEvaluationTests() {
     assert(false, 'Test 4: Multi-Trial Variance Analysis', err.message);
   }
 
-  console.log(`\n  📊 Evaluation Test Results: ${passed} passed, ${failed} failed.\n`);
+  console.log(`\n  📊 Core Evaluation Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Evaluation Unit Tests Failed');
   }
-}
 
+  // Run Position-Debiased Judge and Trajectory Efficiency Tests
+  await runPairwiseJudgeTests();
+  await runTrajectoryMetricsTests();
+}
 if (require.main === module) {
   runEvaluationTests().catch(() => process.exit(1));
 }

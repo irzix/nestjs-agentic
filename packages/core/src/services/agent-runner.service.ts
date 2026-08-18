@@ -669,7 +669,7 @@ export class AgentRunner {
         context: prepared.context,
       });
 
-      return result;
+      return { ...result, durationMs };
     } catch (err: unknown) {
       const durationMs = Date.now() - startAt;
       await notifier.notifyError({
