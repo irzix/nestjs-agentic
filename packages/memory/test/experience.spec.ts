@@ -202,6 +202,58 @@ export async function runExperienceTests() {
     assert(false, 'Test 7: GenerativeMemoryStore Integration', (err as Error).message);
   }
 
+  // TEST 8: Configurable Severity Weights and Custom Classifier Hook
+  try {
+    const customEngine = new ReflectionEngine({
+      severityWeights: {
+        securityAndAuth: 0.99,
+      },
+      customClassifier: (step, errDetail) => {
+        if (errDetail.includes('custom_compliance_violation')) {
+          return 0.88;
+        }
+        return undefined;
+      },
+    });
+
+    const customSecResult = await customEngine.critiqueTrajectory({
+      sessionId: 'sess_custom_sec',
+      agentName: 'custom-sec-agent',
+      goal: 'Admin operation',
+      success: false,
+      steps: [{ stepIndex: 1, toolName: 'adminTool', error: 'Unauthorized access' }],
+    });
+    assert(customSecResult.importance === 0.99, 'Test 8a: Custom configured severity weight (0.99) applied');
+
+    const customHookResult = await customEngine.critiqueTrajectory({
+      sessionId: 'sess_hook',
+      agentName: 'compliance-agent',
+      goal: 'Audit report',
+      success: false,
+      steps: [{ stepIndex: 1, toolName: 'auditTool', error: 'Failed: custom_compliance_violation detected' }],
+    });
+    assert(customHookResult.importance === 0.88, 'Test 8b: Custom classifier hook score (0.88) applied');
+  } catch (err: unknown) {
+    assert(false, 'Test 8: Configurable Severity & Custom Hook', (err as Error).message);
+  }
+
+  // TEST 9: Success Trajectory Best Practice Recording
+  try {
+    const learner = new ExperienceLearner();
+    await learner.recordBestPractice(
+      'Docker Build',
+      'Use multi-stage Docker build to keep images under 150MB',
+      { importance: 0.75 },
+    );
+
+    const lessons = await learner.recallLessons('Docker Build');
+    assert(lessons.length === 1, 'Test 9a: Best practice record saved');
+    assert(lessons[0].importance === 0.75, 'Test 9b: Best practice importance preserved');
+    assert(lessons[0].pattern === 'Successful Execution Pattern', 'Test 9c: Pattern is marked as successful');
+  } catch (err: unknown) {
+    assert(false, 'Test 9: Success Trajectory Best Practice', (err as Error).message);
+  }
+
   if (failed > 0) {
     throw new Error('Experience Unit Tests Failed');
   }

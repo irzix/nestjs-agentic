@@ -32,7 +32,7 @@ export interface ProceduralPlaybook {
   description: string;
   /** List of keywords, task triggers, or event topics that activate this playbook */
   triggers: string[];
-  /** Optional prerequisite conditions, required roles, or tools */
+  /** Optional prerequisite conditions, required roles, or tools that the caller MUST possess */
   prerequisites?: string[];
   /** Ordered list of deterministic steps */
   steps: ProceduralStep[];
@@ -50,6 +50,7 @@ export interface ProceduralPlaybook {
  * Procedural playbook with calculated match relevance score.
  */
 export interface ScoredPlaybook {
+  /** The matching procedural playbook */
   playbook: ProceduralPlaybook;
   /** Match relevance score in [0, 1] */
   matchScore: number;
@@ -65,6 +66,13 @@ export interface PlaybookMatchOptions {
   limit?: number;
   /** Minimum match score threshold in [0, 1]. Default: 0.1 */
   minMatchScore?: number;
-  /** Filter playbooks by required prerequisites */
+  /**
+   * Available capabilities, roles, or tools possessed by the caller.
+   * Playbooks requiring prerequisites NOT in this list will be filtered out.
+   */
+  availablePrerequisites?: string[];
+  /**
+   * Alias for `availablePrerequisites` (for backward compatibility).
+   */
   prerequisitesFilter?: string[];
 }

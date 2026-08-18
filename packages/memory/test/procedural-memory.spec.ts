@@ -165,6 +165,48 @@ export async function runProceduralMemoryTests() {
     assert(false, 'Delete and list playbooks', String(err));
   }
 
+  // 6. Prerequisite Filtering Satisfaction
+  try {
+    const store = new ProceduralMemoryStore();
+    await store.savePlaybook({
+      id: 'pb_admin_only',
+      name: 'Admin Database Drop',
+      description: 'Dangerous schema reset',
+      triggers: ['admin_action', 'drop_db'],
+      prerequisites: ['role:admin', 'tool:sql_drop'],
+      steps: [{ stepNumber: 1, title: 'Drop Schema', description: 'Reset DB' }],
+    });
+
+    // Caller lacking required prerequisites
+    const userMatches = await store.matchPlaybooks('admin_action', {
+      availablePrerequisites: ['role:user'],
+    });
+    assert(
+      userMatches.length === 0,
+      'Prerequisite check filters out playbook when caller lacks required role (role:admin)',
+    );
+
+    // Caller having only partial prerequisites
+    const partialMatches = await store.matchPlaybooks('admin_action', {
+      availablePrerequisites: ['role:admin'],
+    });
+    assert(
+      partialMatches.length === 0,
+      'Prerequisite check filters out playbook when caller lacks one prerequisite (tool:sql_drop)',
+    );
+
+    // Caller having all required prerequisites
+    const authorizedMatches = await store.matchPlaybooks('admin_action', {
+      availablePrerequisites: ['role:admin', 'tool:sql_drop', 'other_cap'],
+    });
+    assert(
+      authorizedMatches.length === 1,
+      'Prerequisite check permits playbook when caller satisfies all prerequisites',
+    );
+  } catch (err: unknown) {
+    assert(false, 'Prerequisite Filtering Satisfaction', String(err));
+  }
+
   if (failed > 0) {
     throw new Error(`${failed} Procedural memory test(s) failed.`);
   }

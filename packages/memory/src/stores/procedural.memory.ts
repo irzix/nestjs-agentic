@@ -97,12 +97,11 @@ export class ProceduralMemoryStore implements AgentMemoryStore {
     const scoredList: ScoredPlaybook[] = [];
 
     for (const playbook of this.playbooks.values()) {
-      // Check prerequisite filter
-      if (options?.prerequisitesFilter && options.prerequisitesFilter.length > 0) {
-        const required = options.prerequisitesFilter;
-        const available = playbook.prerequisites ?? [];
-        const hasAll = required.every((req) => available.includes(req));
-        if (!hasAll) continue;
+      // Check prerequisite satisfaction (caller must satisfy all playbook prerequisites)
+      const callerPrereqs = options?.availablePrerequisites ?? options?.prerequisitesFilter;
+      if (callerPrereqs && playbook.prerequisites && playbook.prerequisites.length > 0) {
+        const isSatisfied = playbook.prerequisites.every((req) => callerPrereqs.includes(req));
+        if (!isSatisfied) continue;
       }
 
       let maxScore = 0;

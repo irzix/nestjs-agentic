@@ -10,9 +10,14 @@ import type {
 import { StanfordMemoryScorer } from '../scoring/stanford-memory-scorer';
 
 export interface GenerativeMemoryOptions {
+  /** Default linear weights for Stanford Tri-Factor scoring */
   defaultWeights?: TriFactorWeights;
+  /** Default exponential decay parameters */
   defaultDecayOptions?: RecencyDecayOptions;
+  /** Custom importance rating extractor */
   importanceExtractor?: (record: MemoryRecord) => number;
+  /** Optional embedding function to compute vector embeddings automatically */
+  embedFn?: (text: string) => Promise<number[]>;
 }
 
 /**
@@ -27,25 +32,37 @@ export class GenerativeMemoryStore implements AgentMemoryStore {
   private readonly defaultWeights?: TriFactorWeights;
   private readonly defaultDecayOptions?: RecencyDecayOptions;
   private readonly importanceExtractor?: (record: MemoryRecord) => number;
+  private readonly embedFn?: (text: string) => Promise<number[]>;
 
   constructor(options?: GenerativeMemoryOptions) {
     this.defaultWeights = options?.defaultWeights;
     this.defaultDecayOptions = options?.defaultDecayOptions;
     this.importanceExtractor = options?.importanceExtractor;
+    this.embedFn = options?.embedFn;
   }
 
   /**
    * Saves a new memory record into the generative memory store.
-   * Automatically computes intrinsic cognitive importance and assigns timestamps.
+   * Automatically computes intrinsic cognitive importance, calculates embeddings if configured, and assigns timestamps.
    *
    * @param record The memory record to persist.
    */
   async save(record: MemoryRecord): Promise<void> {
+    let embedding = record.embedding;
+    if (!embedding && this.embedFn && record.content) {
+      try {
+        embedding = await this.embedFn(record.content);
+      } catch {
+        // Fallback gracefully without embedding
+      }
+    }
+
     const item: MemoryRecord = {
       ...record,
       id: record.id || randomUUID(),
       type: record.type || 'generative',
       importance: StanfordMemoryScorer.computeImportance(record, this.importanceExtractor),
+      embedding,
       timestamp: record.timestamp || new Date(),
       lastAccessedAt: new Date(),
     };
@@ -93,11 +110,20 @@ export class GenerativeMemoryStore implements AgentMemoryStore {
       return [];
     }
 
+    let queryEmbedding = options?.queryEmbedding;
+    if (!queryEmbedding && this.embedFn && query) {
+      try {
+        queryEmbedding = await this.embedFn(query);
+      } catch {
+        // Fallback gracefully to lexical matching
+      }
+    }
+
     const scored = StanfordMemoryScorer.rankCandidates(candidates, query, {
       weights: options?.weights ?? this.defaultWeights,
       decayOptions: options?.decayOptions ?? this.defaultDecayOptions,
       minScoreCutoff: options?.minScoreCutoff,
-      queryEmbedding: options?.queryEmbedding,
+      queryEmbedding,
       importanceExtractor: this.importanceExtractor,
     });
 

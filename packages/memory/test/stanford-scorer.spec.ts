@@ -162,7 +162,62 @@ export async function runStanfordScorerTests() {
     assert(false, 'Tri-Factor composite ranking', String(err));
   }
 
-  // 5. GenerativeMemoryStore Integration
+  // 5. Edge Cases: Empty pool, Identical scores, Query longer than record
+  try {
+    // Edge case 1: Empty candidates
+    const emptyRanked = StanfordMemoryScorer.rankCandidates([], 'any query');
+    assert(emptyRanked.length === 0, 'Edge Case 1: Empty candidates pool returns empty array');
+
+    // Edge case 2: Zero variance across pool (identical importance & recency)
+    const fixedTime = new Date('2026-08-18T10:00:00Z');
+    const identicalCandidates: MemoryRecord[] = [
+      { id: 'i1', sessionId: 's', type: 'generative', content: 'Same content A', importance: 0.8, timestamp: fixedTime },
+      { id: 'i2', sessionId: 's', type: 'generative', content: 'Same content B', importance: 0.8, timestamp: fixedTime },
+    ];
+    const zeroVarRanked = StanfordMemoryScorer.rankCandidates(identicalCandidates, 'Same content', { now: fixedTime });
+    assert(zeroVarRanked.length === 2, 'Edge Case 2a: Zero-variance pool handled without NaN');
+    assert(!Number.isNaN(zeroVarRanked[0].score), 'Edge Case 2b: Calculated score is valid number');
+
+    // Edge case 3: Query much longer than stored memory
+    const shortRecord: MemoryRecord = { id: 'short', sessionId: 's', type: 'generative', content: 'redis' };
+    const longQueryRel = StanfordMemoryScorer.computeRelevance(
+      shortRecord,
+      'How do I configure the cluster node settings and persistence volume for an enterprise distributed redis cache backend in Kubernetes?',
+    );
+    assert(longQueryRel > 0.0, 'Edge Case 3: Long query matching short keyword scores positive relevance');
+  } catch (err: unknown) {
+    assert(false, 'Edge Cases', String(err));
+  }
+
+  // 6. GenerativeMemoryStore with embedFn
+  try {
+    const mockEmbedFn = async (text: string): Promise<number[]> => {
+      if (text.includes('database') || text.includes('sql')) return [1, 0, 0];
+      if (text.includes('ui') || text.includes('theme')) return [0, 1, 0];
+      return [0, 0, 1];
+    };
+
+    const store = new GenerativeMemoryStore({ embedFn: mockEmbedFn });
+    await store.save({
+      id: 'emb_1',
+      sessionId: 'sess_emb',
+      type: 'generative',
+      content: 'PostgreSQL database replica configuration',
+    });
+    await store.save({
+      id: 'emb_2',
+      sessionId: 'sess_emb',
+      type: 'generative',
+      content: 'Dark mode user interface styling',
+    });
+
+    const recalled = await store.recall('sql query performance', { sessionId: 'sess_emb' });
+    assert(recalled[0].id === 'emb_1', 'GenerativeMemoryStore with embedFn automatically computes vectors and retrieves semantic match');
+  } catch (err: unknown) {
+    assert(false, 'GenerativeMemoryStore with embedFn', String(err));
+  }
+
+  // 7. GenerativeMemoryStore Integration & Score Breakdowns
   try {
     const store = new GenerativeMemoryStore();
     const sessionId = 'sess_gen_1';

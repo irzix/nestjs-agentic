@@ -6,10 +6,13 @@ import type {
   ExperienceRecord,
   ReflectionResult,
 } from '../interfaces/experience.interface';
-import { ReflectionEngine } from './reflection.engine';
+import { ReflectionEngine, type ReflectionEngineOptions } from './reflection.engine';
 
 export interface ExperienceLearnerOptions {
+  /** Optional memory store for persisting learned lessons */
   memoryStore?: AgentMemoryStore;
+  /** Options configuring the underlying ReflectionEngine */
+  reflectionOptions?: ReflectionEngineOptions;
 }
 
 /**
@@ -23,7 +26,7 @@ export class ExperienceLearner implements ExperienceEngine {
 
   constructor(options?: ExperienceLearnerOptions) {
     this.memoryStore = options?.memoryStore;
-    this.reflectionEngine = new ReflectionEngine();
+    this.reflectionEngine = new ReflectionEngine(options?.reflectionOptions);
   }
 
   /**
@@ -55,7 +58,7 @@ export class ExperienceLearner implements ExperienceEngine {
   }
 
   /**
-   * Persists a learned lesson into memory or fallback storage.
+   * Persists a learned lesson or failure pattern into memory.
    *
    * @param record The experience record to store.
    */
@@ -88,6 +91,30 @@ export class ExperienceLearner implements ExperienceEngine {
     const existing = this.fallbackStore.get(triggerKey) ?? [];
     existing.push(item);
     this.fallbackStore.set(triggerKey, existing);
+  }
+
+  /**
+   * Records a successful pattern or best practice into cognitive memory.
+   *
+   * @param taskTrigger Task description or trigger keyword.
+   * @param bestPractice Recommended practice learned from successful execution.
+   * @param options Additional metadata and importance score.
+   */
+  async recordBestPractice(
+    taskTrigger: string,
+    bestPractice: string,
+    options?: { agentName?: string; tenantId?: string; importance?: number },
+  ): Promise<void> {
+    await this.recordLesson({
+      id: randomUUID(),
+      agentName: options?.agentName ?? 'governed-agent',
+      tenantId: options?.tenantId,
+      taskTrigger,
+      pattern: 'Successful Execution Pattern',
+      lesson: bestPractice,
+      importance: options?.importance ?? 0.65,
+      timestamp: new Date(),
+    });
   }
 
   /**
