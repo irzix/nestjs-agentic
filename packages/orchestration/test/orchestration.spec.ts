@@ -20,6 +20,7 @@ import {
 import {
   CapabilityEscalationError,
   CapabilityNarrowingPolicy,
+  DebateRunner,
   MaxDelegationDepthExceededError,
   MissingFeedbackProviderError,
   ParallelSubAgentRunner,
@@ -28,6 +29,10 @@ import {
   RefinementCheckpointVersionError,
   RefinementLoopAlreadyRunningError,
   RefinementLoopRunner,
+  SopGuardFailedError,
+  SopMaxTransitionsExceededError,
+  SopPhaseExecutionError,
+  SopRunner,
   SubAgentDelegator,
 } from '../src';
 
@@ -1534,6 +1539,325 @@ export async function runOrchestrationTests() {
     assert(res.results[1].error === 'Execution was aborted', 'Second task marked as aborted');
     assert(res.results[2].error === 'Execution was aborted', 'Third task marked as aborted');
     console.log('    ✓ fallbackChain mid-run abort completion verified');
+  }
+
+  // =========================================================================
+  // TEST 38: DebateRunner — Multi-Round Convergence & Early Consensus Exit
+  // =========================================================================
+  {
+    console.log('  - Test 38: DebateRunner — Multi-Round Convergence & Early Consensus Exit');
+    let roundCount = 0;
+    const debateMockRunner = {
+      async run(agentName: string, input: Record<string, unknown>) {
+        const msg = String(input.message ?? '');
+        const isRound2 = msg.includes('Round 1 Arguments');
+        if (isRound2) {
+          roundCount = 2;
+          // In round 2, debaters reach consensus with closely aligned scores
+          return {
+            output: `${agentName}: Revised conclusion with strong agreement`,
+            toolCalls: [],
+            score: agentName === 'debater_a' ? 0.95 : 0.92,
+            usage: { inputTokens: 50, outputTokens: 50, totalTokens: 100 },
+          };
+        }
+        // Round 1: divergent positions
+        roundCount = 1;
+        return {
+          output: `${agentName}: Initial opening argument`,
+          toolCalls: [],
+          score: agentName === 'debater_a' ? 0.9 : 0.2,
+          usage: { inputTokens: 25, outputTokens: 25, totalTokens: 50 },
+        };
+      },
+    } as unknown as AgentRunner;
+
+    const debateRunner = new DebateRunner(debateMockRunner, {
+      maxRounds: 4,
+      consensusThreshold: 0.8,
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_debate_conv',
+      traceId: 'trace_debate_conv',
+      security: { tenantId: 'tenant_debate' },
+    };
+
+    const res = await debateRunner.run(
+      parentContext,
+      [{ agentName: 'debater_a' }, { agentName: 'debater_b' }],
+      'What is the optimal caching architecture?',
+    );
+
+    assert(res.rounds.length === 2, `Terminated early after 2 rounds (was ${res.rounds.length})`);
+    assert(res.terminationReason === 'consensus', 'Terminated due to consensus reaching threshold');
+    assert(res.requiresHumanReview === false, 'No human review needed on consensus');
+    assert(res.winner === 'debater_a', 'Higher scoring debater selected as winner');
+    assert(Boolean(res.consensusScore && res.consensusScore >= 0.8), 'Consensus score meets threshold');
+    console.log('    ✓ DebateRunner multi-round convergence & early consensus exit verified');
+  }
+
+  // =========================================================================
+  // TEST 39: DebateRunner — Max Rounds Exhausted & Auto Human Review Flag
+  // =========================================================================
+  {
+    console.log('  - Test 39: DebateRunner — Max Rounds Exhausted & Auto Human Review Flag');
+    const persistentDisagreeRunner = {
+      async run(agentName: string) {
+        return {
+          output: `${agentName}: Unyielding opposing position`,
+          toolCalls: [],
+          score: agentName === 'debater_x' ? 0.95 : 0.05,
+          usage: { inputTokens: 20, outputTokens: 20, totalTokens: 40 },
+        };
+      },
+    } as unknown as AgentRunner;
+
+    const debateRunner = new DebateRunner(persistentDisagreeRunner, {
+      maxRounds: 3,
+      consensusThreshold: 0.75,
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_debate_disagree',
+      traceId: 'trace_debate_disagree',
+      security: { tenantId: 'tenant_debate_disagree' },
+    };
+
+    const res = await debateRunner.run(
+      parentContext,
+      [{ agentName: 'debater_x' }, { agentName: 'debater_y' }],
+      'Controversial architectural decision',
+    );
+
+    assert(res.rounds.length === 3, 'Ran all 3 configured rounds');
+    assert(res.terminationReason === 'max_rounds', 'Terminated due to max rounds reached');
+    assert(res.requiresHumanReview === true, 'Auto-flagged requiresHumanReview for maintainer intervention');
+    assert(res.winner === 'debater_x', 'Highest scoring candidate chosen as fallback');
+    console.log('    ✓ DebateRunner max rounds exhausted & human review flag verified');
+  }
+
+  // =========================================================================
+  // TEST 40: DebateRunner — Mid-Debate AbortSignal Cancellation
+  // =========================================================================
+  {
+    console.log('  - Test 40: DebateRunner — Mid-Debate AbortSignal Cancellation');
+    const abortController = new AbortController();
+
+    const mockRunner = {
+      async run() {
+        abortController.abort();
+        return { output: 'R1 output', toolCalls: [], score: 0.5 };
+      },
+    } as unknown as AgentRunner;
+
+    const debateRunner = new DebateRunner(mockRunner, {
+      maxRounds: 3,
+      signal: abortController.signal,
+    });
+
+    const parentContext: AgentContext = {
+      sessionId: 'sess_debate_abort',
+      traceId: 'trace_debate_abort',
+      security: { tenantId: 'tenant_debate_abort' },
+    };
+
+    const res = await debateRunner.run(
+      parentContext,
+      [{ agentName: 'agent_1' }, { agentName: 'agent_2' }],
+      'Topic',
+    );
+
+    assert(res.terminationReason === 'aborted', 'Debate marked as aborted');
+    assert(res.requiresHumanReview === false, 'Aborted run does not trigger review');
+    console.log('    ✓ DebateRunner mid-debate abort cancellation verified');
+  }
+
+  // =========================================================================
+  // TEST 41: SopRunner — 3-Phase State Machine with Context & Output Chaining
+  // =========================================================================
+  {
+    console.log('  - Test 41: SopRunner — 3-Phase State Machine with Context & Output Chaining');
+    const executedMessages: string[] = [];
+
+    const sopMockRunner = {
+      async run(agentName: string, input: Record<string, unknown>) {
+        const msg = String(input.message);
+        executedMessages.push(msg);
+        if (agentName === 'analyst') {
+          return { output: 'Analysis: Found 2 performance bottlenecks', toolCalls: [] };
+        }
+        if (agentName === 'planner') {
+          return { output: 'Plan: Add Redis cache and connection pool', toolCalls: [] };
+        }
+        if (agentName === 'synthesizer') {
+          return { output: 'Final RFC document ready for review', toolCalls: [] };
+        }
+        return { output: 'Done', toolCalls: [] };
+      },
+    } as unknown as AgentRunner;
+
+    const sopRunner = new SopRunner(sopMockRunner);
+    const parentContext: AgentContext = {
+      sessionId: 'sess_sop_chain',
+      traceId: 'trace_sop_chain',
+      security: { tenantId: 'tenant_sop' },
+    };
+
+    const res = await sopRunner.run(parentContext, [
+      {
+        name: 'analysis',
+        agentName: 'analyst',
+        buildMessage: () => 'Analyze codebase performance',
+      },
+      {
+        name: 'planning',
+        agentName: 'planner',
+        buildMessage: (ctx) => `Create an architectural plan for: ${ctx.lastOutput}`,
+      },
+      {
+        name: 'synthesis',
+        agentName: 'synthesizer',
+        buildMessage: (ctx) => `Synthesize final RFC from plan: ${ctx.lastOutput}`,
+      },
+    ]);
+
+    assert(res.phases.length === 3, 'All 3 phases executed successfully');
+    assert(res.terminationReason === 'completed', 'Workflow completed');
+    assert(res.requiresHumanReview === false, 'No human review needed');
+    assert(res.finalOutput === 'Final RFC document ready for review', 'Final output captured from phase 3');
+    assert(executedMessages[1].includes('Found 2 performance bottlenecks'), 'Phase 2 received phase 1 output');
+    assert(executedMessages[2].includes('Add Redis cache and connection pool'), 'Phase 3 received phase 2 output');
+    console.log('    ✓ SopRunner 3-phase state machine & context chaining verified');
+  }
+
+  // =========================================================================
+  // TEST 42: SopRunner — Guard Failure Halts Workflow & Flags for Human Review
+  // =========================================================================
+  {
+    console.log('  - Test 42: SopRunner — Guard Failure Halts Workflow & Flags for Human Review');
+    let phase2Executed = false;
+
+    const sopMockRunner = {
+      async run(agentName: string) {
+        if (agentName === 'security_auditor') {
+          return { output: 'CRITICAL_VULNERABILITY: SQL Injection found in auth', toolCalls: [] };
+        }
+        if (agentName === 'deployer') {
+          phase2Executed = true;
+          return { output: 'Deployed to production', toolCalls: [] };
+        }
+        return { output: 'OK', toolCalls: [] };
+      },
+    } as unknown as AgentRunner;
+
+    const sopRunner = new SopRunner(sopMockRunner);
+    const parentContext: AgentContext = {
+      sessionId: 'sess_sop_guard',
+      traceId: 'trace_sop_guard',
+      security: { tenantId: 'tenant_sop_guard' },
+    };
+
+    const res = await sopRunner.run(parentContext, [
+      {
+        name: 'security_gate',
+        agentName: 'security_auditor',
+        buildMessage: () => 'Audit release artifacts',
+        // Guard fails if critical vulnerability detected
+        guard: (result) => !result.response.includes('CRITICAL_VULNERABILITY'),
+      },
+      {
+        name: 'deployment',
+        agentName: 'deployer',
+        buildMessage: () => 'Deploy artifacts',
+      },
+    ]);
+
+    assert(res.phases.length === 1, 'Workflow halted immediately at phase 1');
+    assert(phase2Executed === false, 'Phase 2 was never executed due to guard failure');
+    assert(res.terminationReason === 'guard_failed', 'Terminated due to guard_failed');
+    assert(res.requiresHumanReview === true, 'Workflow flagged requiresHumanReview for human maintainers');
+    console.log('    ✓ SopRunner guard failure halts workflow & flags human review');
+  }
+
+  // =========================================================================
+  // TEST 43: SopRunner — Inter-Phase AbortSignal Cancellation
+  // =========================================================================
+  {
+    console.log('  - Test 43: SopRunner — Inter-Phase AbortSignal Cancellation');
+    const abortController = new AbortController();
+
+    const sopMockRunner = {
+      async run(agentName: string) {
+        if (agentName === 'phase1_agent') {
+          return { output: 'Phase 1 done', toolCalls: [] };
+        }
+        return { output: 'Phase 2 done', toolCalls: [] };
+      },
+    } as unknown as AgentRunner;
+
+    const sopRunner = new SopRunner(sopMockRunner, { signal: abortController.signal });
+    const parentContext: AgentContext = {
+      sessionId: 'sess_sop_abort',
+      traceId: 'trace_sop_abort',
+      security: { tenantId: 'tenant_sop_abort' },
+    };
+
+    const res = await sopRunner.run(parentContext, [
+      {
+        name: 'p1',
+        agentName: 'phase1_agent',
+        buildMessage: () => 'P1',
+      },
+      {
+        name: 'p2',
+        agentName: 'phase2_agent',
+        buildMessage: () => {
+          abortController.abort();
+          return 'P2';
+        },
+      },
+    ]);
+
+    assert(res.phases.length === 1, 'Only phase 1 executed before abort');
+    assert(res.terminationReason === 'aborted', 'Workflow terminated with aborted reason');
+    console.log('    ✓ SopRunner inter-phase abort cancellation verified');
+  }
+
+  // =========================================================================
+  // TEST 44: SopRunner — StateStore Phase Checkpointing & Tenant Isolation
+  // =========================================================================
+  {
+    console.log('  - Test 44: SopRunner — StateStore Phase Checkpointing & Tenant Isolation');
+    const stateStore = new InMemoryStateStore();
+
+    const sopMockRunner = {
+      async run(agentName: string) {
+        return { output: `${agentName} output`, toolCalls: [] };
+      },
+    } as unknown as AgentRunner;
+
+    const sopRunner = new SopRunner(sopMockRunner, { stateStore });
+    const parentContext: AgentContext = {
+      sessionId: 'sess_sop_ckpt',
+      traceId: 'trace_sop_ckpt',
+      security: { tenantId: 'tenant_enterprise' },
+    };
+
+    const res = await sopRunner.run(parentContext, [
+      { name: 'step_1', agentName: 'worker_1', buildMessage: () => 'Step 1' },
+      { name: 'step_2', agentName: 'worker_2', buildMessage: () => 'Step 2' },
+    ]);
+
+    assert(res.phases.length === 2, 'Completed both steps');
+    const checkpoint = await stateStore.get<{ completedPhaseNames: string[] }>(
+      'agentic:tenant_enterprise:sop:sess_sop_ckpt:checkpoint',
+    );
+    assert(checkpoint !== null, 'Checkpoint was saved in StateStore');
+    assert(checkpoint?.completedPhaseNames.length === 2, 'All completed phase names recorded');
+    assert(checkpoint?.completedPhaseNames[0] === 'step_1', 'step_1 in checkpoint');
+    assert(checkpoint?.completedPhaseNames[1] === 'step_2', 'step_2 in checkpoint');
+    console.log('    ✓ SopRunner StateStore phase checkpointing & tenant isolation verified');
   }
 
   console.log('🎉 All Orchestration Unit & Security Tests Passed!\n');

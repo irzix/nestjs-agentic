@@ -123,3 +123,47 @@ export class RefinementCheckpointConflictError extends OrchestrationError {
     );
   }
 }
+
+/**
+ * Thrown when a SOP phase sub-agent fails after exhausting all configured retries.
+ */
+export class SopPhaseExecutionError extends OrchestrationError {
+  constructor(
+    public readonly phaseName: string,
+    public readonly agentName: string,
+    public readonly cause: string,
+  ) {
+    super(
+      `SOP phase "${phaseName}" failed: Sub-agent "${agentName}" exhausted all retries. Cause: ${cause}`,
+    );
+  }
+}
+
+/**
+ * Thrown when a SOP phase's guard function returns false, halting the workflow.
+ */
+export class SopGuardFailedError extends OrchestrationError {
+  constructor(
+    public readonly phaseName: string,
+    public readonly agentName: string,
+  ) {
+    super(
+      `SOP phase "${phaseName}" guard check failed for agent "${agentName}". Workflow halted — requires human review.`,
+    );
+  }
+}
+
+/**
+ * Thrown when a SOP workflow visits more phases than the configured safety limit, indicating a cycle.
+ */
+export class SopMaxTransitionsExceededError extends OrchestrationError {
+  constructor(
+    public readonly phasesVisited: number,
+    public readonly limit: number,
+  ) {
+    super(
+      `SOP workflow exceeded the maximum allowed phase transitions (${phasesVisited} > ${limit}). ` +
+        `Possible cycle detected in phase definitions.`,
+    );
+  }
+}

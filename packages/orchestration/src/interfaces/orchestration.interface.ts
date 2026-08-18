@@ -301,3 +301,198 @@ export interface ParallelRunResult {
   /** Consensus convergence score for consensusMerge (0.0–1.0). */
   consensusScore?: number;
 }
+
+// =============================================================================
+// Consensus Debate (Multi-Round)
+// =============================================================================
+
+/**
+ * Configuration for a single debater agent participating in a multi-round consensus debate.
+ */
+export interface DebaterConfig {
+  /** Registered sub-agent name. */
+  agentName: string;
+
+  /** Optional capability narrowing applied exclusively to this debater. */
+  narrowing?: CapabilityNarrowing;
+}
+
+/**
+ * Snapshot of a single round of a multi-agent consensus debate.
+ */
+export interface DebateRound {
+  /** 1-based round number. */
+  roundNumber: number;
+
+  /** Individual sub-agent results produced during this round. */
+  results: SubAgentResult[];
+
+  /** Variance-based consensus convergence score for this round (0.0–1.0). */
+  consensusScore?: number;
+}
+
+/**
+ * Options for configuring a multi-round consensus debate session.
+ */
+export interface DebateOptions {
+  /** Maximum number of debate rounds. Default: `3` */
+  maxRounds?: number;
+
+  /**
+   * Consensus convergence threshold (0.0–1.0).
+   * Debate terminates early when `consensusScore >= consensusThreshold`.
+   * Default: `0.7`
+   */
+  consensusThreshold?: number;
+
+  /** Timeout per debater per round in milliseconds. Default: `30000` */
+  timeoutMs?: number;
+
+  /** Number of retries per debater per round on failure. Default: `1` */
+  retriesPerDebater?: number;
+
+  /** Maximum number of debaters allowed to run concurrently per round. Default: unlimited */
+  maxConcurrency?: number;
+
+  /** Optional AbortSignal to cancel the entire debate session. */
+  signal?: AbortSignal;
+
+  /**
+   * Custom transcript formatter called after each round to build the cross-critique prefix
+   * injected at the start of each debater's prompt in the next round.
+   *
+   * @param round - The completed round snapshot.
+   * @returns Formatted transcript string prepended to each debater's next-round message.
+   *
+   * Defaults to: `[Agent X argued]: ...\n[Agent Y argued]: ...`
+   */
+  transcriptFormatterFn?: (round: DebateRound) => string;
+}
+
+/**
+ * Result payload returned from a multi-round consensus debate session.
+ */
+export interface DebateRunResult {
+  /** Final synthesized response from the winning debater. */
+  finalResponse: string;
+
+  /** Name of the agent whose response was selected as the winner. */
+  winner: string;
+
+  /** Chronological history of all debate rounds. */
+  rounds: DebateRound[];
+
+  /** Final consensus convergence score from the last completed round (0.0–1.0). */
+  consensusScore?: number;
+
+  /**
+   * Whether the debate ended without reaching consensus.
+   * Consumers should treat this as a signal to route to human review.
+   */
+  requiresHumanReview: boolean;
+
+  /** Reason the debate terminated. */
+  terminationReason: 'consensus' | 'max_rounds' | 'aborted';
+}
+
+// =============================================================================
+// SOP State Machine (Phase-Chaining)
+// =============================================================================
+
+/**
+ * Accumulated context passed to each SOP phase's message builder and guard function.
+ */
+export interface SopContext {
+  /** Ordered history of completed phase results up to this point. */
+  phaseHistory: SopPhaseResult[];
+
+  /** Raw text output from the immediately preceding phase, or undefined for the first phase. */
+  lastOutput?: string;
+
+  /** Shared key-value metadata carried across the entire workflow. */
+  data?: Record<string, unknown>;
+}
+
+/**
+ * Definition of a single phase within a SOP state-machine workflow.
+ */
+export interface SopPhase {
+  /** Unique phase identifier within the workflow. */
+  name: string;
+
+  /** Registered sub-agent name responsible for executing this phase. */
+  agentName: string;
+
+  /**
+   * Builds the prompt message for this phase given accumulated workflow context.
+   * Receives the full `SopContext` including all prior phase outputs.
+   */
+  buildMessage: (ctx: SopContext) => string;
+
+  /** Optional capability narrowing applied exclusively to this phase's sub-agent. */
+  narrowing?: CapabilityNarrowing;
+
+  /**
+   * Optional guard function evaluated on this phase's result.
+   * Return `true` to allow the workflow to advance to the next phase.
+   * Return `false` to halt and flag `requiresHumanReview: true`.
+   */
+  guard?: (result: SubAgentResult) => boolean;
+}
+
+/**
+ * Result snapshot of a single completed SOP phase.
+ */
+export interface SopPhaseResult {
+  /** Phase name as defined in `SopPhase.name`. */
+  phaseName: string;
+
+  /** Sub-agent execution result for this phase. */
+  result: SubAgentResult;
+
+  /** Wall-clock execution duration for this phase in milliseconds. */
+  durationMs: number;
+}
+
+/**
+ * Options for configuring a SOP state-machine workflow run.
+ */
+export interface SopRunnerOptions {
+  /** Timeout per phase sub-agent execution in milliseconds. Default: `30000` */
+  timeoutMs?: number;
+
+  /** Number of retries per phase on failure. Default: `1` */
+  retriesPerPhase?: number;
+
+  /** Optional AbortSignal to cancel the workflow between phases. */
+  signal?: AbortSignal;
+
+  /**
+   * Optional persistence store for checkpointing completed phases.
+   * Enables resumption of a workflow after process restarts.
+   */
+  stateStore?: StateStore;
+
+  /** Checkpoint TTL in seconds when saving phase checkpoints. Default: `86400` (24h). */
+  checkpointTtlSeconds?: number;
+}
+
+/**
+ * Result payload returned from a SOP state-machine workflow run.
+ */
+export interface SopRunResult {
+  /** Ordered list of completed phase results. */
+  phases: SopPhaseResult[];
+
+  /** Raw text output of the final completed phase. */
+  finalOutput: string;
+
+  /**
+   * Whether the workflow was halted because a phase's `guard()` returned false.
+   * Consumers should route this to human review.
+   */
+  requiresHumanReview: boolean;
+
+  /** Reason the workflow terminated. */
+  terminationReason: 'completed' | 'guard_failed' | 'aborted' | 'phase_error';
+}

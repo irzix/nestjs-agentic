@@ -190,6 +190,71 @@ if (checkpoint) {
 }
 ```
 
+### 4. Multi-Round Consensus Debate (`DebateRunner`)
+
+Implements MIT Multi-Agent Debate (*Du et al., arXiv:2305.14325*). Multiple debater agents critique and refine arguments across iterative rounds with variance-based consensus tracking:
+
+```typescript
+import { DebateRunner } from '@nestjs-agentic/orchestration';
+
+const debateRunner = new DebateRunner(runner, {
+  maxRounds: 3,
+  consensusThreshold: 0.75, // Early termination when convergence >= 0.75
+  timeoutMs: 30000,
+});
+
+const result = await debateRunner.run(
+  parentContext,
+  [
+    { agentName: 'architect_a' },
+    { agentName: 'architect_b' },
+    { agentName: 'security_lead' },
+  ],
+  'What is the optimal caching architecture for multi-tenant isolation?',
+);
+
+console.log(`Debate finished: ${result.terminationReason} in ${result.rounds.length} rounds.`);
+console.log(`Winner: ${result.winner} (Consensus Score: ${result.consensusScore})`);
+if (result.requiresHumanReview) {
+  console.log('Auto-flagged for human review due to divergent positions.');
+}
+```
+
+### 5. MetaGPT Standard Operating Procedures (SOP) State Machine (`SopRunner`)
+
+Structures multi-agent workflows into strict, typed phase state-machines with context chaining and guard evaluation (*Hong et al., ICLR 2024*):
+
+```typescript
+import { SopRunner } from '@nestjs-agentic/orchestration';
+
+const sopRunner = new SopRunner(runner, {
+  stateStore: new RedisStateStore(redisClient),
+  timeoutMs: 30000,
+});
+
+const workflowResult = await sopRunner.run(parentContext, [
+  {
+    name: 'analysis',
+    agentName: 'analyst_agent',
+    buildMessage: () => 'Analyze codebase performance bottlenecks',
+  },
+  {
+    name: 'planning',
+    agentName: 'architect_agent',
+    buildMessage: (ctx) => `Create implementation plan for: ${ctx.lastOutput}`,
+    guard: (result) => result.response.includes('PLAN_VALIDATED'),
+  },
+  {
+    name: 'synthesis',
+    agentName: 'tech_writer',
+    buildMessage: (ctx) => `Draft final RFC from plan: ${ctx.lastOutput}`,
+  },
+]);
+
+console.log(`SOP Workflow: ${workflowResult.terminationReason} (${workflowResult.phases.length} phases completed)`);
+console.log('Final Output:\n', workflowResult.finalOutput);
+```
+
 ---
 
 ## Tool Governance with `CapabilityNarrowingPolicy`

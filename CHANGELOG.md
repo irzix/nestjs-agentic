@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-08-18
+
+- **MetaGPT Standard Operating Procedures (SOP) & Consensus Debate (`@nestjs-agentic/orchestration`)** (#53):
+  - `DebateRunner`: Multi-round MIT Multi-Agent Debate orchestration with cross-critique transcript injection, variance-based convergence tracking, early consensus termination, and automated HITL review flagging.
+  - `SopRunner`: MetaGPT-inspired typed phase state-machine with dynamic `buildMessage(ctx)` prompt building, context chaining, transition guard evaluations (`guard`), StateStore checkpointing, and least-privilege capability narrowing per phase.
+  - New domain types: `DebaterConfig`, `DebateRound`, `DebateOptions`, `DebateRunResult`, `SopPhase`, `SopContext`, `SopPhaseResult`, `SopRunnerOptions`, `SopRunResult`.
+  - Domain errors: `SopPhaseExecutionError`, `SopGuardFailedError`, `SopMaxTransitionsExceededError`.
+  - Integration and security test coverage expanded to 44 automated test scenarios.
+
 ## [0.7.1] - 2026-08-17
 
 - **Aggregation Strategy Semantics (`@nestjs-agentic/orchestration`)** (#36):
