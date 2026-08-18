@@ -12,6 +12,7 @@ import { ConsensusEvaluatorService } from './consensus-evaluator.service';
 import { NjentExperienceService } from '../memory/experience-learner.service';
 import { ReviewQualityEvaluatorService } from '../evaluation/review-quality-evaluator.service';
 import { NjentAuditLogger } from '../audit/njent-audit-logger.service';
+import { ExecutionTracer } from '../audit/execution-tracer';
 import type { ReviewAssessment, SynthesizedPRReviewReport } from '../agents/schemas/review-output.schema';
 import type { NjentTriggerEvent } from '../interfaces/webhook.interface';
 
@@ -26,11 +27,13 @@ export interface OrchestratorRunOptions {
   mockAssessments?: ReviewAssessment[];
   /** Resolved changed file paths from the diff (used to query RAG). */
   changedFilePaths?: string[];
+  /** Optional execution tracer for millisecond-precision OTel trace logging. */
+  tracer?: ExecutionTracer;
 }
 
 /**
  * High-level orchestrator coordinating parallel specialist sub-agents,
- * consensus evaluation, and final review synthesis for pull requests.
+ * consensus evaluation, multi-agent debate, and final review synthesis for pull requests.
  */
 @Injectable()
 export class PrReviewOrchestrator {
@@ -61,20 +64,40 @@ export class PrReviewOrchestrator {
    * @returns Synthesized pull request review report.
    */
   async executeReview(options: OrchestratorRunOptions): Promise<SynthesizedPRReviewReport> {
+    const tracer = options.tracer;
+
     // 1. Prune noisy files and lockfiles from diff
-    const { prunedDiff } = ContextPruner.pruneDiff(options.rawDiff);
+    const prunerStart = Date.now();
+    const { prunedDiff, ignoredFiles } = ContextPruner.pruneDiff(options.rawDiff);
+    tracer?.record(
+      'pruner',
+      `✂️ [Context Pruner] Pruned diff (${options.rawDiff.length}B -> ${prunedDiff.length}B, excluded: ${ignoredFiles.join(', ') || 'none'})`,
+      Date.now() - prunerStart,
+    );
 
     // 2. Query AST Codebase RAG context.
     // Use the changed file paths (e.g. "src/foo.ts src/bar.ts") as the semantic query so
     // the RAG retrieval targets the actual symbols modified by this PR, not the repo name.
+    const ragStart = Date.now();
     const ragQuery = options.changedFilePaths?.join(' ') || options.triggerEvent.repoFullName;
     const retrievedAstContext = await this.ragService.retrieveContext(ragQuery);
+    tracer?.record(
+      'ast_rag',
+      `🧠 [AST-RAG] Retrieved ${retrievedAstContext.length} contextual code chunks for query symbols`,
+      Date.now() - ragStart,
+    );
 
     // 3. Fetch maintainer episodic lessons to prevent repeating known false-positives
+    const memStart = Date.now();
     const episodicLessons = options.episodicLessons ??
       await this.experienceService.getRelevantLessons(
         `pr-review ${options.triggerEvent.repoFullName} ${ragQuery}`,
       );
+    tracer?.record(
+      'memory',
+      `🗂️ [Memory] Recalled ${episodicLessons.length} maintainer lesson(s) via Stanford tri-factor scoring`,
+      Date.now() - memStart,
+    );
 
     // 4. Assemble U-Curve attention prompt
     const assembledPrompt = UCurvePromptAssembler.assemble({
@@ -86,24 +109,27 @@ export class PrReviewOrchestrator {
       triggerComment: options.triggerEvent.triggerComment,
     });
 
-    // 4. Execute specialist reviews (live parallel sub-agents or fallback)
+    // 5. Execute specialist reviews (live parallel sub-agents or fallback)
     let assessments: ReviewAssessment[] = options.mockAssessments || [];
 
     if (assessments.length === 0 && this.agentRunner) {
       try {
+        const agentStart = Date.now();
         const sessionId = `pr_${options.triggerEvent.prNumber}_${Date.now()}`;
+        const schemaInstruction = `Output pure JSON conforming to: {"reviewerName": string, "category": "security"|"architecture"|"quality", "score": number (0.0 to 1.0), "passed": boolean, "summary": string, "issues": [{"filePath": string, "line": number, "category": "security"|"architecture"|"quality", "severity": "critical"|"high"|"medium"|"low", "title": string, "description": string, "suggestedFix": string}], "strengths": string[]}`;
+
         const [secRes, archRes, qualRes] = await Promise.allSettled([
           this.agentRunner.run('security-reviewer', {
             sessionId: `${sessionId}_sec`,
-            message: `${assembledPrompt}\n\nReview this PR specifically for Security vulnerabilities (OWASP, Secrets, Injection, Authorization). Output pure JSON conforming to: {"reviewerName": "SecurityReviewer", "category": "security", "score": number (0.0 to 1.0), "passed": boolean, "summary": string, "issues": [{"filePath": string, "line": number, "category": "security", "severity": "critical"|"high"|"medium"|"low", "title": string, "description": string}], "strengths": string[]}`,
+            message: `${assembledPrompt}\n\nReview this PR specifically for Security vulnerabilities (OWASP, Secrets, Injection, Authorization). ${schemaInstruction}`,
           }),
           this.agentRunner.run('architecture-reviewer', {
             sessionId: `${sessionId}_arch`,
-            message: `${assembledPrompt}\n\nReview this PR specifically for Architecture & NestJS framework alignment, module boundaries, domain relevance to nestjs-agentic library, and constructor dependency injection. Output pure JSON conforming to: {"reviewerName": "ArchitectureReviewer", "category": "architecture", "score": number (0.0 to 1.0), "passed": boolean, "summary": string, "issues": [{"filePath": string, "line": number, "category": "architecture", "severity": "critical"|"high"|"medium"|"low", "title": string, "description": string}], "strengths": string[]}`,
+            message: `${assembledPrompt}\n\nReview this PR specifically for Architecture & NestJS framework alignment, module boundaries, domain relevance to nestjs-agentic library, and constructor dependency injection. ${schemaInstruction}`,
           }),
           this.agentRunner.run('quality-reviewer', {
             sessionId: `${sessionId}_qual`,
-            message: `${assembledPrompt}\n\nReview this PR specifically for Code Quality, TypeScript strict typing, comments/JSDoc, and unit test presence. Output pure JSON conforming to: {"reviewerName": "QualityReviewer", "category": "quality", "score": number (0.0 to 1.0), "passed": boolean, "summary": string, "issues": [{"filePath": string, "line": number, "category": "quality", "severity": "critical"|"high"|"medium"|"low", "title": string, "description": string}], "strengths": string[]}`,
+            message: `${assembledPrompt}\n\nReview this PR specifically for Code Quality, TypeScript strict typing, comments/JSDoc, and unit test presence. ${schemaInstruction}`,
           }),
         ]);
 
@@ -127,6 +153,13 @@ export class PrReviewOrchestrator {
         if (parsed.length > 0) {
           assessments = parsed;
         }
+
+        const agentDur = Date.now() - agentStart;
+        tracer?.record(
+          'multi_agent',
+          `⚡ [Multi-Agent Fan-Out] Concurrently ran ${assessments.length} specialist reviewers (Security: ${(assessments.find((a) => a.category === 'security')?.score! * 100).toFixed(0)}%, Architecture: ${(assessments.find((a) => a.category === 'architecture')?.score! * 100).toFixed(0)}%, Quality: ${(assessments.find((a) => a.category === 'quality')?.score! * 100).toFixed(0)}%)`,
+          agentDur,
+        );
       } catch (err) {
         console.warn('[Njent] Live LLM execution failed, falling back:', err);
       }
@@ -164,10 +197,82 @@ export class PrReviewOrchestrator {
       ];
     }
 
-    // 5. Calculate consensus convergence
-    const consensus = this.consensusEvaluator.evaluateConsensus(assessments);
+    // 6. Calculate initial consensus convergence
+    let consensus = this.consensusEvaluator.evaluateConsensus(assessments);
+    const minScore = Math.min(...assessments.map((a) => a.score));
+    const maxScore = Math.max(...assessments.map((a) => a.score));
+    const scoreGap = maxScore - minScore;
 
-    // 6. Validate diff boundaries — drop issues pointing to lines not in the diff (hallucination filter)
+    // 7. Multi-Agent Debate Round (triggers when specialist scores diverge significantly)
+    const needsDebate = Boolean(this.agentRunner) && assessments.length > 1 && (!consensus.isHighAgreement || scoreGap > 0.25);
+    if (needsDebate && this.agentRunner) {
+      const debateStart = Date.now();
+      const summaries = assessments
+        .map((a) => `${a.reviewerName} (${a.category}): score ${(a.score * 100).toFixed(0)}% — "${a.summary}". Issues: ${a.issues.map((i) => i.title).join('; ') || 'None'}`)
+        .join('\n');
+
+      tracer?.record(
+        'debate_start',
+        `🥊 [Multi-Agent Debate] Score divergence detected (Gap: ${(scoreGap * 100).toFixed(0)}%, Initial Consensus: ${(consensus.consensusScore * 100).toFixed(0)}%) -> Initiating Round 2 cross-examination`,
+      );
+
+      const debatePrompt = `You are participating in a Multi-Agent Consensus Debate.
+Your peer reviewers assessed this pull request with divergent scores:
+${summaries}
+
+Re-evaluate the PR diff and your previous findings in light of your peers' arguments and identified issues.
+If your peers identified genuine security, architectural, or quality gaps, adjust your score and findings accordingly.
+Output JSON conforming to: {"reviewerName": string, "category": "security"|"architecture"|"quality", "score": number (0.0 to 1.0), "passed": boolean, "summary": string, "issues": [{"filePath": string, "line": number, "category": "security"|"architecture"|"quality", "severity": "critical"|"high"|"medium"|"low", "title": string, "description": string, "suggestedFix": string}], "strengths": string[]}`;
+
+      const debateSessionId = `pr_${options.triggerEvent.prNumber}_debate_${Date.now()}`;
+      const debatePromises = assessments.map((a) => {
+        const agentTarget =
+          a.category === 'security'
+            ? 'security-reviewer'
+            : a.category === 'architecture'
+              ? 'architecture-reviewer'
+              : 'quality-reviewer';
+        return this.agentRunner!.run(agentTarget, {
+          sessionId: `${debateSessionId}_${a.category}`,
+          message: `${assembledPrompt}\n\n${debatePrompt}`,
+        });
+      });
+
+      const debateResults = await Promise.allSettled(debatePromises);
+      const revisedAssessments: ReviewAssessment[] = [];
+      for (const res of debateResults) {
+        if (res.status === 'fulfilled' && res.value?.output) {
+          try {
+            const jsonMatch = res.value.output.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]) as ReviewAssessment;
+              if (parsed.reviewerName && typeof parsed.score === 'number') {
+                revisedAssessments.push(parsed);
+              }
+            }
+          } catch {
+            // keep previous assessment if parse fails
+          }
+        }
+      }
+
+      if (revisedAssessments.length === assessments.length) {
+        assessments = revisedAssessments;
+        consensus = this.consensusEvaluator.evaluateConsensus(assessments);
+        tracer?.record(
+          'debate_end',
+          `🥊 [Multi-Agent Debate] Converged post-debate consensus: ${(consensus.consensusScore * 100).toFixed(0)}% (Variance: ${consensus.variance})`,
+          Date.now() - debateStart,
+        );
+      }
+    }
+
+    tracer?.record(
+      'consensus',
+      `📊 [Consensus Engine] Fleiss' Kappa convergence: ${(consensus.consensusScore * 100).toFixed(1)}% (Variance: ${consensus.variance})`,
+    );
+
+    // 8. Validate diff boundaries — drop issues pointing to lines not in the diff (hallucination filter)
     const allIssues = assessments.flatMap((a) => a.issues || []);
     const diffLineMap = new Map<string, Set<number>>();
     for (const line of options.rawDiff.split('\n')) {
@@ -178,7 +283,10 @@ export class PrReviewOrchestrator {
     let currentFile = '';
     for (const line of options.rawDiff.split('\n')) {
       const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
-      if (fileMatch) { currentFile = fileMatch[1]; lineNum = 0; }
+      if (fileMatch) {
+        currentFile = fileMatch[1];
+        lineNum = 0;
+      }
       if (line.startsWith('@@')) {
         const m = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
         if (m) lineNum = parseInt(m[1], 10) - 1;
@@ -192,12 +300,13 @@ export class PrReviewOrchestrator {
     }
     if (allIssues.length > 0 && diffLineMap.size > 0) {
       const { droppedIssues } = this.qualityEvaluator.validateDiffBoundaries(allIssues, diffLineMap);
-      if (droppedIssues.length > 0) {
-        console.log(`[Njent] Dropped ${droppedIssues.length} hallucinated issue(s) outside diff boundaries.`);
-      }
+      tracer?.record(
+        'boundary',
+        `⚖️ [Quality Gate] Validated ${allIssues.length} inline issues -> ${droppedIssues.length} hallucinated references dropped`,
+      );
     }
 
-    // 7. Synthesize final PR report
+    // 9. Synthesize final PR report
     return this.leadSynthesizer.synthesize(assessments, consensus.consensusScore);
   }
 
@@ -207,11 +316,18 @@ export class PrReviewOrchestrator {
    * @param event Parsed GitHub trigger event.
    */
   async handleTrigger(event: NjentTriggerEvent): Promise<void> {
+    const tracer = new ExecutionTracer();
     const token = process.env.GITHUB_TOKEN;
     let rawDiff = 'diff --git a/src/sample.ts b/src/sample.ts\n+export class SampleService {}';
 
+    tracer.record(
+      'ingress',
+      `🛡️ [Ingress] Verified HMAC-SHA256 signature & collaborator authorization for PR #${event.prNumber}`,
+    );
+
     // 1. Fetch real PR diff from GitHub if token is provided
     if (token && event.repoFullName && event.prNumber) {
+      const fetchStart = Date.now();
       try {
         const response = await fetch(
           `https://api.github.com/repos/${event.repoFullName}/pulls/${event.prNumber}`,
@@ -225,15 +341,17 @@ export class PrReviewOrchestrator {
         );
         if (response.ok) {
           rawDiff = await response.text();
+          tracer.record('diff_fetch', `📥 [GitHub API] Fetched unified PR diff (${rawDiff.length}B)`, Date.now() - fetchStart);
         }
       } catch (fetchErr) {
         console.warn('[Njent] Could not fetch real PR diff from GitHub API, using fallback:', fetchErr);
       }
     }
 
-    // 2. Parse changed TypeScript files from the diff and fetch their source
+    // 2. Parse changed TypeScript files from the diff and fetch their source for RAG
     const changedFilePaths = PrReviewOrchestrator.parseDiffFilePaths(rawDiff);
     if (token && event.repoFullName && changedFilePaths.length > 0) {
+      const ingestStart = Date.now();
       const fileContents = await PrReviewOrchestrator.fetchChangedFileContents(
         token,
         event.repoFullName,
@@ -241,38 +359,55 @@ export class PrReviewOrchestrator {
       );
       if (fileContents.length > 0) {
         const indexed = await this.ragService.ingestCodebase(fileContents);
-        console.log(`[Njent] RAG: indexed ${indexed} chunks from ${fileContents.length} changed files.`);
+        tracer.record(
+          'rag_ingest',
+          `🧠 [AST-RAG] Indexed ${fileContents.length} source file(s) -> ${indexed} AST chunk(s) into HybridVectorStore`,
+          Date.now() - ingestStart,
+        );
       }
     }
 
-    // 3. Execute multi-agent review with real RAG context
-    const reviewStart = Date.now();
+    // 3. Execute multi-agent review with real RAG context and execution tracer
     const report = await this.executeReview({
       rawDiff,
       triggerEvent: event,
       changedFilePaths,
+      tracer,
     });
-    const durationMs = Date.now() - reviewStart;
 
-    // 3. Post review summary comment to GitHub PR if token is available
+    // 4. Publish review with inline suggestions via GitHub PR Reviews API
     if (token && event.repoFullName && event.prNumber) {
       try {
         const modelName = process.env.MODEL_NAME || process.env.OPENAI_MODEL_NAME || 'gpt-4o';
         const embeddingModelName = process.env.EMBEDDING_MODEL || (process.env.OPENROUTER_API_KEY ? 'perplexity/pplx-embed-v1-0.6b' : 'text-embedding-3-small');
         const sessionId = `sess_pr_${event.prNumber}_${Date.now()}`;
 
+        // Format inline review comments with ```suggestion``` code blocks
+        const inlineComments = (report.inlineIssues || [])
+          .filter((issue) => issue.filePath && typeof issue.line === 'number' && issue.line > 0)
+          .map((issue) => {
+            let body = `**[${issue.category.toUpperCase()}] ${issue.title}** (${issue.severity})\n\n${issue.description}`;
+            if (issue.ruleReference) {
+              body += `\n\n*Rule Reference:* \`${issue.ruleReference}\``;
+            }
+            if (issue.suggestedFix) {
+              body += `\n\n\`\`\`suggestion\n${issue.suggestedFix}\n\`\`\``;
+            }
+            return {
+              path: issue.filePath,
+              line: issue.line,
+              side: 'RIGHT',
+              body,
+            };
+          });
+
         const pipelineAccordion = `
 <details>
-<summary><b>🔍 nestjs-agentic Execution Pipeline & Telemetry (Click to expand)</b></summary>
+<summary><b>🔍 nestjs-agentic Telemetry & Execution Trace Logs (Click to expand)</b></summary>
 
-#### 🏗️ Multi-Agent Architecture Pipeline
-1. **🛡️ Ingress Security & Context Pruning**: HMAC-SHA256 verified, collaborator authorized via \`CollaboratorGuard\`, lockfiles pruned via \`ContextPruner\`.
-2. **🧠 AST Codebase RAG**: Changed files indexed via \`AstCodebaseSplitter\` + \`HybridVectorStore\` (BM25 + dense cosine similarity).
-3. **🗂️ Episodic Memory Recall**: Retrieved maintainer lessons via \`NjentExperienceService\` → \`ExperienceLearner\` to suppress known false-positives.
-4. **⚡ Parallel Specialist Execution**: Ran \`SecurityReviewerAgent\`, \`ArchitectureReviewerAgent\`, and \`QualityReviewerAgent\` concurrently via \`@nestjs-agentic/orchestration\`.
-5. **📊 Mathematical Consensus**: Calculated variance and convergence score (${(report.consensusScore * 100).toFixed(1)}%) via \`ConsensusEvaluatorService\`.
-6. **⚖️ Diff Boundary Validation**: Filtered hallucinated line references via \`ReviewQualityEvaluatorService.validateDiffBoundaries()\`.
-7. **📈 OpenTelemetry GenAI Tracing**: Audit event emitted conforming to CNCF GenAI Semantic Conventions via \`NjentAuditLogger\`.
+\`\`\`log
+${tracer.formatLog()}
+\`\`\`
 
 #### ⏱️ Runtime & Telemetry Metadata
 | Metric | Value |
@@ -282,26 +417,59 @@ export class PrReviewOrchestrator {
 | **Framework** | \`nestjs-agentic v0.7.0\` |
 | **Consensus Score** | \`${(report.consensusScore * 100).toFixed(1)}%\` |
 | **Overall Confidence** | \`${(report.overallScore * 100).toFixed(1)}%\` |
-| **Duration** | \`${durationMs}ms\` |
+| **Total Duration** | \`${tracer.totalDurationMs}ms\` |
 | **Session ID** | \`${sessionId}\` |
 
 </details>`;
 
         const commentBody = `### 🤖 Njent Autonomous Code Review Summary\n\n**Decision:** \`${report.overallStatus}\` (Confidence: ${(report.overallScore * 100).toFixed(0)}%, Consensus: ${(report.consensusScore * 100).toFixed(0)}%)\n\n${report.summaryMarkdown}\n\n---\n${pipelineAccordion}\n\n---\n*Reviewed autonomously by [nestjs-agentic](https://github.com/irzix/nestjs-agentic) — The Agentic Architecture for NestJS*`;
 
-        await fetch(
-          `https://api.github.com/repos/${event.repoFullName}/issues/${event.prNumber}/comments`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: 'application/vnd.github.v3+json',
-              'Content-Type': 'application/json',
-              'User-Agent': 'Njent-Code-Review-Agent',
+        // Attempt submission via GitHub Pull Request Reviews API (supports inline suggestions)
+        let reviewPosted = false;
+        try {
+          const reviewResponse = await fetch(
+            `https://api.github.com/repos/${event.repoFullName}/pulls/${event.prNumber}/reviews`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'Njent-Code-Review-Agent',
+              },
+              body: JSON.stringify({
+                body: commentBody,
+                event: 'COMMENT',
+                comments: inlineComments.length > 0 ? inlineComments : undefined,
+              }),
             },
-            body: JSON.stringify({ body: commentBody }),
-          },
-        );
+          );
+
+          if (reviewResponse.ok) {
+            reviewPosted = true;
+            tracer.record('publish', `🚀 [GitHub Review API] Submitted review with ${inlineComments.length} inline suggestion(s)`);
+          }
+        } catch (reviewErr) {
+          console.warn('[Njent] Pull Request Reviews API submission failed, falling back to comments API:', reviewErr);
+        }
+
+        // Fallback to standard issue comment if reviews API was unavailable or rejected
+        if (!reviewPosted) {
+          await fetch(
+            `https://api.github.com/repos/${event.repoFullName}/issues/${event.prNumber}/comments`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'Njent-Code-Review-Agent',
+              },
+              body: JSON.stringify({ body: commentBody }),
+            },
+          );
+          tracer.record('publish', '🚀 [GitHub Comments API] Posted review summary comment');
+        }
 
         // Emit OpenTelemetry GenAI Semantic Conventions audit event
         this.auditLogger.logReviewCompleted({
@@ -310,13 +478,14 @@ export class PrReviewOrchestrator {
           repo: event.repoFullName,
           prNumber: event.prNumber!,
           report,
-          durationMs,
+          durationMs: tracer.totalDurationMs,
         });
       } catch (postErr) {
         console.error('[Njent] Failed to post review comment to GitHub PR:', postErr);
       }
     }
   }
+
   /**
    * Parses the paths of TypeScript/JavaScript source files modified in a unified diff.
    *
