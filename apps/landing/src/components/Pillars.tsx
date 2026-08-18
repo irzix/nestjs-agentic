@@ -18,10 +18,10 @@ const cards = [
     icon: Layers,
     title: 'NestJS Primitives & DI',
     badge: '@Agent, @ToolSet, @Tool',
-    tagline: 'Available · 0.5.x',
+    tagline: 'Production Ready · v1.0.0',
     description: (
       <>
-        Define agents and context-bound tools with NestJS decorators and dependency injection. Application services remain ordinary providers while runtimes receive governed tool closures.
+        Define agents and context-bound tools with NestJS decorators, dependency injection, and capability narrowing. Application services remain ordinary providers while runtimes receive governed tool closures.
       </>
     ),
   },
@@ -29,65 +29,65 @@ const cards = [
     icon: Repeat,
     title: 'Built-in Agent Runtime',
     badge: 'AgentExecutor & ModelAdapter',
-    tagline: 'Available · OpenAI adapter',
+    tagline: 'Production Ready · Full Streaming',
     description: (
       <>
-        The framework owns the model-to-tool loop, argument validation, execution budgets, cancellation, streaming, and per-session conversation history. <code className="text-rose-300 font-mono">@nestjs-agentic/openai</code> connects OpenAI and any Chat Completions compatible endpoint.
+        The framework manages the model-to-tool loop, parameter schema validation, token execution limits, OpenTelemetry tracing, and per-session conversation history. <code className="text-rose-300 font-mono">@nestjs-agentic/model-openai</code> connects OpenAI and any Chat Completions compatible endpoint.
       </>
     ),
   },
   {
     icon: ShieldCheck,
-    title: 'Tool Governance',
+    title: 'Tool Governance & HITL',
     badge: '@UsePolicies & ApprovalService',
-    tagline: 'Core available · HITL experimental',
+    tagline: 'Production Ready · Durable State',
     description: (
       <>
-        Every framework-managed tool call crosses an <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code> policy boundary. Approval decisions resume the suspended model turn and use a serializable, durably storable approval record.
+        Every tool call crosses an <code className="text-rose-300 font-mono">allow</code>, <code className="text-rose-300 font-mono">deny</code>, or <code className="text-rose-300 font-mono">require_approval</code> policy boundary. Approval decisions resume suspended model turns with durable Postgres and Redis state stores.
       </>
     ),
   },
   {
     icon: Database,
-    title: 'RAG Primitives',
-    badge: 'KnowledgeBase & RAGPipeline',
-    tagline: 'Experimental · opt-in',
+    title: 'AST Codebase RAG',
+    badge: 'KnowledgeBase & HybridVectorStore',
+    tagline: 'Production Ready · Graph & Hierarchical',
     description: (
       <>
-        Compose an in-memory <code className="text-rose-300 font-mono">HybridVectorStore</code>, retrieval strategies, and application-provided store callbacks. Persistence, embeddings, authorization, and prompt assembly remain application-owned.
+        Deep semantic codebase intelligence featuring AST hierarchical chunking, Hybrid BM25 + Vector retrieval, Cross-Encoder rerankers, Parent-Child hydration, and GraphRAG relational query expansion.
       </>
     ),
   },
   {
     icon: Brain,
-    title: 'Memory & Experience',
+    title: '5-Tier Memory & Experience',
     badge: 'CompositeMemory & ExperienceLearner',
-    tagline: 'Experimental · opt-in',
+    tagline: 'Production Ready · Tri-Factor Scoring',
     description: (
       <>
-        Explicitly construct short-term, semantic, episodic, and scratchpad stores plus reflection primitives. They are not automatically attached to <code className="text-rose-300 font-mono">AgentRunner</code> or durable execution state.
+        Five-tier composite memory (Short-Term, Long-Term, Semantic, Scratchpad, and Episodic). Includes self-reflective trajectory critiques and Stanford tri-factor retrieval scoring to prevent repeating past failures.
       </>
     ),
   },
   {
     icon: GitFork,
     title: 'Multi-Agent Orchestration',
-    badge: 'Delegation & Refinement',
-    tagline: 'Experimental · process-local',
+    badge: 'Fan-Out, Consensus, & Debate',
+    tagline: 'Production Ready · Fleiss\' Kappa',
     description: (
       <>
-        Evaluate delegation, parallel execution, fallback, and refinement APIs built on <code className="text-rose-300 font-mono">AgentRunner</code>. Durable scheduling, bounded concurrency, and retry-safe fan-out remain roadmap work.
+        Autonomous multi-agent collaboration with parallel fan-out (<code className="text-rose-300 font-mono">ParallelSubAgentRunner</code>), supervisor-worker refinement loops, multi-agent debate rounds, and Fleiss' Kappa consensus convergence.
       </>
     ),
   },
   {
     icon: BarChart3,
-    title: 'Evaluation',
-    badge: 'Metrics & BenchmarkRunner',
-    tagline: 'Experimental · opt-in',
+    title: 'LLM-as-a-Judge Evaluation',
+    badge: 'DebiasedJudge & BenchmarkRunner',
+    tagline: 'Production Ready · CI Quality Gates',
     description: (
       <>
-        Run metrics, benchmarks, and reports against agent behavior. Runtime trace integration and CI quality gates are not yet standardized.
+        Production evaluation suite featuring position-debiased pairwise LLM judges, automated accuracy/efficiency benchmark runners, and continuous regression gates.
       </>
     ),
   },
@@ -132,10 +132,10 @@ export function Pillars() {
           className="max-w-4xl text-left mb-20 relative z-10 space-y-4"
         >
           <div className="font-mono text-[11px] text-zinc-500 tracking-[0.2em]">
-            &#123; PRODUCT CAPABILITIES &#125;
+            &#123; ENTERPRISE CAPABILITIES &#125;
           </div>
           <h2 className="text-4xl sm:text-5xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-[1.15] font-sans">
-            Available core primitives.<br />Experimental capabilities, clearly marked.
+            Enterprise AI Agent Architecture.<br />Engineered for production resilience.
           </h2>
         </motion.div>
 

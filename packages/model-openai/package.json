@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/openai",
-  "version": "0.7.0",
+  "version": "1.0.0",
   "description": "OpenAI-compatible ModelAdapter for nestjs-agentic. Works with OpenAI and any Chat Completions compatible endpoint such as Azure OpenAI, Ollama, vLLM, Groq, Together, OpenRouter, and LM Studio.",
   "repository": {
     "type": "git",

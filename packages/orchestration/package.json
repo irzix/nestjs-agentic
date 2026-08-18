@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/orchestration",
-  "version": "0.7.0",
+  "version": "1.0.0",
   "description": "Multi-agent orchestration, sub-agent delegation, parallel execution, and iterative refinement loops for nestjs-agentic.",
   "repository": {
     "type": "git",
@@ -20,7 +20,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@nestjs-agentic/core": "^0.7.0"
+    "@nestjs-agentic/core": "^1.0.0"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",
