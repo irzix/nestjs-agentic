@@ -257,7 +257,8 @@ export class PrReviewOrchestrator {
     // 3. Post review summary comment to GitHub PR if token is available
     if (token && event.repoFullName && event.prNumber) {
       try {
-        const modelName = process.env.MODEL_NAME || (process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o');
+        const modelName = process.env.MODEL_NAME || process.env.OPENAI_MODEL_NAME || 'gpt-4o';
+        const embeddingModelName = process.env.EMBEDDING_MODEL || (process.env.OPENROUTER_API_KEY ? 'perplexity/pplx-embed-v1-0.6b' : 'text-embedding-3-small');
         const sessionId = `sess_pr_${event.prNumber}_${Date.now()}`;
 
         const pipelineAccordion = `
@@ -266,7 +267,7 @@ export class PrReviewOrchestrator {
 
 #### 🏗️ Multi-Agent Architecture Pipeline
 1. **🛡️ Ingress Security & Context Pruning**: HMAC-SHA256 verified, collaborator authorized via \`CollaboratorGuard\`, lockfiles pruned via \`ContextPruner\`.
-2. **🧠 AST Codebase RAG (Perplexity Embeddings)**: Changed files indexed via \`AstCodebaseSplitter\` + \`HybridVectorStore\` (BM25 + cosine similarity on \`pplx-embed-v1-0.6b\`).
+2. **🧠 AST Codebase RAG**: Changed files indexed via \`AstCodebaseSplitter\` + \`HybridVectorStore\` (BM25 + dense cosine similarity).
 3. **🗂️ Episodic Memory Recall**: Retrieved maintainer lessons via \`NjentExperienceService\` → \`ExperienceLearner\` to suppress known false-positives.
 4. **⚡ Parallel Specialist Execution**: Ran \`SecurityReviewerAgent\`, \`ArchitectureReviewerAgent\`, and \`QualityReviewerAgent\` concurrently via \`@nestjs-agentic/orchestration\`.
 5. **📊 Mathematical Consensus**: Calculated variance and convergence score (${(report.consensusScore * 100).toFixed(1)}%) via \`ConsensusEvaluatorService\`.
@@ -277,7 +278,7 @@ export class PrReviewOrchestrator {
 | Metric | Value |
 | :--- | :--- |
 | **Model** | \`${modelName}\` |
-| **Embedding Model** | \`perplexity/pplx-embed-v1-0.6b\` |
+| **Embedding Model** | \`${embeddingModelName}\` |
 | **Framework** | \`nestjs-agentic v0.7.0\` |
 | **Consensus Score** | \`${(report.consensusScore * 100).toFixed(1)}%\` |
 | **Overall Confidence** | \`${(report.overallScore * 100).toFixed(1)}%\` |

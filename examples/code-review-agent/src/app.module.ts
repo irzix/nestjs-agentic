@@ -25,18 +25,18 @@ import { NjentAuditLogger } from './audit/njent-audit-logger.service';
 
 const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
 const baseUrl = process.env.OPENAI_BASE_URL || (process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined);
-const model = process.env.MODEL_NAME || (process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o');
+const model = process.env.MODEL_NAME || process.env.OPENAI_MODEL_NAME || 'gpt-4o';
 
 /**
- * Instantiates a real OpenAI-compatible embedding adapter targeting
- * `perplexity/pplx-embed-v1-0.6b` via OpenRouter when an API key is present.
- * Falls back to `MockEmbeddingProvider` for local / CI environments.
+ * Instantiates an OpenAI-compatible embedding adapter using the user-specified
+ * EMBEDDING_MODEL env var (e.g. perplexity/pplx-embed-v1-0.6b or text-embedding-3-small).
+ * Falls back to MockEmbeddingProvider for local / CI environments when no API key is set.
  */
-const embeddingModel = process.env.EMBEDDING_MODEL || 'perplexity/pplx-embed-v1-0.6b';
+const embeddingModel = process.env.EMBEDDING_MODEL || 'text-embedding-3-small';
 const embeddingProvider = apiKey
   ? new OpenAIEmbeddingAdapter({
       apiKey,
-      baseUrl: 'https://openrouter.ai/api/v1',
+      baseUrl: baseUrl || (process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined),
       model: embeddingModel,
     })
   : new MockEmbeddingProvider();
