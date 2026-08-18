@@ -55,6 +55,9 @@ const embeddingProvider = apiKey
         ? new OpenAiModelAdapter({
             apiKey,
             baseUrl,
+            maxTokens: parseInt(process.env.MAX_TOKENS || '700', 10),
+            maxCompletionTokens: parseInt(process.env.MAX_TOKENS || '700', 10),
+            temperature: 0.1,
           })
         : undefined,
       approvalTtlSeconds: 86400,
