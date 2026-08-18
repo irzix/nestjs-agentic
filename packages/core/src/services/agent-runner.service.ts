@@ -30,6 +30,7 @@ import type {
   ApprovalStore,
   AuditOptions,
   AuditSink,
+  CascadeConfig,
   IdempotencyStore,
   ModelConfig,
   PendingApproval,
@@ -129,11 +130,15 @@ export interface RunInput {
     traceId?: string;
     parentTraceId?: string;
     rootTraceId?: string;
+    signal?: AbortSignal;
+    deadline?: Date;
   };
   /** Overrides agent and module execution budgets for this run. */
   limits?: ExecutionLimits;
   /** Overrides the agent and module tool error strategy for this run. */
   toolErrorHandling?: ToolErrorHandling;
+  /** FrugalGPT model cascading configuration (fastModel -> reasoningModel). */
+  cascade?: CascadeConfig;
   /**
    * Set false to run this turn without replaying or saving conversation history.
    * Defaults to the module session setting.
@@ -159,6 +164,7 @@ export interface RecoverCheckpointOptions {
 export interface PreparedRun {
   config: AgentConfig;
   model: ModelConfig;
+  cascade?: CascadeConfig;
   context: AgentContext;
   tools: ResolvedTool[];
   limits?: ExecutionLimits;
@@ -301,11 +307,18 @@ export class AgentRunner {
     const store = this.resolveSessionStore();
     const notifier = this.getNotifier();
 
+    const target = typeof agent === 'function' ? agent : agent.constructor;
+    const metadata = (Reflect.getMetadata(AGENT_METADATA, target) ??
+      (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined)) as
+      | { name?: string; model?: ModelConfig; cascade?: CascadeConfig }
+      | undefined;
+
     return this.executor.resume({
       agentName: pending.agentName,
       observerNotifier: notifier,
       sessionId: pending.context.sessionId,
-      model: config.model ?? this.options.defaultModel,
+      model: config.model ?? metadata?.model ?? this.options.defaultModel,
+      cascade: config.cascade ?? metadata?.cascade,
       tools: await this.buildTools(config.tools, pending.context, pending.agentName),
       traceId: pending.context.traceId,
       instructions: config.instructions,
@@ -551,9 +564,16 @@ export class AgentRunner {
       deadline,
     };
 
+    const target = typeof agent === 'function' ? agent : agent.constructor;
+    const metadata = (Reflect.getMetadata(AGENT_METADATA, target) ??
+      (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined)) as
+      | { name?: string; model?: ModelConfig; cascade?: CascadeConfig }
+      | undefined;
+
     return {
       config,
-      model: config.model ?? this.options.defaultModel,
+      model: config.model ?? metadata?.model ?? this.options.defaultModel,
+      cascade: input.cascade ?? config.cascade ?? metadata?.cascade,
       context,
       tools: await this.buildTools(config.tools, context, agentName),
       limits,
@@ -606,6 +626,7 @@ export class AgentRunner {
           sessionId: input.sessionId,
           message: input.message,
           model: prepared.model,
+          cascade: prepared.cascade,
           tools: prepared.tools,
           instructions: prepared.config.instructions,
           traceId: prepared.context.traceId,
@@ -698,6 +719,7 @@ export class AgentRunner {
           sessionId: input.sessionId,
           message: input.message,
           model: prepared.model,
+          cascade: prepared.cascade,
           tools: prepared.tools,
           instructions: prepared.config.instructions,
           traceId: prepared.context.traceId,
@@ -850,12 +872,19 @@ export class AgentRunner {
     const sessionStore = this.resolveSessionStore();
     const notifier = this.getNotifier();
 
+    const target = typeof agent === 'function' ? agent : agent.constructor;
+    const metadata = (Reflect.getMetadata(AGENT_METADATA, target) ??
+      (typeof agent === 'object' ? Reflect.getMetadata(AGENT_METADATA, agent) : undefined)) as
+      | { name?: string; model?: ModelConfig; cascade?: CascadeConfig }
+      | undefined;
+
     return this.executor.resumeCheckpoint({
       agentName,
       observerNotifier: notifier,
       sessionId: checkpoint.sessionId,
       checkpoint,
-      model: config.model ?? this.options.defaultModel,
+      model: config.model ?? metadata?.model ?? this.options.defaultModel,
+      cascade: config.cascade ?? metadata?.cascade,
       tools,
       instructions: config.instructions,
       traceId: context.traceId,

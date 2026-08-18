@@ -1,5 +1,6 @@
 import type { ExecutionLimits, ToolErrorHandling } from './execution.interface';
 import type { ModelConfig } from './runtime.interface';
+import type { CascadeConfig } from './cascade.interface';
 
 export interface AgentConfig {
   instructions: string;
@@ -13,6 +14,8 @@ export interface AgentConfig {
   subAgents?: AgentProvider[];
   /** Override the default model defined in AgenticModule.forRoot(). */
   model?: ModelConfig;
+  /** FrugalGPT model cascading configuration (fastModel -> reasoningModel). */
+  cascade?: CascadeConfig;
   /**
    * Execution budgets applied when the built-in runtime runs this agent.
    * Overrides module-level limits and can be overridden per run.

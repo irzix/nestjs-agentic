@@ -1,6 +1,6 @@
 import { applyDecorators, Injectable, SetMetadata } from '@nestjs/common';
 import { AGENT_METADATA } from '../constants';
-import type { ModelConfig } from '../interfaces';
+import type { CascadeConfig, ModelConfig } from '../interfaces';
 
 export interface AgentDecoratorOptions {
   /** Unique identifier used in AgentRunner.run(name). */
@@ -8,6 +8,8 @@ export interface AgentDecoratorOptions {
   description: string;
   /** Overrides the defaultModel set in AgenticModule.forRoot(). */
   model?: ModelConfig;
+  /** FrugalGPT model cascading configuration (fastModel -> reasoningModel). */
+  cascade?: CascadeConfig;
 }
 
 /**

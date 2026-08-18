@@ -23,6 +23,7 @@
 - **Decorator Suite**: `@Agent()`, `@ToolSet()`, `@Tool()`, `@Param()`, `@Context()`, `@UsePolicies()`
 - **Policy Engine**: 3-state evaluation (`allow`, `deny`, `require_approval`)
 - **Built-in Agent Runtime**: `AgentExecutor` runs the governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming, driven by a provider-neutral `ModelAdapter`
+- **FrugalGPT Model Cascading**: Native cost optimization (*Chen et al., Stanford University, NeurIPS 2023*) cascading cheap/fast models to frontier reasoning models with confidence threshold gating ($\tau$) to cut API costs by 50–85%
 - **HITL Lifecycle (Experimental)**: `ApprovalService` and in-memory/custom `ApprovalStore` protect one process-local pending invocation; approval is not a durable workflow pause and does not resume the original model turn.
 - **Session Management**: `SessionStore` (`InMemorySessionStore`, `RedisSessionStore`), `runSessionStoreContract`, and context pre-binding
 - **Mock Runtime**: `MockRuntimeAdapter` and `MockModelAdapter` for LLM-free unit testing, including multi-round tool-calling scenarios
