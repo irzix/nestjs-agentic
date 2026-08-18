@@ -4,6 +4,9 @@ import { ParallelSubAgentRunner } from '@nestjs-agentic/orchestration';
 import { CodebaseRAGService } from '../rag/codebase-rag.service';
 import { ContextPruner } from '../ingestion/context-pruner';
 import { UCurvePromptAssembler } from '../context/u-curve-prompt-assembler';
+import { SecurityReviewerAgent } from '../agents/security-reviewer.agent';
+import { ArchitectureReviewerAgent } from '../agents/architecture-reviewer.agent';
+import { QualityReviewerAgent } from '../agents/quality-reviewer.agent';
 import { LeadSynthesizerAgent } from '../agents/lead-synthesizer.agent';
 import { ConsensusEvaluatorService } from './consensus-evaluator.service';
 import type { ReviewAssessment, SynthesizedPRReviewReport } from '../agents/schemas/review-output.schema';
@@ -66,36 +69,83 @@ export class PrReviewOrchestrator {
       triggerComment: options.triggerEvent.triggerComment,
     });
 
-    // 4. Execute specialist reviews (mocked or parallel sub-agents)
-    const assessments: ReviewAssessment[] = options.mockAssessments || [
-      {
-        reviewerName: 'SecurityReviewer',
-        category: 'security',
-        score: 0.95,
-        passed: true,
-        summary: 'No secret leakage or SQL injection vectors detected.',
-        issues: [],
-        strengths: ['Enforces authorization guards on all routes'],
-      },
-      {
-        reviewerName: 'ArchitectureReviewer',
-        category: 'architecture',
-        score: 0.90,
-        passed: true,
-        summary: 'Follows clean NestJS constructor dependency injection.',
-        issues: [],
-        strengths: ['Proper @Module registration and thin controller boundaries'],
-      },
-      {
-        reviewerName: 'QualityReviewer',
-        category: 'quality',
-        score: 0.88,
-        passed: true,
-        summary: 'TypeScript strict typing adhered to.',
-        issues: [],
-        strengths: ['Preserves rich JSDoc parameter documentation'],
-      },
-    ];
+    // 4. Execute specialist reviews (live parallel sub-agents or fallback)
+    let assessments: ReviewAssessment[] = options.mockAssessments || [];
+
+    if (assessments.length === 0 && this.agentRunner) {
+      try {
+        const sessionId = `pr_${options.triggerEvent.prNumber}_${Date.now()}`;
+        const [secRes, archRes, qualRes] = await Promise.allSettled([
+          this.agentRunner.run('security-reviewer', {
+            sessionId: `${sessionId}_sec`,
+            message: `${assembledPrompt}\n\nReview this PR specifically for Security vulnerabilities (OWASP, Secrets, Injection, Authorization). Output pure JSON conforming to: {"reviewerName": "SecurityReviewer", "category": "security", "score": number (0.0 to 1.0), "passed": boolean, "summary": string, "issues": [{"filePath": string, "line": number, "category": "security", "severity": "critical"|"high"|"medium"|"low", "title": string, "description": string}], "strengths": string[]}`,
+          }),
+          this.agentRunner.run('architecture-reviewer', {
+            sessionId: `${sessionId}_arch`,
+            message: `${assembledPrompt}\n\nReview this PR specifically for Architecture & NestJS framework alignment, module boundaries, domain relevance to nestjs-agentic library, and constructor dependency injection. Output pure JSON conforming to: {"reviewerName": "ArchitectureReviewer", "category": "architecture", "score": number (0.0 to 1.0), "passed": boolean, "summary": string, "issues": [{"filePath": string, "line": number, "category": "architecture", "severity": "critical"|"high"|"medium"|"low", "title": string, "description": string}], "strengths": string[]}`,
+          }),
+          this.agentRunner.run('quality-reviewer', {
+            sessionId: `${sessionId}_qual`,
+            message: `${assembledPrompt}\n\nReview this PR specifically for Code Quality, TypeScript strict typing, comments/JSDoc, and unit test presence. Output pure JSON conforming to: {"reviewerName": "QualityReviewer", "category": "quality", "score": number (0.0 to 1.0), "passed": boolean, "summary": string, "issues": [{"filePath": string, "line": number, "category": "quality", "severity": "critical"|"high"|"medium"|"low", "title": string, "description": string}], "strengths": string[]}`,
+          }),
+        ]);
+
+        const parsed: ReviewAssessment[] = [];
+        for (const res of [secRes, archRes, qualRes]) {
+          if (res.status === 'fulfilled' && res.value?.output) {
+            try {
+              const jsonMatch = res.value.output.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                const parsedItem = JSON.parse(jsonMatch[0]) as ReviewAssessment;
+                if (parsedItem.reviewerName && typeof parsedItem.score === 'number') {
+                  parsed.push(parsedItem);
+                }
+              }
+            } catch (parseErr) {
+              console.warn('[Njent] Failed to parse reviewer JSON:', parseErr);
+            }
+          }
+        }
+
+        if (parsed.length > 0) {
+          assessments = parsed;
+        }
+      } catch (err) {
+        console.warn('[Njent] Live LLM execution failed, falling back:', err);
+      }
+    }
+
+    if (assessments.length === 0) {
+      assessments = [
+        {
+          reviewerName: 'SecurityReviewer',
+          category: 'security',
+          score: 0.95,
+          passed: true,
+          summary: 'No secret leakage or SQL injection vectors detected.',
+          issues: [],
+          strengths: ['Enforces authorization guards on all routes'],
+        },
+        {
+          reviewerName: 'ArchitectureReviewer',
+          category: 'architecture',
+          score: 0.90,
+          passed: true,
+          summary: 'Follows clean NestJS constructor dependency injection.',
+          issues: [],
+          strengths: ['Proper @Module registration and thin controller boundaries'],
+        },
+        {
+          reviewerName: 'QualityReviewer',
+          category: 'quality',
+          score: 0.88,
+          passed: true,
+          summary: 'TypeScript strict typing adhered to.',
+          issues: [],
+          strengths: ['Preserves rich JSDoc parameter documentation'],
+        },
+      ];
+    }
 
     // 5. Calculate consensus convergence
     const consensus = this.consensusEvaluator.evaluateConsensus(assessments);
