@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: examples/code-review-agent/Dockerfile
+    container_name: njent-agent
+    restart: always
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://njent_user:njent_password@postgres:5432/njent_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - MAINTAINER_APPROVAL_SECRET=${MAINTAINER_APPROVAL_SECRET:-valid-maintainer-token}
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: njent-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: njent_user
+      POSTGRES_PASSWORD: njent_password
+      POSTGRES_DB: njent_db
+    ports:
+      - '5432:5432'
+    volumes:
+      - ./examples/code-review-agent/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - njent_pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: njent-redis
+    restart: always
+    ports:
+      - '6379:6379'
+    volumes:
+      - njent_redisdata:/data
+
+volumes:
+  njent_pgdata:
+  njent_redisdata:

@@ -1,0 +1,33 @@
+{
+  "name": "example-code-review-agent",
+  "version": "0.7.0",
+  "private": true,
+  "description": "Autonomous Code Review and PR Governance Agent (Njent) for nestjs-agentic",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p test/tsconfig.json && node dist/test/test/njent-e2e.spec.js",
+    "test:unit": "tsc -p test/tsconfig.json && node dist/test/test/unit.spec.js",
+    "test:e2e": "tsc -p test/tsconfig.json && node dist/test/test/njent-e2e.spec.js"
+  },
+  "dependencies": {
+    "nestjs-agentic": "*",
+    "@nestjs-agentic/core": "*",
+    "@nestjs-agentic/memory": "*",
+    "@nestjs-agentic/rag": "*",
+    "@nestjs-agentic/orchestration": "*",
+    "@nestjs-agentic/evaluation": "*",
+    "@nestjs-agentic/mcp": "*",
+    "@nestjs-agentic/openai": "*",
+    "@nestjs/common": "^10.0.0 || ^11.0.0",
+    "@nestjs/core": "^10.0.0 || ^11.0.0",
+    "@nestjs/platform-express": "^10.0.0 || ^11.0.0",
+    "reflect-metadata": "^0.2.0",
+    "rxjs": "^7.8.0",
+    "ts-morph": "^25.0.1"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^10.0.0 || ^11.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}
