@@ -39,6 +39,7 @@ The current release line is `0.6.x`. Core primitives, persistence adapters, and 
 | --- | --- | --- |
 | Agents, tools, and NestJS DI | Available | Decorators, discovery, feature registration, and context-bound tools. |
 | Tool governance | Available | `allow`, `deny`, and `require_approval` before framework-managed tool execution. |
+| Model Context Protocol (MCP) | Available | `@nestjs-agentic/mcp` for Stdio and SSE remote tool discovery and execution. |
 | Built-in agent runtime | Available | Model-to-tool loop, argument validation, execution budgets, cancellation, and streaming. Needs a `ModelAdapter`. |
 | OpenAI model adapter | Available | `@nestjs-agentic/openai` for OpenAI and Chat Completions compatible endpoints such as Azure, Ollama, vLLM, Groq, and OpenRouter. |
 | Mock runtime and mock model | Available | Deterministic agent, tool, policy, and loop testing without a model API. |
@@ -57,6 +58,7 @@ See the [product roadmap](docs/ROADMAP.md) for milestones and production-readine
 | --- | --- |
 | [`nestjs-agentic`](packages/meta) | Meta package that re-exports the core framework |
 | [`@nestjs-agentic/core`](packages/core) | Agents, tools, policies, approvals, the built-in runtime, and the adapter contracts |
+| [`@nestjs-agentic/mcp`](packages/mcp) | Model Context Protocol (MCP) client transport and tool provider |
 | [`@nestjs-agentic/openai`](packages/model-openai) | OpenAI `ModelAdapter`, also covering Chat Completions compatible endpoints |
 | [`@nestjs-agentic/memory`](packages/memory) | Short-term, semantic, episodic, and scratchpad memory primitives |
 | [`@nestjs-agentic/rag`](packages/rag) | Retrieval strategies, vector stores, and knowledge-graph primitives |
@@ -81,6 +83,7 @@ npm install @nestjs-agentic/openai openai
 Optional packages:
 
 ```bash
+npm install @nestjs-agentic/mcp
 npm install @nestjs-agentic/memory
 npm install @nestjs-agentic/rag @nestjs-agentic/memory
 npm install @nestjs-agentic/experience @nestjs-agentic/memory
