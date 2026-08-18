@@ -436,7 +436,7 @@ export class AgentRunner {
     }
     if (typeof token === 'function' || typeof token === 'string' || typeof token === 'symbol') {
       try {
-        const instance = this.moduleRef.get(token as any, { strict: false });
+        const instance = this.moduleRef.get(token as unknown as string | symbol | Function, { strict: false });
         if (isToolProvider(instance)) {
           return instance;
         }
@@ -497,8 +497,8 @@ export class AgentRunner {
       if (provider?.invokeApprovedTool) {
         try {
           return await provider.invokeApprovedTool(toolName, args, context);
-        } catch (err: any) {
-          if (err?.name !== 'ApprovalToolNotFoundError') throw err;
+        } catch (err: unknown) {
+          if ((err as Error)?.name !== 'ApprovalToolNotFoundError') throw err;
         }
       } else if (!provider) {
         localTokens.push(token);
