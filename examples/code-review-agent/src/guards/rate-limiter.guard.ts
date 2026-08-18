@@ -4,6 +4,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Optional,
 } from '@nestjs/common';
 import type { GitHubWebhookPayload } from '../interfaces/webhook.interface';
 
@@ -16,7 +17,7 @@ export class RateLimiterGuard implements CanActivate {
   private readonly windowMs: number;
   private readonly timestamps = new Map<string, number[]>();
 
-  constructor(options?: { maxRequests?: number; windowMs?: number }) {
+  constructor(@Optional() options?: { maxRequests?: number; windowMs?: number }) {
     this.maxRequests = options?.maxRequests ?? 5;
     this.windowMs = options?.windowMs ?? 3600000; // 1 hour default
   }
