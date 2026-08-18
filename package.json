@@ -29,6 +29,7 @@
     "packages/runtime-adk",
     "packages/runtime-langgraph",
     "packages/model-openai",
+    "packages/mcp",
     "packages/meta",
     "examples/*",
     "apps/*"

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-18
+
+- **Model Context Protocol (MCP) Client Transport & Dynamic Tool Provider (`@nestjs-agentic/mcp`)** (#41):
+  - `StdioClientTransport`: Sandboxed execution of local CLI/Docker/Python tool servers over standard I/O streams with newline-delimited JSON-RPC 2.0 framing and process supervisor cleanup.
+  - `SseClientTransport`: Remote HTTP Server-Sent Events transport client with HTTP POST JSON-RPC request dispatch and authentication header support.
+  - `McpClient`: Standard MCP client managing protocol initialization handshake (`2024-11-05`), JSON-RPC request correlation, cancellation propagation via `notifications/cancelled`, and ping health checks.
+  - `McpToolProvider`: Dynamic conversion of MCP `inputSchema` to `ToolParamSchema[]` and `ResolvedTool[]` with Gorilla (UC Berkeley) deterministic pre-conditions validation and `@UsePolicies` governance wrapping.
+  - Dynamic tool hot-reloading: Listens to `notifications/tools/list_changed` events (ToolBench/AnyTool) to refresh toolsets without application restart.
+  - OWASP LLM security hardening: Stderr stream sanitization and credential redaction (LLM02) and process least privilege (LLM07).
+  - NestJS dependency injection: `McpModule.register()`, `McpModule.registerAsync()`, and `McpService`.
+
 ## [0.7.2] - 2026-08-18
 
 - **MetaGPT Standard Operating Procedures (SOP) & Consensus Debate (`@nestjs-agentic/orchestration`)** (#53):
