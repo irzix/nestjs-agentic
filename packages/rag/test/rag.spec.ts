@@ -495,11 +495,16 @@ export class BenchmarkService${i} {
     assert(false, 'Test 12: Large Codebase Benchmark', err.message);
   }
 
-  console.log(`\n  📊 RAG Test Results: ${passed} passed, ${failed} failed.\n`);
+  console.log(`\n  📊 Core RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');
   }
+
+  // Run U-Shaped Context Assembler Strategy Tests
+  await runUShapedContextTests();
 }
+
+import { runUShapedContextTests } from './u-shaped-context.spec';
 
 if (require.main === module) {
   runRAGTests().catch(() => process.exit(1));

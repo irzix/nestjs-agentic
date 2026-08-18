@@ -18,6 +18,7 @@ npm install @nestjs-agentic/rag @nestjs-agentic/memory nestjs-agentic
 
 - `KnowledgeBase` for splitting, indexing, and querying documents.
 - `HybridVectorStore` for in-memory sparse keyword and optional dense-vector scoring.
+- `UShapedContextStrategy` for mitigating **"Lost in the Middle"** retrieval degradation (*Liu et al., Stanford & UC Berkeley, TACL 2024*) by positioning top-ranked documents at Primacy and Recency edges.
 - `RAGPipeline` for pre- and post-retrieval strategies.
 - Query expansion, parent-child hydration, reranking, late chunking, contextual compression, and graph strategies.
 - `VectorStoreAdapter` and `VectorStoreFactory` hooks for application-provided storage integrations.

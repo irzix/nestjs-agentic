@@ -16,6 +16,7 @@ import { runSessionStoreContractTests } from './session-store-contract.spec';
 import { runStreamingTests } from './streaming.spec';
 import { runToolDiscoveryTests } from './tool-discovery.spec';
 import { runModelCascadeTests } from './model-cascade.spec';
+import { runUCurveFormatterTests } from './u-curve-formatter.spec';
 
 async function runAllCoreTests() {
   console.log('====================================================');
@@ -41,9 +42,10 @@ async function runAllCoreTests() {
     await runObserversTests();
     await runCrashRecoveryHitlTests();
     await runModelCascadeTests();
+    await runUCurveFormatterTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 18 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 19 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
