@@ -1,5 +1,7 @@
 
 
+import type { AgentContext } from './agent-context.interface';
+
 /** Schema of a single tool parameter exposed to the LLM. */
 export interface ToolParamSchema {
   name: string;
@@ -40,12 +42,33 @@ export interface ResolvedTool {
 }
 
 /**
- * Contract for any source that can supply resolved tools.
- * Implementations include LocalToolProvider (decorator-based),
- * and future providers such as MCP or HTTP remotes.
+ * Contract for dynamic tool sources (e.g. MCP servers, remote RPC, plugin catalogs).
+ * Supplies executable tool definitions bound to the current execution context.
  */
 export interface ToolProvider {
-  getTools(): ResolvedTool[];
+  /**
+   * Resolves executable tool definitions for the current agent context.
+   */
+  getTools(context: AgentContext, agentName?: string): Promise<ResolvedTool[]> | ResolvedTool[];
+
+  /**
+   * Directly invokes an already-approved tool call, bypassing policy evaluation.
+   * Optional hook for providers participating in Human-in-the-Loop (HITL) workflows.
+   */
+  invokeApprovedTool?(
+    toolName: string,
+    args: Record<string, unknown>,
+    context: AgentContext,
+  ): Promise<ToolExecutionResult>;
+}
+
+/** Narrows an unknown token or instance to a valid `ToolProvider`. */
+export function isToolProvider(value: unknown): value is ToolProvider {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as ToolProvider).getTools === 'function'
+  );
 }
 
 /** Record of a single tool call made during an agent run. */

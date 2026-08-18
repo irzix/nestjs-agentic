@@ -12,6 +12,7 @@ import {
 } from '../constants';
 import {
   ApprovalCheckpointVersionError,
+  ApprovalToolNotFoundError,
   ApprovalTranscriptMissingError,
   CheckpointNotFoundError,
   ExecutionCancelledError,
@@ -35,8 +36,9 @@ import type {
   ResolvedTool,
   RuntimeAdapter,
   ToolExecutionResult,
+  ToolProvider,
 } from '../interfaces';
-import { APPROVAL_CHECKPOINT_VERSION } from '../interfaces';
+import { APPROVAL_CHECKPOINT_VERSION, isToolProvider } from '../interfaces';
 import {
   DEFAULT_CHECKPOINT_TTL_SECONDS,
   type ExecutionLimits,
@@ -283,7 +285,7 @@ export class AgentRunner {
     const config = agent.define();
 
     const outcome: ToolExecutionResult = decision.approved
-      ? await this.localToolProvider.invokeApprovedTool(
+      ? await this.invokeApprovedToolFromConfig(
           config.tools,
           pending.toolName,
           pending.args,
@@ -304,12 +306,7 @@ export class AgentRunner {
       observerNotifier: notifier,
       sessionId: pending.context.sessionId,
       model: config.model ?? this.options.defaultModel,
-      tools: this.localToolProvider.buildTools(
-        config.tools,
-        pending.context,
-        pending.agentName,
-        this.options.approvalTtlSeconds,
-      ),
+      tools: await this.buildTools(config.tools, pending.context, pending.agentName),
       traceId: pending.context.traceId,
       instructions: config.instructions,
       history,
@@ -430,10 +427,96 @@ export class AgentRunner {
   }
 
   /**
+   * Resolves a tool token to a ToolProvider instance if it implements the interface
+   * directly or is resolvable via the NestJS DI container.
+   */
+  private resolveProviderInstance(token: unknown): ToolProvider | null {
+    if (isToolProvider(token)) {
+      return token;
+    }
+    if (typeof token === 'function' || typeof token === 'string' || typeof token === 'symbol') {
+      try {
+        const instance = this.moduleRef.get(token as unknown as string | symbol | Function, { strict: false });
+        if (isToolProvider(instance)) {
+          return instance;
+        }
+      } catch {
+        // Not a registered ToolProvider token, treat as local tool class
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Resolves all tool definitions across both custom ToolProviders and local decorator tools.
+   */
+  private async buildTools(
+    toolTokens: (object | Function)[],
+    context: AgentContext,
+    agentName: string,
+  ): Promise<ResolvedTool[]> {
+    const tools: ResolvedTool[] = [];
+    const localTokens: (object | Function)[] = [];
+
+    for (const token of toolTokens) {
+      const provider = this.resolveProviderInstance(token);
+      if (provider) {
+        const resolved = await provider.getTools(context, agentName);
+        tools.push(...resolved);
+      } else {
+        localTokens.push(token);
+      }
+    }
+
+    if (localTokens.length > 0) {
+      tools.push(
+        ...this.localToolProvider.buildTools(
+          localTokens,
+          context,
+          agentName,
+          this.options.approvalTtlSeconds,
+        ),
+      );
+    }
+    return tools;
+  }
+
+  /**
+   * Invokes an approved tool directly across registered providers and local tools.
+   */
+  private async invokeApprovedToolFromConfig(
+    tools: (object | Function)[],
+    toolName: string,
+    args: Record<string, unknown>,
+    context: AgentContext,
+  ): Promise<ToolExecutionResult> {
+    const localTokens: (object | Function)[] = [];
+
+    for (const token of tools) {
+      const provider = this.resolveProviderInstance(token);
+      if (provider?.invokeApprovedTool) {
+        try {
+          return await provider.invokeApprovedTool(toolName, args, context);
+        } catch (err: unknown) {
+          if ((err as Error)?.name !== 'ApprovalToolNotFoundError') throw err;
+        }
+      } else if (!provider) {
+        localTokens.push(token);
+      }
+    }
+
+    if (localTokens.length > 0) {
+      return this.localToolProvider.invokeApprovedTool(localTokens, toolName, args, context);
+    }
+
+    throw new ApprovalToolNotFoundError(toolName);
+  }
+
+  /**
    * Resolves the registered agent, builds its execution context, and turns its
    * declared tool sets into policy-guarded closures.
    */
-  prepare(agentName: string, input: RunInput): PreparedRun {
+  async prepare(agentName: string, input: RunInput): Promise<PreparedRun> {
     const agent = this.getAgentMap().get(agentName);
 
     if (!agent) {
@@ -472,12 +555,7 @@ export class AgentRunner {
       config,
       model: config.model ?? this.options.defaultModel,
       context,
-      tools: this.localToolProvider.buildTools(
-        config.tools,
-        context,
-        agentName,
-        this.options.approvalTtlSeconds,
-      ),
+      tools: await this.buildTools(config.tools, context, agentName),
       limits,
       toolErrorHandling:
         input.toolErrorHandling ?? config.toolErrorHandling ?? this.options.toolErrorHandling,
@@ -500,7 +578,7 @@ export class AgentRunner {
   }
 
   async run(agentName: string, input: RunInput): Promise<AgentResult> {
-    const prepared = this.prepare(agentName, input);
+    const prepared = await this.prepare(agentName, input);
     const notifier = this.getNotifier();
     const startAt = Date.now();
 
@@ -591,7 +669,7 @@ export class AgentRunner {
   }
 
   async *runStream(agentName: string, input: RunInput): AsyncIterable<AgentStreamEvent> {
-    const prepared = this.prepare(agentName, input);
+    const prepared = await this.prepare(agentName, input);
     const notifier = this.getNotifier();
     const startAt = Date.now();
 
@@ -767,12 +845,7 @@ export class AgentRunner {
       deadline,
     };
 
-    const tools = this.localToolProvider.buildTools(
-      config.tools,
-      context,
-      agentName,
-      this.options.approvalTtlSeconds,
-    );
+    const tools = await this.buildTools(config.tools, context, agentName);
 
     const sessionStore = this.resolveSessionStore();
     const notifier = this.getNotifier();

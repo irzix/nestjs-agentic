@@ -206,8 +206,8 @@ export async function runOrchestrationTests() {
 
   // Hook into runner to capture dispatched AgentContext for verification
   const originalPrepare = runner.prepare.bind(runner);
-  runner.prepare = (agentName, input) => {
-    const prepared = originalPrepare(agentName, input);
+  runner.prepare = async (agentName, input) => {
+    const prepared = await originalPrepare(agentName, input);
     capturedContexts.push(prepared.context);
     return prepared;
   };

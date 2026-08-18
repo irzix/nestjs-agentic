@@ -96,7 +96,7 @@ Goal: build multi-agent coordination on the same guarantees as single-agent exec
 
 Goal: deliver production ecosystem adapters, GraphRAG, advanced memory, and cost optimization.
 
-- [ ] Dedicated `@nestjs-agentic/mcp` package for Model Context Protocol client transport ([#41](https://github.com/irzix/nestjs-agentic/issues/41)).
+- [x] Dedicated `@nestjs-agentic/mcp` package for Model Context Protocol client transport ([#41](https://github.com/irzix/nestjs-agentic/issues/41)).
 - [ ] AST-aware codebase chunking and GraphRAG dependency traversal in `@nestjs-agentic/rag` ([#51](https://github.com/irzix/nestjs-agentic/issues/51)).
 - [ ] U-Shaped context assembler utility to mitigate Lost-in-the-Middle degradation ([#52](https://github.com/irzix/nestjs-agentic/issues/52)).
 - [ ] Stanford tri-factor memory retrieval scoring and procedural memory stores ([#50](https://github.com/irzix/nestjs-agentic/issues/50)).
