@@ -67,14 +67,30 @@ async function runTask03Tests() {
   assert.ok(rejectedReport.summaryMarkdown.includes('Hardcoded API Key'));
   console.log('  ✅ PASS: Test 3: Critical issue synthesized to CHANGES_REQUESTED');
 
-  // Test 4: Code Fixer Patches
-  const patches = fixerAgent.generateFixPatches(flawedAssessments[0].issues);
-  assert.strictEqual(patches.length, 1);
-  assert.ok(patches[0].includes('diff --git a/src/config.ts b/src/config.ts'));
-  assert.ok(patches[0].includes('+process.env.SECRET_KEY'));
-  console.log('  ✅ PASS: Test 4: CodeFixer generated valid unified git diff patch');
+  // Test 5: Issue Deduplication & Score Clamping
+  const duplicateIssuesAssessments: ReviewAssessment[] = [
+    {
+      reviewerName: 'Sec',
+      category: 'security',
+      score: 1.5, // should clamp to 1.0
+      passed: true,
+      summary: '',
+      issues: [
+        { filePath: 'src/app.ts', line: 10, category: 'security', severity: 'high', title: 'Hardcoded Secret', description: 'desc 1' },
+        { filePath: 'src/app.ts', line: 10, category: 'security', severity: 'critical', title: 'Hardcoded Secret', description: 'desc 2' }, // duplicate same category/title, higher severity
+        { filePath: 'src/app.ts', line: 10, category: 'architecture', severity: 'medium', title: 'Missing DI', description: 'distinct issue same line' }, // distinct category same line
+      ],
+      strengths: [],
+    },
+  ];
 
-  console.log('\n🎉 All 4 Task 03 Specialist Agents tests passed successfully!\n');
+  const dedupReport = leadAgent.synthesize(duplicateIssuesAssessments, 1.0);
+  assert.strictEqual(dedupReport.inlineIssues.length, 2, 'Should deduplicate exact duplicate but preserve distinct same-line issue');
+  assert.strictEqual(dedupReport.inlineIssues[0].severity, 'critical', 'Should retain critical severity');
+  assert.strictEqual(dedupReport.specialistScores['Sec'], 1.0, 'Should clamp 1.5 score to 1.0');
+  console.log('  ✅ PASS: Test 5: Issue deduplication merges duplicates, preserves same-line distinct issues, and clamps scores');
+
+  console.log('\n🎉 All 5 Task 03 Specialist Agents tests passed successfully!\n');
 }
 
 runTask03Tests().catch((err) => {

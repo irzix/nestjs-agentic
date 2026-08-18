@@ -41,7 +41,9 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
 
     let totalScore = 0;
     for (const a of assessments) {
-      const score = typeof a.score === 'number' && !isNaN(a.score) ? a.score : 0.85;
+      const score = typeof a.score === 'number' && Number.isFinite(a.score)
+        ? Math.max(0.0, Math.min(1.0, a.score))
+        : 0.50;
       specialistScores[a.reviewerName] = score;
       totalScore += score;
     }
@@ -73,8 +75,8 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
   }
 
   /**
-   * Deduplicates overlapping issues reporting the same file and line or duplicate titles.
-   * Retains the entry with the highest severity.
+   * Deduplicates overlapping issues reporting the same finding on the same line,
+   * while preserving distinct issues from different categories or with distinct titles.
    */
   private deduplicateIssues(issues: InlineReviewIssue[]): InlineReviewIssue[] {
     const severityRank: Record<string, number> = {
@@ -88,9 +90,11 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
     const map = new Map<string, InlineReviewIssue>();
 
     for (const issue of issues) {
+      const normalizedTitle = (issue.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const category = issue.category || 'quality';
       const key = issue.filePath && typeof issue.line === 'number' && issue.line > 0
-        ? `${issue.filePath}:${issue.line}`
-        : `${issue.filePath}:${issue.title.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+        ? `${issue.filePath}:${issue.line}:${category}:${normalizedTitle}`
+        : `${issue.filePath}:${category}:${normalizedTitle}`;
 
       const existing = map.get(key);
       if (!existing) {
