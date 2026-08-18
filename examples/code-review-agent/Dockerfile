@@ -28,4 +28,4 @@ COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000
 
-CMD ["node", "examples/code-review-agent/dist/src/main.js"]
+CMD ["node", "examples/code-review-agent/dist/main.js"]
