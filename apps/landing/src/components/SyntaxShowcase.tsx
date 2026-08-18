@@ -28,7 +28,7 @@ export function SyntaxShowcase() {
             </h2>
 
             <p className="text-sm text-zinc-500 leading-relaxed font-sans">
-              Core decorators, policy enforcement, and the mock runtime are available. RAG and memory are experimental, opt-in primitives that applications integrate explicitly.
+              NestJS-native decorators, human-in-the-loop governance policies, multi-agent orchestration, AST Codebase RAG, and durable execution state stores.
             </p>
 
             <div className="pt-4">

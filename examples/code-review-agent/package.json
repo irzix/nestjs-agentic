@@ -1,6 +1,6 @@
 {
   "name": "example-code-review-agent",
-  "version": "0.7.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Autonomous Code Review and PR Governance Agent (Njent) for nestjs-agentic",
   "scripts": {

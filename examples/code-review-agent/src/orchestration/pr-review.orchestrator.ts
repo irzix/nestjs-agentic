@@ -155,12 +155,18 @@ export class PrReviewOrchestrator {
         }
 
         const agentDur = Date.now() - agentStart;
-        const secScore = Math.round((assessments.find((a) => a.category === 'security')?.score ?? 0.85) * 100);
-        const archScore = Math.round((assessments.find((a) => a.category === 'architecture')?.score ?? 0.85) * 100);
-        const qualScore = Math.round((assessments.find((a) => a.category === 'quality')?.score ?? 0.85) * 100);
+        const getClampedScore = (cat: string) => {
+          const raw = assessments.find((a) => a.category === cat)?.score;
+          return typeof raw === 'number' && Number.isFinite(raw)
+            ? Math.round(Math.max(0, Math.min(1, raw)) * 100)
+            : 85;
+        };
+        const secScore = getClampedScore('security');
+        const archScore = getClampedScore('architecture');
+        const qualScore = getClampedScore('quality');
         tracer?.record(
           'multi_agent',
-          `⚡ [Multi-Agent Fan-Out] Concurrently ran ${assessments.length} specialist reviewers (Security: ${isNaN(secScore) ? 85 : secScore}%, Architecture: ${isNaN(archScore) ? 85 : archScore}%, Quality: ${isNaN(qualScore) ? 85 : qualScore}%)`,
+          `⚡ [Multi-Agent Fan-Out] Concurrently ran ${assessments.length} specialist reviewers (Security: ${secScore}%, Architecture: ${archScore}%, Quality: ${qualScore}%)`,
           agentDur,
         );
       } catch (err) {

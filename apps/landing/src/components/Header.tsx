@@ -107,8 +107,8 @@ export function HeroSection() {
             transition={{ duration: 0.8, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
             className="font-mono text-xs sm:text-[13px] text-zinc-400 max-w-2xl mx-auto leading-relaxed mb-10 sm:mb-14 px-4"
           >
-            The NestJS-native runtime for governed AI agents.<br className="hidden sm:inline" />
-            Core agents, tools, policies, and mock runtime are available. Adapters, memory, RAG, orchestration, and evaluation are experimental.
+            The Enterprise NestJS-native runtime for governed AI agents.<br className="hidden sm:inline" />
+            Production-ready multi-agent orchestration, AST Codebase RAG, 5-tier memory, and HITL policy guardrails.
           </motion.p>
 
           <motion.div
@@ -143,11 +143,11 @@ export function HeroSection() {
           <div className="text-right space-y-1">
             <div>
               <span className="mr-3 sm:mr-4">License</span>
-              <span className="text-white font-semibold">Open Source</span>
+              <span className="text-white font-semibold">Open Source (MIT)</span>
             </div>
             <div>
               <span className="mr-3 sm:mr-4">Current release line</span>
-              <span className="text-white font-semibold">0.4.x</span>
+              <span className="text-emerald-400 font-semibold">v1.0.0 (GA)</span>
             </div>
           </div>
         </motion.div>
