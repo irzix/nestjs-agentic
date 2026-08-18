@@ -1,4 +1,4 @@
-# @nestjs-agentic/orchestration
+# @nestjs-agentic/mcp
 
 ## 0.7.0
 
@@ -13,37 +13,9 @@
   - **@nestjs-agentic/evaluation**: Pairwise position-swap debiased judge (`PairwiseDebiasedJudge`, `runPairwiseDebiasedJudge`), Trajectory step efficiency (`TrajectoryInspectorMetric`), and Tool execution precision (`ToolPrecisionMetric`).
   - **@nestjs-agentic/openai**: Full contract-tested OpenAI and ChatCompletions model adapter with streaming, reasoning token limits, and client injection.
 
-- 92dabec: Add bounded concurrency (`maxConcurrency`) and `AbortSignal` cancellation support to `ParallelSubAgentRunner`, `SubAgentDelegator`, and `RefinementLoopRunner`.
-
-  - adds `maxConcurrency` option to `ParallelRunnerOptions` to throttle concurrent sub-agent executions without unbounded fan-out
-  - adds `signal` support across `SubAgentTask`, `ParallelRunnerOptions`, and `RefinementLoopOptions` for graceful cancellation
-  - adds unit test coverage for bounded concurrency limits and early abort handling
-
 ### Patch Changes
 
 - Updated dependencies [e58e49c]
 - Updated dependencies [73181d8]
 - Updated dependencies [e0f6c3a]
   - @nestjs-agentic/core@0.7.0
-
-## 0.6.0
-
-### Patch Changes
-
-- Updated dependencies [fa2db68]
-- Updated dependencies [c8c0392]
-- Updated dependencies [198325b]
-- Updated dependencies [c0ea462]
-- Updated dependencies [7d29d5b]
-- Updated dependencies [89c6428]
-- Updated dependencies [0754d1f]
-- Updated dependencies [adc6ba9]
-- Updated dependencies [6eabac1]
-  - @nestjs-agentic/core@0.6.0
-
-## 0.5.0
-
-### Patch Changes
-
-- Updated dependencies [526c0e1]
-  - @nestjs-agentic/core@0.5.0
