@@ -86,17 +86,30 @@ async function runTask03Tests() {
         { filePath: 'src/app.ts', line: 10, category: 'security', severity: 'high', title: 'Hardcoded Secret', description: 'desc 1', suggestedFix: 'fix1' },
         { filePath: 'src/app.ts', line: 10, category: 'security', severity: 'critical', title: 'Hardcoded Secret', description: 'desc 2' }, // duplicate same category/title, higher severity without fix
         { filePath: 'src/app.ts', line: 10, category: 'architecture', severity: 'medium', title: 'Missing DI', description: 'distinct issue same line' }, // distinct category same line
+        // Untitled distinct issues on same line should not collide:
+        { filePath: 'src/app.ts', line: 20, category: 'quality', severity: 'low', title: '', description: 'Unused variable x' },
+        { filePath: 'src/app.ts', line: 20, category: 'quality', severity: 'low', title: '', description: 'Missing return type' },
       ],
+      strengths: [],
+    },
+    {
+      reviewerName: 'Arch',
+      category: 'architecture',
+      score: Infinity as any, // non-finite should fallback to 0.50
+      passed: true,
+      summary: '',
+      issues: [],
       strengths: [],
     },
   ];
 
   const dedupReport = leadAgent.synthesize(duplicateIssuesAssessments, 1.0);
-  assert.strictEqual(dedupReport.inlineIssues.length, 2, 'Should deduplicate exact duplicate but preserve distinct same-line issue');
+  assert.strictEqual(dedupReport.inlineIssues.length, 4, 'Should deduplicate exact duplicate, preserve distinct same-line issue, and preserve untitled distinct issues');
   assert.strictEqual(dedupReport.inlineIssues[0].severity, 'critical', 'Should retain critical severity');
   assert.strictEqual(dedupReport.inlineIssues[0].suggestedFix, 'fix1', 'Should retain suggestedFix from merged duplicate');
   assert.strictEqual(dedupReport.specialistScores['Sec'], 1.0, 'Should clamp 1.5 score to 1.0');
-  console.log('  ✅ PASS: Test 5: Issue deduplication merges duplicates, preserves same-line distinct issues, and clamps scores');
+  assert.strictEqual(dedupReport.specialistScores['Arch'], 0.5, 'Should fallback non-finite score to 0.50');
+  console.log('  ✅ PASS: Test 5: Issue deduplication merges duplicates, preserves untitled distinct issues, and clamps finite scores');
 
   console.log('\n🎉 All 5 Task 03 Specialist Agents tests passed successfully!\n');
 }

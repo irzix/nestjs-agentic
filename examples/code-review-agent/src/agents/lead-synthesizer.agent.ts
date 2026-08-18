@@ -90,11 +90,11 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
     const map = new Map<string, InlineReviewIssue>();
 
     for (const issue of issues) {
-      const normalizedTitle = (issue.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const signature = (issue.title || issue.description || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       const category = issue.category || 'quality';
       const key = issue.filePath && typeof issue.line === 'number' && issue.line > 0
-        ? `${issue.filePath}:${issue.line}:${category}:${normalizedTitle}`
-        : `${issue.filePath}:${category}:${normalizedTitle}`;
+        ? `${issue.filePath}:${issue.line}:${category}:${signature}`
+        : `${issue.filePath}:${category}:${signature}`;
 
       const existing = map.get(key);
       if (!existing) {
