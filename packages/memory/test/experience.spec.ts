@@ -1,8 +1,12 @@
-import { EpisodicMemory } from '@nestjs-agentic/memory';
-import { ExperienceLearner, ReflectionEngine } from '../src';
+import {
+  EpisodicMemory,
+  GenerativeMemoryStore,
+  ExperienceLearner,
+  ReflectionEngine,
+} from '../src';
 
 export async function runExperienceTests() {
-  console.log('🧪 Running @nestjs-agentic/experience Unit Tests...\n');
+  console.log('🧪 Running @nestjs-agentic/memory Experience & Reflexion Tests...\n');
 
   let passed = 0;
   let failed = 0;
@@ -30,8 +34,8 @@ export async function runExperienceTests() {
 
     assert(result.success === true, 'Test 1a: Clean execution returns success: true');
     assert(result.lessonsLearned.length === 0, 'Test 1b: No lessons learned for successful run');
-  } catch (err: any) {
-    assert(false, 'Test 1: Clean Execution', err.message);
+  } catch (err: unknown) {
+    assert(false, 'Test 1: Clean Execution', (err as Error).message);
   }
 
   // TEST 2: Reflexion Critique on Tool Failure (npm -> pnpm)
@@ -57,8 +61,8 @@ export async function runExperienceTests() {
       result.lessonsLearned[0].includes('pnpm'),
       'Test 2c: Lesson correctly advises pnpm over npm',
     );
-  } catch (err: any) {
-    assert(false, 'Test 2: Reflexion Critique', err.message);
+  } catch (err: unknown) {
+    assert(false, 'Test 2: Reflexion Critique', (err as Error).message);
   }
 
   // TEST 3: ExperienceLearner Recording & Retrieval
@@ -78,8 +82,8 @@ export async function runExperienceTests() {
       retrieved[0].lesson.includes('$10,000'),
       'Test 3b: Retrieved lesson content matches',
     );
-  } catch (err: any) {
-    assert(false, 'Test 3: ExperienceLearner Recording & Retrieval', err.message);
+  } catch (err: unknown) {
+    assert(false, 'Test 3: ExperienceLearner Recording & Retrieval', (err as Error).message);
   }
 
   // TEST 4: Prompt Guidance Generation
@@ -102,11 +106,11 @@ export async function runExperienceTests() {
       guidance.includes('maintenance window'),
       'Test 4b: Guidance contains learned lesson rule',
     );
-  } catch (err: any) {
-    assert(false, 'Test 4: Prompt Guidance Generation', err.message);
+  } catch (err: unknown) {
+    assert(false, 'Test 4: Prompt Guidance Generation', (err as Error).message);
   }
 
-  // TEST 5: Integration with @nestjs-agentic/memory
+  // TEST 5: Integration with EpisodicMemory
   try {
     const memory = new EpisodicMemory();
     const learner = new ExperienceLearner({ memoryStore: memory });
@@ -128,10 +132,10 @@ export async function runExperienceTests() {
     const guidance = await learner.buildGuidancePrompt('API Authentication', 'sess_mem_exp');
     assert(
       guidance.includes('Throttle tool calls'),
-      'Test 5a: ExperienceLearner integrated with @nestjs-agentic/memory recorded & retrieved lesson',
+      'Test 5a: ExperienceLearner integrated with memory store recorded & retrieved lesson',
     );
-  } catch (err: any) {
-    assert(false, 'Test 5: Memory Integration', err.message);
+  } catch (err: unknown) {
+    assert(false, 'Test 5: Memory Integration', (err as Error).message);
   }
 
   // TEST 6: Severity-based Cognitive Importance Scoring
@@ -198,14 +202,9 @@ export async function runExperienceTests() {
     assert(false, 'Test 7: GenerativeMemoryStore Integration', (err as Error).message);
   }
 
-  console.log(`\n  📊 Experience Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Experience Unit Tests Failed');
   }
-}
 
-import { GenerativeMemoryStore } from '@nestjs-agentic/memory';
-
-if (require.main === module) {
-  runExperienceTests().catch(() => process.exit(1));
+  console.log(`\n🎉 All ${passed} Experience & Reflexion tests passed successfully.\n`);
 }

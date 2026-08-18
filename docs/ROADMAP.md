@@ -27,9 +27,8 @@ This roadmap outlines the past releases, current development priorities, and fut
 | [`nestjs-agentic`](packages/core) | **Production-intent (v0.5)** | Independent governed agent runtime, model contracts, lifecycle, tool policies, streaming, approvals, and observability. |
 | [`@nestjs-agentic/openai`](packages/model-openai) | **Production-intent (v0.5)** | OpenAI and ChatCompletions compatible provider adapter. |
 | [`@nestjs-agentic/orchestration`](packages/orchestration) | **Experimental (v0.4)** | Sub-agent delegation, parallel execution, SOP state machines, and refinement loops. |
-| [`@nestjs-agentic/memory`](packages/memory) | **Experimental (v0.2)** | Short-term, semantic, episodic, procedural, and scratchpad memory primitives. |
+| [`@nestjs-agentic/memory`](packages/memory) | **Experimental (v0.2)** | Stanford tri-factor scoring, short-term, semantic, episodic, procedural SOP playbooks, and experience reflection. |
 | [`@nestjs-agentic/rag`](packages/rag) | **Experimental (v0.2)** | AST chunking, vector stores, hybrid search, and GraphRAG primitives. |
-| [`@nestjs-agentic/experience`](packages/experience) | **Experimental (v0.2)** | Stanford tri-factor scoring, reflection, and experience learning over memory. |
 | [`@nestjs-agentic/evaluation`](packages/evaluation) | **Experimental (v0.2)** | LLM-as-a-Judge debiasing, trajectory metrics, and benchmark reporting. |
 | [`@nestjs-agentic/mcp`](packages/mcp) | **Planned (v0.8)** | Native Model Context Protocol client transport and tool provider. |
 | [`@nestjs-agentic/adk`](packages/runtime-adk) | **Deprecated Prototype** | Early experimental runtime prototype (to be deprecated). |

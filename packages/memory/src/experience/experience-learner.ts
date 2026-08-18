@@ -1,12 +1,21 @@
 import { randomUUID } from 'crypto';
-import type { AgentMemoryStore, MemoryRecord } from '@nestjs-agentic/memory';
-import type { ExperienceEngine, ExperienceRecord, AgentTrajectory, ReflectionResult } from '../interfaces/experience.interface';
+import type { AgentMemoryStore } from '../interfaces/memory.interface';
+import type {
+  AgentTrajectory,
+  ExperienceEngine,
+  ExperienceRecord,
+  ReflectionResult,
+} from '../interfaces/experience.interface';
 import { ReflectionEngine } from './reflection.engine';
 
 export interface ExperienceLearnerOptions {
   memoryStore?: AgentMemoryStore;
 }
 
+/**
+ * Trajectory experience learner that critiques execution traces, extracts
+ * self-correcting rules, and persists them into cognitive memory.
+ */
 export class ExperienceLearner implements ExperienceEngine {
   private readonly memoryStore?: AgentMemoryStore;
   private readonly reflectionEngine: ReflectionEngine;
@@ -87,13 +96,14 @@ export class ExperienceLearner implements ExperienceEngine {
       const recalled = await this.memoryStore.recall(trigger, {
         sessionId: tenantId ?? 'global_experience',
       });
-      const memoryRecords: ExperienceRecord[] = recalled.map((r: MemoryRecord) => ({
+      const memoryRecords: ExperienceRecord[] = recalled.map((r) => ({
         id: r.id,
         tenantId: r.sessionId,
         agentName: (r.metadata?.agentName as string) ?? 'unknown',
         taskTrigger: (r.metadata?.taskTrigger as string) ?? trigger,
         pattern: (r.metadata?.pattern as string) ?? 'Historical Pattern',
         lesson: (r.metadata?.lesson as string) ?? r.content,
+        importance: r.importance ?? (r.metadata?.importance as number) ?? 0.5,
         timestamp: r.timestamp,
       }));
 

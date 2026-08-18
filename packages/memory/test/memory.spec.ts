@@ -181,13 +181,15 @@ export async function runMemoryTests() {
     throw new Error('Memory Unit Tests Failed');
   }
 
-  // Execute Stanford Tri-Factor Scorer and Procedural Memory Test Suites
+  // Execute Stanford Tri-Factor Scorer, Procedural Memory, and Experience Test Suites
   await runStanfordScorerTests();
   await runProceduralMemoryTests();
+  await runExperienceTests();
 }
 
 import { runStanfordScorerTests } from './stanford-scorer.spec';
 import { runProceduralMemoryTests } from './procedural-memory.spec';
+import { runExperienceTests } from './experience.spec';
 
 if (require.main === module) {
   runMemoryTests().catch(() => process.exit(1));

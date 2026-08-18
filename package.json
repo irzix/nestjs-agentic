@@ -22,7 +22,6 @@
   "workspaces": [
     "packages/core",
     "packages/memory",
-    "packages/experience",
     "packages/rag",
     "packages/orchestration",
     "packages/evaluation",

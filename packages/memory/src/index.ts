@@ -1,5 +1,6 @@
 export * from './interfaces';
 export * from './scoring';
+export * from './experience';
 export * from './stores/short-term.memory';
 export * from './stores/scratchpad.memory';
 export * from './stores/composite.memory';
