@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as crypto from 'node:crypto';
@@ -14,7 +15,7 @@ import * as crypto from 'node:crypto';
 export class GitHubSignatureGuard implements CanActivate {
   private readonly secret: string;
 
-  constructor(secret?: string) {
+  constructor(@Optional() secret?: string) {
     this.secret = secret || process.env.GITHUB_WEBHOOK_SECRET || 'test-secret';
   }
 

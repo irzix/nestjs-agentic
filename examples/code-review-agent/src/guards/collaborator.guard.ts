@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Optional,
 } from '@nestjs/common';
 import type { GitHubWebhookPayload } from '../interfaces/webhook.interface';
 
@@ -20,7 +21,7 @@ export class CollaboratorGuard implements CanActivate {
   private readonly checkerFn?: CollaboratorCheckerFn;
   private readonly allowedUsers: Set<string>;
 
-  constructor(options?: { checkerFn?: CollaboratorCheckerFn; allowedUsers?: string[] }) {
+  constructor(@Optional() options?: { checkerFn?: CollaboratorCheckerFn; allowedUsers?: string[] }) {
     this.checkerFn = options?.checkerFn;
     this.allowedUsers = new Set(options?.allowedUsers || ['maintainer', 'admin', 'irzix', 'collaborator']);
   }
