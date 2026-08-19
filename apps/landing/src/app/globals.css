@@ -378,8 +378,15 @@ pre:not(figure pre):not(.nd-codeblock pre) {
 }
 
 :root {
-  --fd-sidebar-width: 270px;
+  --fd-sidebar-width: 280px;
   --fd-toc-width: 260px;
+}
+
+/* Layout container */
+#nd-docs-layout {
+  display: flex !important;
+  min-height: 100vh !important;
+  width: 100% !important;
 }
 
 /* Sidebar & Search Styling */
@@ -397,6 +404,14 @@ pre:not(figure pre):not(.nd-codeblock pre) {
   flex-direction: column !important;
   overflow-y: auto !important;
   z-index: 20 !important;
+  transform: none !important;
+  flex-shrink: 0 !important;
+}
+
+#nd-page {
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  padding: 1.5rem 2rem !important;
 }
 
 @media (max-width: 768px) {
