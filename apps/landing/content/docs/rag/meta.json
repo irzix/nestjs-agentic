@@ -1,0 +1,12 @@
+{
+  "title": "@nestjs-agentic/rag",
+  "pages": [
+    "index",
+    "hybrid-vector-store",
+    "ast-code-chunking",
+    "retrieval-strategies",
+    "graph-rag",
+    "rerankers-and-compression"
+  ],
+  "defaultOpen": false
+}

@@ -1,0 +1,100 @@
+---
+title: Module Configuration
+description: Configuring AgenticModule with global adapters, limits, durable state stores, and feature registrations.
+---
+
+## Overview
+
+`AgenticModule` is configured via two static methods:
+1. `forRoot(options)` or `forRootAsync(asyncOptions)`: Registers root providers, default models, execution limits, state stores, and telemetry.
+2. `forFeature(options)`: Registers agents, toolsets, and policies in feature modules.
+
+---
+
+## Root Configuration (`forRoot`)
+
+```typescript
+import { Module } from '@nestjs/common';
+import { AgenticModule } from 'nestjs-agentic';
+import { OpenAiModelAdapter } from '@nestjs-agentic/openai';
+import { RedisStateStore } from './stores/redis.store';
+
+@Module({
+  imports: [
+    AgenticModule.forRoot({
+      defaultModel: {
+        provider: 'openai',
+        model: 'gpt-4o',
+      },
+      modelAdapter: new OpenAiModelAdapter({
+        apiKey: process.env.OPENAI_API_KEY,
+        maxRetries: 3,
+        timeoutMs: 45000,
+      }),
+      limits: {
+        maxTotalTokens: 32000,
+        maxIterations: 6,
+        timeoutMs: 60000,
+      },
+      stateStore: new RedisStateStore({
+        host: process.env.REDIS_HOST,
+        port: 6379,
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+---
+
+## Asynchronous Configuration (`forRootAsync`)
+
+When your model configuration or state store depends on `ConfigService`:
+
+```typescript
+@Module({
+  imports: [
+    AgenticModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        defaultModel: {
+          provider: 'openai',
+          model: config.get('AGENT_MODEL', 'gpt-4o'),
+        },
+        modelAdapter: new OpenAiModelAdapter({
+          apiKey: config.getOrThrow('OPENAI_API_KEY'),
+          baseURL: config.get('OPENAI_BASE_URL'),
+        }),
+        limits: {
+          maxTotalTokens: 16000,
+          maxIterations: 4,
+          timeoutMs: 45000,
+        },
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+---
+
+## Feature Registration (`forFeature`)
+
+Feature modules register their own domain agents, toolsets, and policies:
+
+```typescript
+@Module({
+  imports: [
+    AgenticModule.forFeature({
+      agents: [FinanceAgent, ComplianceAgent],
+      toolSets: [PaymentTools, LedgerTools],
+      policies: [HighValueApprovalPolicy, TenantIsolationPolicy],
+    }),
+  ],
+  providers: [PaymentService, LedgerService],
+})
+export class FinanceModule {}
+```

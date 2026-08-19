@@ -1,0 +1,24 @@
+---
+title: Review Synthesis and GitHub API Integration
+description: AST context retrieval, multi-specialist fan-out, composite deduplication, and GitHub reviews.
+---
+
+## Synthesis Pipeline
+
+`LeadSynthesizerAgent` combines assessments from the specialist reviewers:
+
+### 1. Composite Issue Deduplication
+Merges identical issues reported on the same file and line while preserving distinct multi-domain findings:
+
+```text
+DeduplicationKey = filePath : line : category : normalizedSignature
+```
+
+### 2. Telemetry and Execution Log Accordion
+Compiles an internal millisecond-precision OpenTelemetry timeline log attached as a collapsible markdown accordion.
+
+### 3. GitHub Reviews API Dispatch
+Submits a unified review containing:
+- Markdown summary table and top 3 key findings.
+- Inline diff suggestions (`path`, `line`, `suggestion` block).
+- Decision status (`APPROVE` if score >= 0.85, `REQUEST_CHANGES` if critical security issues exist, `COMMENT` otherwise).

@@ -1,3 +1,5 @@
+@import './fumadocs.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -149,4 +151,303 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #3d0a14;
+}
+
+/* ──── FUMADOCS DOCUMENTATION & THEME OVERHAUL ──── */
+:root {
+  --color-fd-background: #fafafa;
+  --color-fd-foreground: #09090b;
+  --color-fd-muted: #f4f4f5;
+  --color-fd-muted-foreground: #71717a;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #09090b;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #09090b;
+  --color-fd-border: rgba(0, 0, 0, 0.08);
+  --color-fd-primary: #e0234e;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #f4f4f5;
+  --color-fd-secondary-foreground: #18181b;
+  --color-fd-accent: rgba(224, 35, 78, 0.08);
+  --color-fd-accent-foreground: #e0234e;
+  --color-fd-ring: #e0234e;
+}
+
+.dark {
+  --color-fd-background: #000000;
+  --color-fd-foreground: #f4f4f5;
+  --color-fd-muted: #0f0f12;
+  --color-fd-muted-foreground: #a1a1aa;
+  --color-fd-popover: #09090b;
+  --color-fd-popover-foreground: #f4f4f5;
+  --color-fd-card: #09090b;
+  --color-fd-card-foreground: #f4f4f5;
+  --color-fd-border: rgba(255, 255, 255, 0.07);
+  --color-fd-primary: #e0234e;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #141418;
+  --color-fd-secondary-foreground: #f4f4f5;
+  --color-fd-accent: rgba(224, 35, 78, 0.12);
+  --color-fd-accent-foreground: #fb7185;
+  --color-fd-ring: #e0234e;
+}
+
+/* Documentation Content Typography */
+#nd-page, [data-docs-page], main {
+  background-color: var(--color-fd-background);
+}
+
+.dark .prose, .dark [data-docs-body] {
+  color: #e4e4e7 !important;
+}
+
+:root:not(.dark) .prose, :root:not(.dark) [data-docs-body] {
+  color: #27272a !important;
+}
+
+.dark .prose h1, .dark .prose h2, .dark .prose h3, .dark .prose h4 {
+  color: #ffffff !important;
+}
+
+:root:not(.dark) .prose h1, :root:not(.dark) .prose h2, :root:not(.dark) .prose h3, :root:not(.dark) .prose h4 {
+  color: #09090b !important;
+}
+
+.prose h1 {
+  font-size: 2rem !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.03em !important;
+  margin-bottom: 0.75rem !important;
+  border-bottom: none !important;
+}
+
+.prose h2 {
+  font-size: 1.35rem !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+  margin-top: 2.25rem !important;
+  margin-bottom: 0.75rem !important;
+  border-bottom: none !important;
+}
+
+.prose h3 {
+  font-size: 1.15rem !important;
+  font-weight: 600 !important;
+  margin-top: 1.5rem !important;
+  margin-bottom: 0.5rem !important;
+  border-bottom: none !important;
+}
+
+.dark .prose p, .dark .prose li {
+  color: #d4d4d8 !important;
+  line-height: 1.75 !important;
+  font-size: 0.95rem !important;
+}
+
+:root:not(.dark) .prose p, :root:not(.dark) .prose li {
+  color: #3f3f46 !important;
+  line-height: 1.75 !important;
+  font-size: 0.95rem !important;
+}
+
+.dark .prose strong {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+}
+
+:root:not(.dark) .prose strong {
+  color: #09090b !important;
+  font-weight: 600 !important;
+}
+
+.prose a {
+  color: #e0234e !important;
+  text-decoration: none !important;
+  font-weight: 500 !important;
+  transition: opacity 0.2s ease;
+}
+
+.prose a:hover {
+  text-decoration: underline !important;
+  text-underline-offset: 3px !important;
+}
+
+.prose hr {
+  border: none !important;
+  border-top: 1px solid var(--color-fd-border) !important;
+  margin: 2.5rem 0 !important;
+}
+
+/* Tables in Prose */
+.prose table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+  margin: 1.5rem 0 !important;
+  font-size: 0.875rem !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+
+.dark .prose th {
+  color: #ffffff !important;
+  background-color: #0d0d11 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding: 0.6rem 0.85rem !important;
+  font-weight: 600 !important;
+  text-align: left !important;
+}
+
+:root:not(.dark) .prose th {
+  color: #09090b !important;
+  background-color: #f4f4f5 !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  padding: 0.6rem 0.85rem !important;
+  font-weight: 600 !important;
+  text-align: left !important;
+}
+
+.dark .prose td {
+  color: #d4d4d8 !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  padding: 0.55rem 0.85rem !important;
+}
+
+:root:not(.dark) .prose td {
+  color: #3f3f46 !important;
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  padding: 0.55rem 0.85rem !important;
+}
+
+/* Fix inline code: dark sleek badge instead of jarring white */
+.dark :not(pre) > code {
+  background-color: #141418 !important;
+  color: #fda4af !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding: 0.15rem 0.45rem !important;
+  border-radius: 0.375rem !important;
+  font-family: var(--font-mono), monospace !important;
+  font-size: 0.85em !important;
+  font-weight: 500 !important;
+}
+
+:root:not(.dark) :not(pre) > code {
+  background-color: #f1f1f4 !important;
+  color: #be123c !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  padding: 0.15rem 0.45rem !important;
+  border-radius: 0.375rem !important;
+  font-family: var(--font-mono), monospace !important;
+  font-size: 0.85em !important;
+  font-weight: 500 !important;
+}
+
+/* Hide duplicate top navbar */
+#nd-subnav {
+  display: none !important;
+}
+
+/* Code block containers: Single clean container without nested double borders */
+figure, .nd-codeblock, div[data-rehype-pretty-code-fragment] {
+  border: 1px solid var(--color-fd-border) !important;
+  border-radius: 0.75rem !important;
+  background-color: var(--color-fd-muted) !important;
+  overflow: hidden !important;
+  margin: 1.5rem 0 !important;
+  box-shadow: none !important;
+}
+
+figure pre, .nd-codeblock pre, div[data-rehype-pretty-code-fragment] pre {
+  border: none !important;
+  background-color: transparent !important;
+  padding: 1rem 1.25rem !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  font-family: var(--font-mono), monospace !important;
+  font-size: 0.875rem !important;
+  line-height: 1.6 !important;
+}
+
+/* Standalone pre */
+pre:not(figure pre):not(.nd-codeblock pre) {
+  border: 1px solid var(--color-fd-border) !important;
+  background-color: var(--color-fd-muted) !important;
+  border-radius: 0.75rem !important;
+  padding: 1rem 1.25rem !important;
+  margin: 1.5rem 0 !important;
+  font-family: var(--font-mono), monospace !important;
+  font-size: 0.875rem !important;
+  line-height: 1.6 !important;
+}
+
+/* Sidebar & Search Styling */
+#nd-sidebar {
+  background-color: var(--color-fd-background) !important;
+  border-right: 1px solid var(--color-fd-border) !important;
+  padding: 0.75rem 0.5rem !important;
+}
+
+#nd-sidebar header {
+  margin-bottom: 0.5rem !important;
+  padding: 0.25rem 0.5rem !important;
+}
+
+#nd-sidebar button[data-search-full] {
+  border: 1px solid var(--color-fd-border) !important;
+  border-radius: 0.5rem !important;
+  background-color: var(--color-fd-muted) !important;
+  color: var(--color-fd-muted-foreground) !important;
+  margin-bottom: 0.75rem !important;
+  padding: 0.45rem 0.75rem !important;
+}
+
+#nd-sidebar button[data-search-full]:hover {
+  border-color: rgba(224, 35, 78, 0.3) !important;
+}
+
+#nd-sidebar a {
+  border-radius: 0.5rem !important;
+  transition: background-color 0.15s ease, color 0.15s ease !important;
+}
+
+#nd-sidebar a[data-active="true"] {
+  background-color: rgba(224, 35, 78, 0.1) !important;
+  color: #e0234e !important;
+  border: none !important;
+  box-shadow: none !important;
+  font-weight: 600 !important;
+}
+
+.dark #nd-sidebar a[data-active="true"] {
+  background-color: rgba(224, 35, 78, 0.14) !important;
+  color: #fb7185 !important;
+}
+
+#nd-sidebar a:not([data-active="true"]):hover {
+  background-color: var(--color-fd-muted) !important;
+}
+
+#nd-sidebar p[data-separator], #nd-sidebar div[data-separator] {
+  margin-top: 1rem !important;
+  margin-bottom: 0.25rem !important;
+  padding-left: 0.65rem !important;
+  font-size: 0.72rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase !important;
+  color: var(--color-fd-muted-foreground) !important;
+  opacity: 0.8 !important;
+}
+
+/* Table of contents (Right rail) */
+#nd-toc, [data-toc] {
+  color: var(--color-fd-muted-foreground) !important;
+}
+
+#nd-toc a:hover, [data-toc] a:hover {
+  color: var(--color-fd-foreground) !important;
+}
+
+#nd-toc a[data-active="true"], [data-toc] a[data-active="true"] {
+  color: var(--color-fd-primary) !important;
+  font-weight: 600 !important;
 }

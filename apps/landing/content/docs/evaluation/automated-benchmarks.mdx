@@ -1,0 +1,29 @@
+---
+title: Automated Benchmark Suites
+description: Continuous regression testing and trajectory efficiency benchmarks for CI pipelines.
+---
+
+## BenchmarkRunner
+
+`BenchmarkRunner` executes a battery of test cases against your agent and scores accuracy and efficiency:
+
+```typescript
+import { BenchmarkRunner } from '@nestjs-agentic/evaluation';
+
+const runner = new BenchmarkRunner({
+  agent: codeReviewAgent,
+  testCases: [
+    {
+      id: 'test_sql_injection',
+      input: 'Review diff with raw query string interpolation',
+      expectedToolCalls: ['flagVulnerability'],
+      expectedFindings: ['CWE-89'],
+    },
+  ],
+});
+
+const report = await runner.runSuite();
+
+console.log(`Success Rate: ${report.successRate * 100}%`);
+console.log(`Step Efficiency: ${report.averageStepEfficiency.toFixed(2)}`);
+```

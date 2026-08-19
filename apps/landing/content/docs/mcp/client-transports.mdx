@@ -1,0 +1,40 @@
+---
+title: MCP Client Transports
+description: Configuring Stdio and SSE transports to communicate with MCP tool servers.
+---
+
+## Transports
+
+`@nestjs-agentic/mcp` provides two client transport implementations:
+
+### 1. `StdioClientTransport`
+Spawns a local CLI tool or binary subprocess (e.g. SQLite MCP server, GitHub CLI MCP server) and communicates via standard input/output streams:
+
+```typescript
+import { StdioClientTransport, McpClient } from '@nestjs-agentic/mcp';
+
+const transport = new StdioClientTransport({
+  command: 'npx',
+  args: ['-y', '@modelcontextprotocol/server-sqlite', '--db-path', './data.db'],
+});
+
+const client = new McpClient({ transport });
+await client.connect();
+```
+
+---
+
+### 2. `SseClientTransport`
+Connects to remote microservices or serverless endpoints over Server-Sent Events (HTTP/SSE):
+
+```typescript
+import { SseClientTransport, McpClient } from '@nestjs-agentic/mcp';
+
+const transport = new SseClientTransport({
+  url: 'https://mcp.internal.acme.com/sse',
+  headers: { Authorization: `Bearer ${process.env.MCP_TOKEN}` },
+});
+
+const client = new McpClient({ transport });
+await client.connect();
+```

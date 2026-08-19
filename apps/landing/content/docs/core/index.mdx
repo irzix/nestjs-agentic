@@ -1,0 +1,60 @@
+---
+title: Core Overview
+description: Foundations of the NestJS Agentic runtime, dependency injection integration, and architecture.
+---
+
+## What is @nestjs-agentic/core?
+
+`@nestjs-agentic/core` is the foundational kernel of the agentic ecosystem. It provides the core runtime abstractions, lifecycle hooks, tool resolution mechanisms, policy enforcement engines, and state store drivers necessary to run autonomous agents in enterprise environments.
+
+---
+
+## Key Responsibilities
+
+- **Declarative Metadata Engine**: Extracts parameter schemas, tool definitions, and agent configurations at module compilation time.
+- **Dynamic Tool Execution Pipeline**: Validates incoming model arguments against JSON Schemas and executes tools within guarded NestJS service contexts.
+- **Tri-State Governance**: Intercepts tool calls before invocation to enforce deterministic policy boundaries (`allow`, `deny`, `require_approval`).
+- **Resumable State Machine**: Persists suspended agent executions (Human-in-the-Loop) to durable state stores without blocking the event loop.
+- **Execution Defense & Limits**: Enforces hard token limits (`maxTotalTokens`), iteration bounds (`maxIterations`), and execution timeouts.
+- **OpenTelemetry Observability**: Spans model interactions, tool resolutions, and policy decisions for enterprise tracing.
+
+---
+
+## Architectural Lifecycle
+
+When `AgentRunner.run()` is called, the core runtime executes the following sequence:
+
+```mermaid
+sequenceDiagram
+    participant App as NestJS Application
+    participant Runner as AgentRunner
+    participant Exec as AgentExecutor
+    participant Gov as Policy Engine
+    participant LLM as ModelAdapter
+    participant Store as StateStore
+
+    App->>Runner: run(agentName, prompt, context)
+    Runner->>Exec: execute(agentConfig, prompt, context)
+    loop Up to maxIterations
+        Exec->>LLM: generate(messages, toolSchemas)
+        LLM-->>Exec: ModelResponse (content, toolCalls)
+        alt Tool Call Requested
+            Exec->>Gov: evaluate(toolCall, context)
+            alt Policy = Allow
+                Gov-->>Exec: allow
+                Exec->>Exec: Execute Tool Method
+                Exec->>Exec: Append ToolResult to Messages
+            else Policy = Require Approval
+                Gov-->>Exec: require_approval
+                Exec->>Store: saveApprovalRequest(checkpoint)
+                Exec-->>App: status: "pending_approval", requestId
+            else Policy = Deny
+                Gov-->>Exec: deny (reason)
+                Exec->>Exec: Append Security Refusal to Messages
+            end
+        else Final Answer
+            Exec-->>Runner: AgentResponse
+        end
+    end
+    Runner-->>App: AgentResponse (content, usage, duration)
+```

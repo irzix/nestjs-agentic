@@ -1,0 +1,85 @@
+---
+title: Human-in-the-Loop (HITL)
+description: Resumable execution checkpoints, approval records, and asynchronous turn resumption.
+---
+
+## Overview
+
+When a policy evaluates to `require_approval`, the agent runtime suspends the active turn without holding open an active HTTP connection or Node.js event loop thread.
+
+The complete execution state (conversation history, pending tool closure, model parameters, security context) is serialized into an `ApprovalRequest` record within the configured `StateStore`.
+
+---
+
+## The Approval Flow
+
+```mermaid
+sequenceDiagram
+    participant User as End User
+    participant Agent as Agent Runtime
+    participant Store as StateStore
+    participant Admin as Human Approver / Admin Portal
+
+    User->>Agent: "Refund $2,500 for Order #8821"
+    Agent->>Agent: Evaluate Policy -> require_approval
+    Agent->>Store: Save Checkpoint (requestId: "req_99182")
+    Agent-->>User: "Refund requires managerial approval. Request ID: req_99182"
+    
+    Note over Admin,Store: Hours or days later...
+    Admin->>Store: Review Request req_99182
+    Admin->>Agent: approvalService.approve("req_99182", { approverId: "admin_1" })
+    Agent->>Agent: Restore Checkpoint & Execute Tool
+    Agent->>Agent: Resume Turn with Tool Output
+    Agent-->>Admin: "Refund executed. Final turn response generated."
+```
+
+---
+
+## Approving or Rejecting Requests
+
+Inject `ApprovalService` into your admin controllers:
+
+```typescript
+// src/admin/approvals.controller.ts
+import { Controller, Post, Param, Body, UseGuards } from '@nestjs/common';
+import { ApprovalService } from 'nestjs-agentic';
+
+@Controller('admin/approvals')
+export class ApprovalsController {
+  constructor(private readonly approvalService: ApprovalService) {}
+
+  @Post(':id/approve')
+  async approveRequest(
+    @Param('id') requestId: string,
+    @Body('approverId') approverId: string,
+  ) {
+    const result = await this.approvalService.approve(requestId, {
+      approverId,
+      approvedAt: new Date(),
+    });
+
+    return {
+      status: 'approved',
+      finalAgentAnswer: result.content,
+      tokensUsed: result.usage.totalTokens,
+    };
+  }
+
+  @Post(':id/reject')
+  async rejectRequest(
+    @Param('id') requestId: string,
+    @Body('reason') reason: string,
+    @Body('approverId') approverId: string,
+  ) {
+    const result = await this.approvalService.reject(requestId, {
+      reason,
+      approverId,
+    });
+
+    return {
+      status: 'rejected',
+      finalAgentAnswer: result.content,
+    };
+  }
+}
+```

@@ -1,0 +1,69 @@
+---
+title: Execution Limits and Budgets
+description: Guarding against runaway loops, excessive token consumption, and unbounded tool executions.
+---
+
+## Runaway Loop Defense
+
+Unconstrained agent loops can result in massive API bills or infinite recursion if a model enters a hallucination loop.
+
+`nestjs-agentic` provides hard runtime guardrails configured at the module or per-run level.
+
+---
+
+## ExecutionLimits Interface
+
+```typescript
+export interface ExecutionLimits {
+  /** Maximum total tokens (prompt + completion) across all turns */
+  maxTotalTokens?: number;
+  /** Maximum number of model-to-tool round trips */
+  maxIterations?: number;
+  /** Wall-clock execution timeout in milliseconds */
+  timeoutMs?: number;
+}
+```
+
+---
+
+## Global Limits vs Per-Run Overrides
+
+### Global Configuration
+
+```typescript
+AgenticModule.forRoot({
+  limits: {
+    maxTotalTokens: 20000,
+    maxIterations: 5,
+    timeoutMs: 45000,
+  },
+});
+```
+
+### Per-Run Override
+
+```typescript
+const response = await runner.run('agent_name', prompt, context, {
+  limits: {
+    maxTotalTokens: 50000, // Higher budget for complex reasoning tasks
+    maxIterations: 8,
+    timeoutMs: 90000,
+  },
+});
+```
+
+---
+
+## Error Handling
+
+When a limit is exceeded, the runtime throws a typed `BudgetExceededError`:
+
+```typescript
+try {
+  await runner.run('complex_agent', prompt);
+} catch (error) {
+  if (error instanceof BudgetExceededError) {
+    console.error(`Execution halted: ${error.limitType} exceeded (limit: ${error.limitValue}, actual: ${error.actualValue})`);
+  }
+}
+```

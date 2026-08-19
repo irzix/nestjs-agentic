@@ -9,6 +9,8 @@
 # next.js build output
 /.next/
 /out/
+/.source/
+/src/generated-docs/
 
 # production
 /build

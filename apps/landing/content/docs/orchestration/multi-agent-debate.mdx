@@ -1,0 +1,15 @@
+---
+title: Multi-Agent Debate Rounds
+description: Dialectic cross-examination where specialist agents challenge each other's conclusions.
+---
+
+## Why Multi-Agent Debate?
+
+Single models suffer from confirmation bias. When multiple agents review a complex artifact independently, disagreements often emerge (e.g. Security says "BLOCK", Performance says "OPTIMAL").
+
+`DebateRoundRunner` conducts structured debate rounds:
+
+1. **Round 1 (Independent Assessment)**: Specialists produce baseline scores and findings.
+2. **Variance Check**: If assessment scores diverge significantly (variance exceeding configured threshold), Round 2 is triggered.
+3. **Round 2 (Cross-Examination)**: Each agent receives the peer reviews of the other specialists and must either defend, modify, or concede their score.
+4. **Synthesis**: The lead synthesizer reconciles the final consensus.

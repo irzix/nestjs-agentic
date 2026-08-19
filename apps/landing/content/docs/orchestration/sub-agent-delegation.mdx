@@ -1,0 +1,25 @@
+---
+title: Sub-Agent Delegation
+description: The Principle of Least Privilege and dynamic capability narrowing for sub-agents.
+---
+
+## Capability Narrowing
+
+Giving every tool to a single agent increases hallucination rates and security attack surfaces.
+
+`SubAgentDelegator` isolates sub-tasks to specialized agents configured with strictly scoped tools:
+
+```typescript
+import { SubAgentDelegator } from '@nestjs-agentic/orchestration';
+
+const delegator = new SubAgentDelegator({
+  supervisor: leadAgent,
+  subAgents: [securityReviewer, architectureReviewer, testQualityReviewer],
+});
+
+// Supervisor delegates sub-goal to specialist
+const securityFindings = await delegator.delegateTo(
+  'security_reviewer',
+  'Audit auth controller diff for CWE-79 and CWE-89 vulnerabilities',
+);
+```

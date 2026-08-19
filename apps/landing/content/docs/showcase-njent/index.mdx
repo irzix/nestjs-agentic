@@ -1,0 +1,27 @@
+---
+title: Njent Code Review Agent Architecture
+description: End-to-end architectural breakdown of the flagship autonomous GitHub PR review agent.
+---
+
+## Overview
+
+**Njent** is the flagship showcase agent built on `nestjs-agentic`. It autonomously ingests GitHub pull request webhooks, parses repository syntax trees with AST RAG, fans out to specialist review agents, conducts multi-agent debates, and submits rich, line-anchored review comments via the GitHub API.
+
+```mermaid
+flowchart TD
+    GH[GitHub PR Webhook] --> Ingress[WebhookController & HMAC Verification]
+    Ingress --> Guard[CollaboratorGuard & Idempotency Cache]
+    Guard --> Orch[PRReviewOrchestrator]
+    Orch --> AST[AST Codebase RAG & Hybrid Vector Indexing]
+    Orch --> Pruner[ContextPruner: Clean Unified Diff]
+    Orch --> FanOut[Parallel Specialist Fan-Out]
+    FanOut --> Sec[Security Specialist]
+    FanOut --> Arch[Architecture Specialist]
+    FanOut --> Qual[Quality Specialist]
+    Sec & Arch & Qual --> VarCheck{Score Variance High?}
+    VarCheck -- Yes --> Debate[Multi-Agent Debate Round 2]
+    Debate --> Synth[LeadSynthesizerAgent]
+    VarCheck -- No --> Synth
+    Synth --> Dedup[Composite Issue Deduplication]
+    Synth --> GHAPI[GitHub Reviews API: Summary + Inline Suggestions]
+```

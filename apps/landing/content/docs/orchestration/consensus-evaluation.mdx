@@ -1,0 +1,39 @@
+---
+title: Consensus Evaluation and Fleiss' Kappa
+description: Mathematical measurement of inter-rater agreement and convergence across autonomous agents.
+---
+
+## Fleiss' Kappa Inter-Rater Reliability
+
+`ConsensusEngine` evaluates agreement among $N$ agents classifying $n$ findings into categorical severity buckets.
+
+The Fleiss' Kappa coefficient (kappa) is computed as:
+
+```text
+kappa = (P_observed - P_chance) / (1 - P_chance)
+```
+
+Where:
+- `P_observed` is the observed proportion of pairwise agreement among raters.
+- `P_chance` is the expected agreement occurring purely by chance.
+
+### Interpretation Scale
+
+| $\kappa$ Value | Consensus Level | System Action |
+| :--- | :--- | :--- |
+| **$> 0.80$** | Almost Perfect Agreement | Direct Merge / Auto-Approve |
+| **$0.61 - 0.80$** | Substantial Agreement | Standard Summary with Comment |
+| **$< 0.60$** | Moderate to Poor Agreement | Triggers Debate Round 2 or Human Sign-off |
+
+```typescript
+import { ConsensusEngine } from '@nestjs-agentic/orchestration';
+
+const consensus = ConsensusEngine.computeKappa([
+  securityAssessment,
+  architectureAssessment,
+  qualityAssessment,
+]);
+
+console.log(`Consensus Score: ${(consensus.score * 100).toFixed(1)}%`);
+console.log(`Kappa: ${consensus.kappa.toFixed(3)}`);
+```

@@ -1,0 +1,72 @@
+---
+title: Custom Endpoints and Self-Hosted Models
+description: Connecting Ollama, vLLM, Groq, Together, OpenRouter, and Azure OpenAI.
+---
+
+## Overview
+
+Any endpoint adhering to the OpenAI Chat Completions protocol can be used by overriding `baseURL`.
+
+---
+
+## 1. Local Models via Ollama
+
+Run local quantized models (e.g. `llama3.3`, `qwen2.5-coder`, `deepseek-r1`):
+
+```typescript
+const ollamaAdapter = new OpenAiModelAdapter({
+  baseURL: 'http://localhost:11434/v1',
+  apiKey: 'ollama', // Any dummy string
+});
+```
+
+---
+
+## 2. High-Throughput vLLM / TensorRT-LLM
+
+For self-hosted GPU clusters running vLLM:
+
+```typescript
+const vllmAdapter = new OpenAiModelAdapter({
+  baseURL: 'http://vllm-cluster.internal:8000/v1',
+  apiKey: process.env.VLLM_API_KEY,
+});
+```
+
+---
+
+## 3. Ultra-Fast Inference via Groq
+
+```typescript
+const groqAdapter = new OpenAiModelAdapter({
+  baseURL: 'https://api.groq.com/openai/v1',
+  apiKey: process.env.GROQ_API_KEY,
+});
+```
+
+---
+
+## 4. Multi-Model Routing via OpenRouter
+
+```typescript
+const openRouterAdapter = new OpenAiModelAdapter({
+  baseURL: 'https://openrouter.ai/api/v1',
+  apiKey: process.env.OPENROUTER_API_KEY,
+  defaultHeaders: {
+    'HTTP-Referer': 'https://github.com/irzix/nestjs-agentic',
+    'X-Title': 'NestJS Agentic Enterprise Runtime',
+  },
+});
+```
+
+---
+
+## 5. Azure OpenAI Service
+
+```typescript
+const azureAdapter = new OpenAiModelAdapter({
+  baseURL: 'https://your-resource-name.openai.azure.com/openai/deployments/gpt-4o',
+  apiKey: process.env.AZURE_OPENAI_KEY,
+  defaultQuery: { 'api-version': '2024-08-01-preview' },
+});
+```

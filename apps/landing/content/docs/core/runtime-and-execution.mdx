@@ -1,0 +1,80 @@
+---
+title: Runtime and Execution Loop
+description: Deep dive into AgentExecutor, AgentRunner, turn management, streaming, and tool resolution closures.
+---
+
+## Overview
+
+The runtime execution loop is managed by `AgentExecutor` and exposed through `AgentRunner`. It translates high-level prompts into multi-turn model interactions, tool resolutions, and structured outputs.
+
+---
+
+## Synchronous Execution (`run`)
+
+```typescript
+const response = await runner.run(
+  'agent_name',
+  'Process this task...',
+  context,
+  overrideOptions,
+);
+```
+
+### AgentResponse Structure
+
+```typescript
+interface AgentResponse {
+  content: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  durationMs: number;
+  iterations: number;
+  toolCallsExecuted: number;
+  status: 'completed' | 'pending_approval' | 'budget_exceeded' | 'failed';
+  approvalRequestId?: string;
+}
+```
+
+---
+
+## Real-Time Event Streaming (`runStream`)
+
+`runStream()` returns an `AsyncIterable<AgentStreamEvent>` allowing real-time token streaming and tool lifecycle telemetry to web clients:
+
+```typescript
+const eventStream = runner.runStream('agent_name', 'Generate report...');
+
+for await (const event of eventStream) {
+  switch (event.type) {
+    case 'token':
+      console.log('Token:', event.token);
+      break;
+    case 'tool_start':
+      console.log(`Tool ${event.toolName} started with arguments:`, event.args);
+      break;
+    case 'tool_end':
+      console.log(`Tool ${event.toolName} completed in ${event.durationMs}ms`);
+      break;
+    case 'policy_decision':
+      console.log(`Policy evaluation: ${event.decision}`);
+      break;
+    case 'complete':
+      console.log(`Final output produced. Total tokens: ${event.usage.totalTokens}`);
+      break;
+  }
+}
+```
+
+---
+
+## Tool Resolution Closures
+
+Tools are not executed in an unconstrained global scope. When an agent is initialized:
+
+1. Method metadata is inspected to bind the method instance to its NestJS provider.
+2. An argument validator parses and verifies input payloads against JSON Schema specifications.
+3. Attached `@UsePolicies()` interceptors wrap the execution in a security boundary.
+4. `@Context()` parameters inject tenant/user security context directly into the method closure.

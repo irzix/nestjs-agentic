@@ -1,0 +1,14 @@
+---
+title: Model Context Protocol (MCP) Overview
+description: Standardized tool interoperability and dynamic execution via Anthropic's Model Context Protocol.
+---
+
+## Overview
+
+The **Model Context Protocol (MCP)** is an open standard enabling AI models to connect securely to external tools and data sources.
+
+`@nestjs-agentic/mcp` connects NestJS agents directly to MCP servers:
+
+- Discovers tools dynamically from remote MCP servers.
+- Translates MCP tool schemas into `@nestjs-agentic/core` tools automatically.
+- Supports both local subprocess (`stdio`) and remote network (`sse`) transports.

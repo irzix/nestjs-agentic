@@ -1,0 +1,9 @@
+{
+  "title": "@nestjs-agentic/mcp",
+  "pages": [
+    "index",
+    "client-transports",
+    "dynamic-tool-discovery"
+  ],
+  "defaultOpen": false
+}

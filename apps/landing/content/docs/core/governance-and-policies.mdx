@@ -1,0 +1,77 @@
+---
+title: Governance and Policies
+description: Deterministic security boundaries, policy interceptors, and tri-state evaluation.
+---
+
+## The Principle of Governed Actions
+
+Autonomous agents should never have unconstrained direct access to sensitive mutations (e.g. database updates, financial transfers, email dispatch).
+
+`nestjs-agentic` implements **Deterministic Tool Governance** via policy interceptors.
+
+---
+
+## Policy Tri-State Evaluation
+
+Every `ToolPolicy` evaluates the requested tool execution and returns one of three decisions:
+
+```typescript
+type PolicyDecision =
+  | { action: 'allow' }
+  | { action: 'deny'; reason: string }
+  | { action: 'require_approval'; reason: string; requiredRole?: string };
+```
+
+---
+
+## Creating a Custom Policy
+
+Implement the `ToolPolicy` interface:
+
+```typescript
+// src/policies/finance-transfer.policy.ts
+import { Injectable } from '@nestjs/common';
+import { ToolPolicy, PolicyDecision, ToolCallContext } from 'nestjs-agentic';
+
+@Injectable()
+export class FinanceTransferPolicy implements ToolPolicy {
+  async evaluate(call: ToolCallContext): Promise<PolicyDecision> {
+    const { amount } = call.args as { amount?: number };
+    const { roles, tenantId } = call.context.security;
+
+    // Rule 1: Tenant isolation check
+    if (!tenantId) {
+      return { action: 'deny', reason: 'Missing tenant isolation context' };
+    }
+
+    // Rule 2: Role authorization
+    if (!roles?.includes('finance_officer')) {
+      return {
+        action: 'deny',
+        reason: 'Caller lacks required role: finance_officer',
+      };
+    }
+
+    // Rule 3: High-value threshold triggers Human-in-the-Loop
+    if (typeof amount === 'number' && amount > 10000) {
+      return {
+        action: 'require_approval',
+        reason: `Transfer amount $${amount} exceeds autonomous threshold of $10,000`,
+        requiredRole: 'cfo',
+      };
+    }
+
+    return { action: 'allow' };
+  }
+}
+```
+
+---
+
+## Policy Stacking
+
+When multiple policies are attached via `@UsePolicies(PolicyA, PolicyB)`:
+
+1. If any policy returns `deny`, execution is immediately halted with a refusal.
+2. If any policy returns `require_approval` (and none denied), execution suspends for human sign-off.
+3. Only if all policies return `allow` is the tool closure executed.

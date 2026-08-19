@@ -1,0 +1,44 @@
+---
+title: Episodic Memory and Stanford Tri-Factor Scoring
+description: Experiential trajectory recall using Stanford tri-factor scoring (Recency, Importance, Relevance).
+---
+
+## EpisodicMemory Store
+
+`EpisodicMemory` stores past interaction episodes (user requests, model actions, tool executions, outcomes) to enable experience-based learning.
+
+---
+
+## Stanford Tri-Factor Retrieval Formula
+
+```text
+Score = (w_recency * S_recency) + (w_importance * S_importance) + (w_relevance * S_relevance)
+```
+
+Where:
+- `S_recency = exp(-lambda * delta_time)`: Exponential decay over elapsed time.
+- `S_importance (0.0 to 1.0)`: Intrinsic significance score assigned during lesson extraction.
+- `S_relevance (0.0 to 1.0)`: Cosine similarity between the recall query and the episode embedding.
+
+```typescript
+import { EpisodicMemory } from '@nestjs-agentic/memory';
+
+const episodic = new EpisodicMemory({
+  weights: {
+    recency: 0.2,
+    importance: 0.3,
+    relevance: 0.5,
+  },
+  decayFactorLambda: 0.005,
+});
+
+await episodic.recordEpisode({
+  summary: 'Attempted database migration without transaction rollback guard',
+  lesson: 'Always wrap multi-table DDL migrations in BEGIN/COMMIT blocks',
+  importance: 0.95,
+  outcome: 'failed',
+});
+
+// Recall past lessons when generating a new migration
+const lessons = await episodic.recall('Create schema migration for orders table');
+```

@@ -1,0 +1,39 @@
+---
+title: OpenAI Adapter Overview
+description: OpenAI and Chat Completions protocol adapter for the nestjs-agentic runtime.
+---
+
+## Overview
+
+`@nestjs-agentic/openai` implements the `ModelAdapter` interface, bridging the core runtime with the OpenAI SDK and all Chat Completions-compatible API endpoints.
+
+---
+
+## Installation
+
+```bash
+npm install @nestjs-agentic/openai
+```
+
+---
+
+## Basic Configuration
+
+```typescript
+import { OpenAiModelAdapter } from '@nestjs-agentic/openai';
+
+const adapter = new OpenAiModelAdapter({
+  apiKey: process.env.OPENAI_API_KEY,
+  maxRetries: 3,
+  timeoutMs: 60000,
+});
+```
+
+---
+
+## Supported Capabilities
+
+- **Tool Calling & Structured Outputs**: Converts `@Tool()` parameter definitions into OpenAPI/JSON Schema function call objects.
+- **Reasoning Models Compatibility**: Automatically handles `max_completion_tokens` instead of `max_tokens` for reasoning models (`o1`, `o3-mini`, `gpt-5-luna`).
+- **Transient Error Retries**: Automatic exponential backoff for HTTP 429 (rate limits) and 5xx transient server errors.
+- **AbortSignal Forwarding**: Propagates cancellation signals when requests are aborted or timeouts expire.

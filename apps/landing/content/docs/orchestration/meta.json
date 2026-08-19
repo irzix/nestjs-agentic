@@ -1,0 +1,12 @@
+{
+  "title": "@nestjs-agentic/orchestration",
+  "pages": [
+    "index",
+    "sub-agent-delegation",
+    "parallel-fan-out",
+    "iterative-refinement",
+    "multi-agent-debate",
+    "consensus-evaluation"
+  ],
+  "defaultOpen": false
+}

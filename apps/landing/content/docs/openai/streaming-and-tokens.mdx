@@ -1,0 +1,48 @@
+---
+title: Streaming and Token Tracking
+description: Token streaming mechanics, SSE chunk assembly, and usage tracking.
+---
+
+## Token Streaming
+
+`OpenAiModelAdapter.stream()` handles chunked Server-Sent Events (SSE) from the model provider:
+
+```typescript
+const stream = adapter.stream({
+  messages: [...],
+  tools: [...],
+  model: 'gpt-4o',
+});
+
+for await (const chunk of stream) {
+  if (chunk.type === 'token') {
+    process.stdout.write(chunk.token);
+  }
+}
+```
+
+---
+
+## Fragmented Tool Call Assembly
+
+When streaming, LLM providers stream tool call arguments across multiple split chunks. `OpenAiModelAdapter` reconstructs tool calls:
+
+1. Collects fragmented name and argument text across chunks.
+2. Re-assembles full JSON argument strings.
+3. Parses JSON safely into typed JavaScript argument dictionaries before passing to `AgentExecutor`.
+
+---
+
+## Token Consumption Accounting
+
+The final chunk emitted by the adapter includes an accurate provider `usage` object:
+
+```typescript
+interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+```
+
+This usage is continuously accumulated by the agent runtime and checked against `ExecutionLimits.maxTotalTokens`.

@@ -1,0 +1,9 @@
+{
+  "title": "@nestjs-agentic/openai",
+  "pages": [
+    "index",
+    "streaming-and-tokens",
+    "custom-endpoints"
+  ],
+  "defaultOpen": false
+}

@@ -1,0 +1,40 @@
+---
+title: Cognitive Memory Architecture
+description: 5-Tier multi-layered cognitive memory hierarchy for autonomous NestJS agents.
+---
+
+## Overview
+
+Human intelligence relies on distinct memory systems: immediate working memory, structured scratchpads, long-term factual associations, and experiential episodic recall.
+
+`@nestjs-agentic/memory` brings this **5-Tier Cognitive Memory Taxonomy** natively into NestJS:
+
+```mermaid
+graph TD
+    subgraph Cognitive Memory Hierarchy
+        L1[Tier 1: ShortTermMemory<br/>Sliding Turn Window]
+        L2[Tier 2: ScratchpadMemory<br/>Working State & Checkpoints]
+        L3[Tier 3: LongTermMemory<br/>User Profiles & Preferences]
+        L4[Tier 4: SemanticMemory<br/>Vector Embeddings & Factual Docs]
+        L5[Tier 5: EpisodicMemory<br/>Stanford Tri-Factor Experiential Recall]
+    end
+
+    L1 --> Comp[CompositeMemoryStore<br/>Unified Federated Recall]
+    L2 --> Comp
+    L3 --> Comp
+    L4 --> Comp
+    L5 --> Comp
+    Comp --> Agent[Agent Context Assembly]
+```
+
+---
+
+## 5-Tier Memory Taxonomy
+
+| Tier | Memory Store | Persistence | Purpose | Retrieval Method |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tier 1** | `ShortTermMemory` | Session (In-Memory / Redis) | Immediate multi-turn dialogue history | FIFO / Sliding Window |
+| **Tier 2** | `ScratchpadMemory` | In-Flight Turn | Temporary reasoning notes, sub-goals, and checklists | Key-Value Lookups |
+| **Tier 3** | `LongTermMemory` | Durable (Postgres / Redis) | User profiles, persistent facts, tenant constraints | Entity-Attribute Query |
+| **Tier 4** | `SemanticMemory` | Vector Database (PgVector / Qdrant) | Factual domain documentation and guidelines | Cosine Similarity |
+| **Tier 5** | `EpisodicMemory` | Durable Graph / Vector | Past trajectory successes, failure critiques, lessons | Stanford Tri-Factor Scoring |

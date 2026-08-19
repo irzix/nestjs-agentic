@@ -1,0 +1,34 @@
+---
+title: Iterative Refinement Loops
+description: Supervisor-worker feedback loops with acceptance predicates and token budget bounds.
+---
+
+## RefinementLoopRunner
+
+`RefinementLoopRunner` pairs a **Worker Agent** (generating drafts/code) with a **Critic Agent** (evaluating against rules):
+
+```mermaid
+flowchart LR
+    Worker[Worker Agent<br/>Generate Patch] --> Critic[Critic Agent<br/>Audit & Score]
+    Critic -- Score < Threshold --> Worker
+    Critic -- Score >= Threshold --> Done[Approved Output]
+```
+
+```typescript
+import { RefinementLoopRunner } from '@nestjs-agentic/orchestration';
+
+const refinementLoop = new RefinementLoopRunner({
+  worker: codeGeneratorAgent,
+  critic: linterCriticAgent,
+  maxIterations: 3,
+  targetScore: 0.90,
+  budget: {
+    maxTotalTokens: 25000,
+    maxTotalTimeMs: 45000,
+  },
+});
+
+const refinedCode = await refinementLoop.run({
+  prompt: 'Generate user registration service with bcrypt password hashing',
+});
+```

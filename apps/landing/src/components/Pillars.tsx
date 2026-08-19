@@ -32,7 +32,7 @@ const cards = [
     tagline: 'Production Ready · Full Streaming',
     description: (
       <>
-        The framework manages the model-to-tool loop, parameter schema validation, token execution limits, OpenTelemetry tracing, and per-session conversation history. <code className="text-rose-300 font-mono">@nestjs-agentic/model-openai</code> connects OpenAI and any Chat Completions compatible endpoint.
+        The framework manages the model-to-tool loop, parameter schema validation, token execution limits, OpenTelemetry tracing, and per-session conversation history. <code className="text-rose-300 font-mono">@nestjs-agentic/openai</code> connects OpenAI and any Chat Completions compatible endpoint.
       </>
     ),
   },
@@ -112,10 +112,10 @@ export function Pillars() {
   }, []);
 
   return (
-    <section id="pillars" className="nest-hero-frame w-full">
+    <section id="pillars" className="nest-hero-frame w-full p-2 sm:p-4">
       <div
         ref={frameRef}
-        className="nest-hero-inner min-h-screen w-full flex flex-col justify-center px-8 sm:px-20 lg:px-28 py-32 relative overflow-hidden"
+        className="nest-hero-inner min-h-screen w-full flex flex-col justify-center px-4 sm:px-12 lg:px-24 py-16 sm:py-24 lg:py-32 relative overflow-hidden"
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
       >
@@ -129,17 +129,17 @@ export function Pillars() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-80px' }}
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-          className="max-w-4xl text-left mb-20 relative z-10 space-y-4"
+          className="max-w-4xl text-left mb-10 sm:mb-16 relative z-10 space-y-3 sm:space-y-4"
         >
-          <div className="font-mono text-[11px] text-zinc-500 tracking-[0.2em]">
+          <div className="font-mono text-[10px] sm:text-[11px] text-zinc-500 tracking-[0.2em]">
             &#123; ENTERPRISE CAPABILITIES &#125;
           </div>
-          <h2 className="text-4xl sm:text-5xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-[1.15] font-sans">
-            Enterprise AI Agent Architecture.<br />Engineered for production resilience.
+          <h2 className="text-2xl sm:text-4xl lg:text-[3.2rem] font-normal tracking-[-0.02em] text-white leading-tight sm:leading-[1.15] font-sans">
+            Enterprise AI Agent Architecture.<br className="hidden sm:inline" /> Engineered for production resilience.
           </h2>
         </motion.div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 relative z-10">
           {cards.map((card, idx) => {
             const Icon = card.icon;
             return (
@@ -149,28 +149,28 @@ export function Pillars() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: '-60px' }}
                 transition={{ duration: 0.7, delay: idx * 0.1, ease: [0.16, 1, 0.3, 1] }}
-                className="nest-glass-card p-8 sm:p-10 flex flex-col justify-between min-h-[300px] sm:min-h-[320px] relative overflow-hidden group"
+                className="nest-glass-card p-6 sm:p-8 lg:p-10 flex flex-col justify-between min-h-0 sm:min-h-[320px] rounded-2xl relative overflow-hidden group"
               >
                 <div>
-                  <div className="w-12 h-12 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-8 shadow-inner">
-                    <Icon className="w-6 h-6" />
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-5 sm:mb-8 shadow-inner">
+                    <Icon className="w-5 h-5 sm:w-6 sm:h-6" />
                   </div>
 
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-2xl font-medium text-white tracking-tight font-sans">
+                  <div className="flex items-center justify-between mb-3 sm:mb-4">
+                    <h3 className="text-lg sm:text-2xl font-medium text-white tracking-tight font-sans">
                       {card.title}
                     </h3>
-                    <ArrowUpRight className="w-5 h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
+                    <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-600 group-hover:text-rose-400 transition-colors" />
                   </div>
 
-                  <p className="text-sm text-zinc-400 leading-relaxed font-sans max-w-md font-normal">
+                  <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed font-sans max-w-none sm:max-w-md font-normal">
                     {card.description}
                   </p>
                 </div>
 
-                <div className="pt-8 mt-6 border-t border-white/5 flex items-center justify-between text-xs font-mono">
+                <div className="pt-5 sm:pt-8 mt-5 sm:mt-6 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between text-xs font-mono gap-1.5 sm:gap-0">
                   <span className="text-rose-400/90 font-medium">{card.badge}</span>
-                  <span className="text-zinc-600">{card.tagline}</span>
+                  <span className="text-zinc-500 sm:text-zinc-600 text-[11px] sm:text-xs">{card.tagline}</span>
                 </div>
               </motion.div>
             );

@@ -4,11 +4,13 @@ module.exports = {
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    './content/**/*.{js,ts,jsx,tsx,mdx}',
+    './node_modules/fumadocs-ui/dist/**/*.js',
   ],
   theme: {
     extend: {
       colors: {
-        background: '#09090b',
+        background: '#000000',
         surface: '#121215',
         brand: {
           red: '#E0234E',
@@ -21,4 +23,4 @@ module.exports = {
     },
   },
   plugins: [],
-}
+};

@@ -1,0 +1,9 @@
+{
+  "title": "Case Study: Njent Code Review Agent",
+  "pages": [
+    "index",
+    "ingress-and-guards",
+    "pipeline-and-synthesis"
+  ],
+  "defaultOpen": false
+}
