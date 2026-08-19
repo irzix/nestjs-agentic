@@ -18,10 +18,10 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
 1. Deduplicate overlapping issues between Security, Architecture, and Quality reviewers.
 2. Group inline issues by file and line number, sorted by severity (critical > high > medium > low).
 3. Compute an overall pull request decision:
-   - "APPROVED": Zero critical or high severity issues, overall score >= 0.85.
-   - "CHANGES_REQUESTED": One or more critical/high severity issues or overall score < 0.70.
-   - "COMMENT": Informational suggestions only without fatal blockers.
-4. Generate a constructive, professional Markdown summary highlighting strengths and specific steps required to resolve findings.`,
+   - "APPROVED": Zero critical issues, at most 0-1 isolated high issues, overall score >= 0.70. Medium/low/info suggestions are non-blocking.
+   - "CHANGES_REQUESTED": One or more critical severity issues, multiple high severity issues, or overall score < 0.60.
+   - "COMMENT": Non-fatal review observations or informational inquiries.
+4. Generate a constructive, professional Markdown summary highlighting strengths and separating blocking issues from advisory suggestions.`,
       tools: [],
     };
   }
@@ -52,14 +52,16 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
       ? Math.round((totalScore / assessments.length) * 1000) / 1000
       : 1.0;
 
-    const hasCritical = deduplicatedIssues.some((i) => i.severity === 'critical');
-    const hasHigh = deduplicatedIssues.some((i) => i.severity === 'high');
+    const criticalIssues = deduplicatedIssues.filter((i) => i.severity === 'critical');
+    const highIssues = deduplicatedIssues.filter((i) => i.severity === 'high');
 
     let overallStatus: SynthesizedPRReviewReport['overallStatus'] = 'APPROVED';
-    if (hasCritical || hasHigh || overallScore < 0.70) {
+    if (criticalIssues.length > 0 || highIssues.length >= 2 || overallScore < 0.60) {
       overallStatus = 'CHANGES_REQUESTED';
-    } else if (deduplicatedIssues.length > 0) {
+    } else if (highIssues.length === 1 || (deduplicatedIssues.length > 0 && overallScore < 0.75)) {
       overallStatus = 'COMMENT';
+    } else {
+      overallStatus = 'APPROVED';
     }
 
     const summaryMarkdown = this.buildSummaryMarkdown(overallStatus, overallScore, assessments, deduplicatedIssues);
@@ -146,23 +148,37 @@ Your role is to evaluate and synthesize the domain findings from specialized sub
       lines.push(`| **${a.reviewerName}** | \`${a.category}\` | ${(score * 100).toFixed(0)}% | ${passText} |`);
     }
 
-    if (issues.length > 0) {
-      lines.push('', '#### 🔍 Key Findings:');
-      const topIssues = issues.slice(0, 3);
-      for (const issue of topIssues) {
+    const blockingIssues = issues.filter((i) => i.severity === 'critical' || i.severity === 'high');
+    const advisoryIssues = issues.filter((i) => i.severity === 'medium' || i.severity === 'low' || i.severity === 'info');
+
+    if (blockingIssues.length > 0) {
+      lines.push('', '#### 🚨 Blocking Findings (Action Required):');
+      for (const issue of blockingIssues) {
         lines.push(`- **[${issue.severity.toUpperCase()}]** \`${issue.filePath}:${issue.line}\` — **${issue.title}**: ${issue.description}`);
         if (issue.suggestedFix) {
           lines.push(`  > *Suggested Fix:* \`${issue.suggestedFix}\``);
         }
       }
-      if (issues.length > 3) {
-        lines.push('', `*+ ${issues.length - 3} additional suggestion(s) attached directly to diff lines above.*`);
+    }
+
+    if (advisoryIssues.length > 0) {
+      lines.push('', '#### 💡 Advisory & Quality Suggestions (Non-blocking):');
+      const topAdvisory = advisoryIssues.slice(0, 3);
+      for (const issue of topAdvisory) {
+        lines.push(`- **[${issue.severity.toUpperCase()}]** \`${issue.filePath}:${issue.line}\` — **${issue.title}**: ${issue.description}`);
+        if (issue.suggestedFix) {
+          lines.push(`  > *Suggested Improvement:* \`${issue.suggestedFix}\``);
+        }
       }
-    } else {
-      lines.push('', '🎉 **No issues identified! Code is compliant with architectural and security standards.**');
+      if (advisoryIssues.length > 3) {
+        lines.push('', `*+ ${advisoryIssues.length - 3} additional advisory suggestion(s) attached inline.*`);
+      }
+    }
+
+    if (issues.length === 0) {
+      lines.push('', '🎉 **No issues identified! Code is fully compliant with architectural, governance, and security standards.**');
     }
 
     return lines.join('\n');
   }
 }
-
