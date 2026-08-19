@@ -60,8 +60,9 @@ export function classifyFileRole(filePath: string): FileRole {
     normalized.endsWith('.yaml') ||
     normalized.endsWith('.yml') ||
     normalized.endsWith('.toml') ||
-    normalized.endsWith('rc') ||
-    normalized.includes('.config.')
+    normalized.includes('.config.') ||
+    /(^|\/)\.[^/]*rc(\.[a-z0-9]+)?$/i.test(normalized) ||
+    /(^|\/)(dockerfile|\.gitignore|\.env\.example)$/i.test(normalized)
   ) {
     return 'CONFIG';
   }
