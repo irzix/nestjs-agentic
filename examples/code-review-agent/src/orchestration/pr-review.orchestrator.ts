@@ -3,6 +3,7 @@ import { AgentRunner } from 'nestjs-agentic';
 import { ParallelSubAgentRunner } from '@nestjs-agentic/orchestration';
 import { CodebaseRAGService } from '../rag/codebase-rag.service';
 import { ContextPruner } from '../ingestion/context-pruner';
+import { RepositoryInspector } from '../ingestion/repository-inspector';
 import { UCurvePromptAssembler } from '../context/u-curve-prompt-assembler';
 import { SecurityReviewerAgent } from '../agents/security-reviewer.agent';
 import { ArchitectureReviewerAgent } from '../agents/architecture-reviewer.agent';
@@ -358,26 +359,32 @@ Output JSON conforming to: {"reviewerName": string, "category": "security"|"arch
     }
 
     // 2. Parse changed files from the diff and ingest baseline repository context for RAG
-    const changedFilePaths = PrReviewOrchestrator.parseDiffFilePaths(rawDiff);
+    const changedFilePaths = RepositoryInspector.parseSafeDiffPaths(rawDiff);
     if (token && event.repoFullName) {
       const ingestStart = Date.now();
-      const baselineManifests = [
-        'package.json',
-        'packages/core/package.json',
-        'packages/memory/package.json',
-        'packages/rag/package.json',
-        'packages/orchestration/package.json',
-        'packages/evaluation/package.json',
-        'packages/mcp/package.json',
-        'packages/model-openai/package.json',
-        'packages/meta/package.json',
-      ];
-      const targetPathsToIngest = Array.from(new Set([...changedFilePaths, ...baselineManifests]));
+
+      // Step 2a: Dynamically fetch root package.json to discover workspace topology without hardcoded paths
+      const rootManifestFiles = await PrReviewOrchestrator.fetchChangedFileContents(
+        token,
+        event.repoFullName,
+        ['package.json'],
+      );
+
+      const rootContent = rootManifestFiles.find((f) => f.filePath === 'package.json')?.content;
+      const discoveredManifests = RepositoryInspector.discoverBaselineManifests(rootContent);
+
+      // Merge changed diff paths with discovered project manifests
+      const targetPathsToIngest = Array.from(new Set([...changedFilePaths, ...discoveredManifests])).slice(
+        0,
+        RepositoryInspector.MAX_INGESTION_FILES,
+      );
+
       const fileContents = await PrReviewOrchestrator.fetchChangedFileContents(
         token,
         event.repoFullName,
         targetPathsToIngest,
       );
+
       if (fileContents.length > 0) {
         const indexed = await this.ragService.ingestCodebase(fileContents);
         tracer.record(
@@ -516,36 +523,13 @@ ${tracer.formatLog()}
   }
 
   /**
-   * Parses the paths of source, documentation, and configuration files modified in a unified diff.
-   *
-   * @param diff Raw unified diff text.
-   * @returns Deduplicated array of changed file paths.
-   */
-  private static parseDiffFilePaths(diff: string): string[] {
-    const paths = new Set<string>();
-    for (const line of diff.split('\n')) {
-      // Match "--- a/path/to/file.ext" or "+++ b/path/to/file.ext" lines
-      const match = line.match(/^(?:\+\+\+|---) [ab]\/(.+)$/);
-      if (
-        match &&
-        !match[1].endsWith('.d.ts') &&
-        !match[1].endsWith('package-lock.json') &&
-        !match[1].endsWith('.lock')
-      ) {
-        paths.add(match[1]);
-      }
-    }
-    return Array.from(paths);
-  }
-
-  /**
    * Fetches the raw source content of changed files via the GitHub Contents API.
-   * Files that cannot be fetched (deleted, binary, etc.) are silently skipped.
+   * Enforces strict path validation, file size limits, and in-memory secret scrubbing.
    *
    * @param token GitHub personal access token.
    * @param repoFullName Repository full name, e.g. `"irzix/nestjs-agentic"`.
    * @param filePaths Relative file paths within the repository.
-   * @returns Array of objects with `filePath` and decoded `content`.
+   * @returns Array of objects with `filePath` and sanitized `content`.
    */
   private static async fetchChangedFileContents(
     token: string,
@@ -553,10 +537,23 @@ ${tracer.formatLog()}
     filePaths: string[],
   ): Promise<Array<{ filePath: string; content: string }>> {
     const results: Array<{ filePath: string; content: string }> = [];
-    for (const filePath of filePaths) {
+
+    // Filter through path traversal and security allowlist
+    const sanitizedCandidates = filePaths
+      .map((p) => RepositoryInspector.validateAndSanitizePath(p))
+      .filter((res) => res.valid && res.sanitizedPath)
+      .map((res) => res.sanitizedPath!);
+
+    for (const filePath of sanitizedCandidates.slice(0, RepositoryInspector.MAX_INGESTION_FILES)) {
       try {
+        // Encode each path segment to prevent URL manipulation
+        const encodedPath = filePath
+          .split('/')
+          .map((segment) => encodeURIComponent(segment))
+          .join('/');
+
         const response = await fetch(
-          `https://api.github.com/repos/${repoFullName}/contents/${encodeURIComponent(filePath)}`,
+          `https://api.github.com/repos/${repoFullName}/contents/${encodedPath}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -566,13 +563,21 @@ ${tracer.formatLog()}
           },
         );
         if (!response.ok) continue;
-        const data = (await response.json()) as { content?: string; encoding?: string };
+        const data = (await response.json()) as { content?: string; encoding?: string; size?: number };
+
+        // Enforce maximum file size boundary (500KB)
+        if (data.size && data.size > RepositoryInspector.MAX_FILE_SIZE_BYTES) {
+          continue;
+        }
+
         if (data.encoding === 'base64' && data.content) {
-          const decoded = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
-          results.push({ filePath, content: decoded });
+          const rawDecoded = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
+          // In-memory credential and secret scrubbing before vectorization
+          const scrubbed = RepositoryInspector.redactSecrets(rawDecoded);
+          results.push({ filePath, content: scrubbed });
         }
       } catch {
-        // Silently skip files that cannot be fetched (deleted, moved, etc.)
+        // Silently skip files that cannot be fetched (deleted, binary, or non-existent)
       }
     }
     return results;
