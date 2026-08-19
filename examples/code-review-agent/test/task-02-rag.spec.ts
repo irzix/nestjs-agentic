@@ -75,20 +75,22 @@ export class OrderService {
   const traversalPath = RepositoryInspector.validateAndSanitizePath('../../etc/passwd');
   assert.strictEqual(traversalPath.valid, false, 'Path traversal should be rejected');
 
+  const encodedTraversal = RepositoryInspector.validateAndSanitizePath('%2e%2e/etc/passwd');
+  assert.strictEqual(encodedTraversal.valid, false, 'Percent-encoded traversal should be rejected');
+
   const validPath = RepositoryInspector.validateAndSanitizePath('src/agent/sample.ts');
   assert.strictEqual(validPath.valid, true, 'Valid TypeScript path should be accepted');
-  console.log('  ✅ PASS: Test 4: RepositoryInspector validated path security boundaries');
+  console.log('  ✅ PASS: Test 4: RepositoryInspector validated path security & encoded traversal boundaries');
 
-  // Test 5: Dynamic Workspace & Manifest Discovery
+  // Test 5: Dynamic Workspace Directory Discovery
   const mockRootPkg = JSON.stringify({
     name: 'custom-monorepo',
     workspaces: ['packages/*', 'apps/*'],
   });
-  const manifests = RepositoryInspector.discoverBaselineManifests(mockRootPkg);
-  assert.ok(manifests.includes('package.json'), 'Root package.json must be included');
-  assert.ok(manifests.includes('packages/*/package.json'), 'Discovered packages/* workspace glob');
-  assert.ok(manifests.includes('apps/*/package.json'), 'Discovered apps/* workspace glob');
-  console.log('  ✅ PASS: Test 5: Dynamic monorepo workspace discovery without hardcoded paths');
+  const workspaceDirs = RepositoryInspector.discoverWorkspaceDirectories(mockRootPkg);
+  assert.ok(workspaceDirs.includes('packages'), 'Discovered packages workspace directory');
+  assert.ok(workspaceDirs.includes('apps'), 'Discovered apps workspace directory');
+  console.log('  ✅ PASS: Test 5: Dynamic monorepo workspace directory discovery without hardcoded paths');
 
   // Test 6: Secret Content Redaction
   const rawSensitiveCode = 'const token = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"; const sk = "sk-1234567890abcdefghijklmnopqrstuvwxyz";';

@@ -371,13 +371,22 @@ Output JSON conforming to: {"reviewerName": string, "category": "security"|"arch
       );
 
       const rootContent = rootManifestFiles.find((f) => f.filePath === 'package.json')?.content;
-      const discoveredManifests = RepositoryInspector.discoverBaselineManifests(rootContent);
+      const discoveredDirs = RepositoryInspector.discoverWorkspaceDirectories(rootContent);
+
+      // Step 2b: Resolve actual workspace package.json paths dynamically
+      let workspaceManifestPaths: string[] = [];
+      if (discoveredDirs.length > 0) {
+        workspaceManifestPaths = await PrReviewOrchestrator.fetchWorkspacePackageManifestPaths(
+          token,
+          event.repoFullName,
+          discoveredDirs,
+        );
+      }
 
       // Merge changed diff paths with discovered project manifests
-      const targetPathsToIngest = Array.from(new Set([...changedFilePaths, ...discoveredManifests])).slice(
-        0,
-        RepositoryInspector.MAX_INGESTION_FILES,
-      );
+      const targetPathsToIngest = Array.from(
+        new Set(['package.json', ...workspaceManifestPaths, ...changedFilePaths]),
+      ).slice(0, RepositoryInspector.MAX_INGESTION_FILES);
 
       const fileContents = await PrReviewOrchestrator.fetchChangedFileContents(
         token,
@@ -523,6 +532,50 @@ ${tracer.formatLog()}
   }
 
   /**
+   * Dynamically resolves and fetches package.json files from discovered workspace directories via GitHub Contents API.
+   *
+   * @param token GitHub personal access token.
+   * @param repoFullName Repository full name.
+   * @param workspaceDirs Discovered workspace root folders (e.g. ['packages', 'apps']).
+   * @returns Array of relative manifest paths (e.g. ['packages/core/package.json', ...]).
+   */
+  private static async fetchWorkspacePackageManifestPaths(
+    token: string,
+    repoFullName: string,
+    workspaceDirs: string[],
+  ): Promise<string[]> {
+    const manifestPaths: string[] = [];
+
+    for (const dir of workspaceDirs) {
+      try {
+        const response = await fetch(
+          `https://api.github.com/repos/${repoFullName}/contents/${encodeURIComponent(dir)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github.v3+json',
+              'User-Agent': 'Njent-Code-Review-Agent',
+            },
+          },
+        );
+        if (!response.ok) continue;
+        const items = (await response.json()) as Array<{ name?: string; type?: string }>;
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            if (item.type === 'dir' && item.name && !item.name.startsWith('.')) {
+              manifestPaths.push(`${dir}/${item.name}/package.json`);
+            }
+          }
+        }
+      } catch {
+        // Silently skip on network or permission failure
+      }
+    }
+
+    return manifestPaths;
+  }
+
+  /**
    * Fetches the raw source content of changed files via the GitHub Contents API.
    * Enforces strict path validation, file size limits, and in-memory secret scrubbing.
    *
@@ -572,6 +625,10 @@ ${tracer.formatLog()}
 
         if (data.encoding === 'base64' && data.content) {
           const rawDecoded = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
+          // Enforce unconditional decoded size cap
+          if (Buffer.byteLength(rawDecoded, 'utf-8') > RepositoryInspector.MAX_FILE_SIZE_BYTES) {
+            continue;
+          }
           // In-memory credential and secret scrubbing before vectorization
           const scrubbed = RepositoryInspector.redactSecrets(rawDecoded);
           results.push({ filePath, content: scrubbed });

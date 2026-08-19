@@ -2,11 +2,11 @@
  * Repository Inspector & Path Policy Governance.
  *
  * Provides generic, zero-trust security boundaries for code review ingestion:
- * 1. Path traversal and malformed filename sanitization.
+ * 1. Path traversal and malformed filename sanitization (including percent-encoded paths).
  * 2. Strict allowlist for reviewable source, doc, and config file extensions.
  * 3. Comprehensive denylist for secret-bearing files (.env, keys, credentials, certificates).
  * 4. In-memory secret scrubbing before RAG indexing and LLM prompt assembly.
- * 5. Dynamic monorepo workspace & manifest discovery without hardcoded package names.
+ * 5. Dynamic monorepo workspace directory discovery without hardcoded package names.
  */
 
 export interface PathValidationResult {
@@ -129,10 +129,18 @@ export class RepositoryInspector {
       return { valid: false, reason: 'Empty or invalid path type' };
     }
 
-    // Strip control characters, null bytes, and normalize slashes
-    const sanitized = rawPath.replace(/[\r\n\x00-\x1f\x7f]/g, '').trim().replace(/\\/g, '/');
+    // Safely decode any percent-encoded components first to prevent %2e%2e traversal bypasses
+    let decoded = rawPath;
+    try {
+      decoded = decodeURIComponent(rawPath);
+    } catch {
+      return { valid: false, reason: 'Malformed URI encoding in path' };
+    }
 
-    // Reject path traversal and absolute paths
+    // Strip control characters, null bytes, and normalize slashes
+    const sanitized = decoded.replace(/[\r\n\x00-\x1f\x7f]/g, '').trim().replace(/\\/g, '/');
+
+    // Reject path traversal, absolute paths, and double slashes
     if (
       sanitized.startsWith('/') ||
       sanitized.includes('..') ||
@@ -177,7 +185,7 @@ export class RepositoryInspector {
    * Parses safe, reviewable file paths from a unified git diff.
    * Only target `b/` paths that exist in the post-change revision are included.
    *
-   * @param diff Raw unified diff string.
+   * @param diff Raw unified diff text.
    * @returns Deduplicated array of sanitized, valid file paths.
    */
   static parseSafeDiffPaths(diff: string): string[] {
@@ -220,38 +228,51 @@ export class RepositoryInspector {
   }
 
   /**
-   * Dynamically discovers baseline project manifests for RAG without hardcoding specific package names.
-   * Parses root `package.json` workspace globs (e.g. `packages/*`, `apps/*`, `libs/*`) if present.
+   * Dynamically discovers monorepo workspace directory roots (e.g. `['packages', 'apps', 'libs']`)
+   * from root `package.json` content with runtime schema validation.
    *
-   * @param rootPackageJsonContent Optional decoded content of root package.json.
-   * @returns Array of relative manifest paths safe to ingest for baseline context.
+   * @param rootPackageJsonContent Decoded content of root package.json.
+   * @returns Array of relative directory roots.
    */
-  static discoverBaselineManifests(rootPackageJsonContent?: string): string[] {
-    const discovered: string[] = ['package.json'];
+  static discoverWorkspaceDirectories(rootPackageJsonContent?: string): string[] {
+    const directories: string[] = [];
+    if (!rootPackageJsonContent) return directories;
 
-    if (rootPackageJsonContent) {
-      try {
-        const pkg = JSON.parse(rootPackageJsonContent) as {
-          workspaces?: string[] | { packages?: string[] };
-        };
+    try {
+      const parsed: unknown = JSON.parse(rootPackageJsonContent);
+      if (typeof parsed !== 'object' || parsed === null) {
+        return directories;
+      }
 
-        const workspaceGlobs = Array.isArray(pkg.workspaces)
-          ? pkg.workspaces
-          : pkg.workspaces?.packages || [];
+      const pkg = parsed as Record<string, unknown>;
+      let rawGlobs: unknown[] = [];
 
-        // For each workspace glob pattern like "packages/*" or "apps/*", generate generic candidate manifests
-        for (const glob of workspaceGlobs) {
-          const cleanGlob = glob.replace(/\/\*+$/, '').replace(/^\.\//, '');
-          if (cleanGlob && !cleanGlob.includes('..')) {
-            // Include generic package manifest placeholder convention for multi-package monorepos
-            discovered.push(`${cleanGlob}/*/package.json`);
+      if (Array.isArray(pkg.workspaces)) {
+        rawGlobs = pkg.workspaces;
+      } else if (
+        typeof pkg.workspaces === 'object' &&
+        pkg.workspaces !== null &&
+        Array.isArray((pkg.workspaces as Record<string, unknown>).packages)
+      ) {
+        rawGlobs = (pkg.workspaces as { packages: unknown[] }).packages;
+      }
+
+      for (const item of rawGlobs) {
+        if (typeof item === 'string') {
+          // Normalize glob pattern like "packages/*" or "apps/*" into base directory name
+          const cleanDir = item
+            .replace(/\/\*+$/, '')
+            .replace(/^\.\//, '')
+            .trim();
+          if (cleanDir && !cleanDir.includes('..') && !cleanDir.startsWith('/')) {
+            directories.push(cleanDir);
           }
         }
-      } catch {
-        // Fall back to standard root package.json if malformed
       }
+    } catch {
+      // Gracefully return empty array on malformed JSON
     }
 
-    return Array.from(new Set(discovered));
+    return Array.from(new Set(directories));
   }
 }
