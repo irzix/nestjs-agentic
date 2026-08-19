@@ -11,7 +11,6 @@ export default function RootDocsLayout({ children }: { children: ReactNode }) {
       }}
       sidebar={{
         defaultOpenLevel: 0,
-        collapsible: true,
         banner: (
           <a
             href="/"

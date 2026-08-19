@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Manrope, JetBrains_Mono } from 'next/font/google';
-import { RootProvider } from 'fumadocs-ui/provider';
 import './globals.css';
+import { RootProvider } from 'fumadocs-ui/provider/next';
 
 const manrope = Manrope({
   subsets: ['latin'],

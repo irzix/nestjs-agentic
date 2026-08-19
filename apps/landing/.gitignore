@@ -11,6 +11,8 @@
 /out/
 /.source/
 /src/generated-docs/
+/AGENTS.md
+/CLAUDE.md
 
 # production
 /build

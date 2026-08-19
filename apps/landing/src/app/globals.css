@@ -1,8 +1,6 @@
-@import './fumadocs.css';
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
 
 @layer base {
   html {
@@ -11,7 +9,7 @@
   }
 
   html, body {
-    @apply bg-[#000000] text-zinc-100 antialiased selection:bg-rose-600/30 selection:text-rose-200 p-0 m-0 w-full overflow-x-hidden;
+    @apply bg-[#000000] text-zinc-100 antialiased selection:bg-rose-600/30 selection:text-rose-200 p-0 m-0 min-h-screen;
     font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
@@ -379,11 +377,63 @@ pre:not(figure pre):not(.nd-codeblock pre) {
   line-height: 1.6 !important;
 }
 
+:root {
+  --fd-sidebar-width: 280px;
+  --fd-toc-width: 260px;
+}
+
+/* Layout container */
+#nd-docs-layout {
+  display: flex !important;
+  min-height: 100vh !important;
+  width: 100% !important;
+  position: relative !important;
+}
+
 /* Sidebar & Search Styling */
 #nd-sidebar {
+  width: var(--fd-sidebar-width) !important;
+  min-width: var(--fd-sidebar-width) !important;
+  max-width: var(--fd-sidebar-width) !important;
+  position: sticky !important;
+  top: 0 !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  align-self: flex-start !important;
   background-color: var(--color-fd-background) !important;
   border-right: 1px solid var(--color-fd-border) !important;
   padding: 0.75rem 0.5rem !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  z-index: 20 !important;
+  transform: none !important;
+  flex-shrink: 0 !important;
+}
+
+#nd-page {
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  padding: 1.5rem 2rem !important;
+}
+
+/* Table of contents (Right rail) */
+#nd-toc, [data-toc] {
+  position: sticky !important;
+  top: 1.5rem !important;
+  max-height: calc(100vh - 3rem) !important;
+  overflow-y: auto !important;
+  align-self: flex-start !important;
+  flex-shrink: 0 !important;
+  color: var(--color-fd-muted-foreground) !important;
+}
+
+@media (max-width: 768px) {
+  #nd-sidebar[data-collapsed="true"],
+  #nd-sidebar[data-state="closed"] {
+    display: none !important;
+  }
 }
 
 #nd-sidebar header {
