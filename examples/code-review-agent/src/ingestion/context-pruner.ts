@@ -4,31 +4,57 @@
 export type FileRole = 'DOCUMENTATION' | 'TEST' | 'CONFIG' | 'SOURCE';
 
 /**
- * Classifies a repository file path into its structural role.
+ * Classifies a repository file path into its structural role with strict precedence.
+ *
+ * Precedence rules:
+ * 1. TEST: Any file in test directories or matching test/spec patterns (*.spec.*, *.test.*, test/**).
+ * 2. SOURCE: Files inside source roots (packages/../src, apps/../src, src/..) unless ending in .md/.mdx.
+ * 3. DOCUMENTATION: Markdown files (*.md, *.mdx) or dedicated docs directories not in src/.
+ * 4. CONFIG: Build/config artifacts (*.json, *.yaml, *.yml, *.config.*).
+ * 5. Default: SOURCE (Zero-trust fallback).
  *
  * @param filePath Path of the file in the repository.
  * @returns Classified FileRole.
  */
 export function classifyFileRole(filePath: string): FileRole {
-  const normalized = filePath.toLowerCase();
-  if (
-    normalized.endsWith('.md') ||
-    normalized.endsWith('.mdx') ||
-    normalized.includes('/docs/') ||
-    normalized.includes('/content/') ||
-    normalized.startsWith('docs/') ||
-    normalized.startsWith('content/')
-  ) {
-    return 'DOCUMENTATION';
-  }
+  const sanitized = filePath.replace(/[\r\n\x00-\x1f\x7f]/g, '').trim();
+  const normalized = sanitized.replace(/\\/g, '/').toLowerCase();
+
+  // 1. Tests take immediate precedence
   if (
     normalized.includes('.spec.') ||
     normalized.includes('.test.') ||
     normalized.startsWith('test/') ||
-    normalized.includes('/test/')
+    normalized.includes('/test/') ||
+    normalized.includes('/__tests__/')
   ) {
     return 'TEST';
   }
+
+  // 2. Markdown and dedicated documentation files
+  if (
+    normalized.endsWith('.md') ||
+    normalized.endsWith('.mdx') ||
+    normalized.endsWith('.markdown') ||
+    normalized.endsWith('.rst') ||
+    normalized.endsWith('.txt')
+  ) {
+    return 'DOCUMENTATION';
+  }
+
+  // 3. Dedicated docs roots (if NOT inside a code source folder like /src/)
+  const isInsideSrc = normalized.startsWith('src/') || normalized.includes('/src/');
+  if (
+    !isInsideSrc &&
+    (normalized.startsWith('docs/') ||
+      normalized.startsWith('content/') ||
+      normalized.includes('/docs/') ||
+      normalized.includes('/content/'))
+  ) {
+    return 'DOCUMENTATION';
+  }
+
+  // 4. Configuration and build files
   if (
     normalized.endsWith('.json') ||
     normalized.endsWith('.yaml') ||
@@ -39,12 +65,14 @@ export function classifyFileRole(filePath: string): FileRole {
   ) {
     return 'CONFIG';
   }
+
+  // 5. Default safe fallback is SOURCE
   return 'SOURCE';
 }
 
 /**
  * Prunes noisy, generated, lock, and binary diffs from the raw git diff before
- * presenting context to the LLM agent, annotating each retained file with its role.
+ * presenting context to the LLM agent, annotating each retained file with sanitized metadata.
  */
 export class ContextPruner {
   private static readonly IGNORED_PATTERNS = [
@@ -93,12 +121,14 @@ export class ContextPruner {
       }
 
       const role = classifyFileRole(filePath);
-      const roleHeader = `[FILE ROLE: ${role}] Path: ${filePath}\n`;
+      // Sanitize path against control chars, HTML tags, and prompt injection
+      const sanitizedPath = filePath.replace(/[\r\n\x00-\x1f\x7f]/g, '').replace(/[<>]/g, '').slice(0, 300);
+      const roleHeader = `<!-- [FILE_METADATA: {"path": "${sanitizedPath}", "role": "${role}"}] -->\n`;
 
       const lines = fileDiff.split('\n');
       if (lines.length > maxLinesPerFile) {
         const truncated = roleHeader + lines.slice(0, maxLinesPerFile).join('\n') +
-          `\n\n... [TRUNCATED: ${lines.length - maxLinesPerFile} lines omitted for file ${filePath}] ...\n`;
+          `\n\n... [TRUNCATED: ${lines.length - maxLinesPerFile} lines omitted for file ${sanitizedPath}] ...\n`;
         retainedDiffs.push(truncated);
         truncatedFiles.push(filePath);
       } else {
