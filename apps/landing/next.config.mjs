@@ -1,8 +1,6 @@
 import { createMDX } from 'fumadocs-mdx/next';
 
-const withMDX = createMDX({
-  outDir: 'src/generated-docs',
-});
+const withMDX = createMDX();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

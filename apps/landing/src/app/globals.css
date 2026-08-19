@@ -1,5 +1,3 @@
-@import './fumadocs.css';
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -379,11 +377,33 @@ pre:not(figure pre):not(.nd-codeblock pre) {
   line-height: 1.6 !important;
 }
 
+:root {
+  --fd-sidebar-width: 270px;
+  --fd-toc-width: 260px;
+}
+
 /* Sidebar & Search Styling */
 #nd-sidebar {
+  width: var(--fd-sidebar-width) !important;
+  min-width: var(--fd-sidebar-width) !important;
+  max-width: var(--fd-sidebar-width) !important;
+  position: sticky !important;
+  top: 0 !important;
+  height: 100vh !important;
   background-color: var(--color-fd-background) !important;
   border-right: 1px solid var(--color-fd-border) !important;
   padding: 0.75rem 0.5rem !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow-y: auto !important;
+  z-index: 20 !important;
+}
+
+@media (max-width: 768px) {
+  #nd-sidebar[data-collapsed="true"],
+  #nd-sidebar[data-state="closed"] {
+    display: none !important;
+  }
 }
 
 #nd-sidebar header {
