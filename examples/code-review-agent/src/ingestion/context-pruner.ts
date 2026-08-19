@@ -1,6 +1,50 @@
 /**
+ * File role categorization for context-aware code review.
+ */
+export type FileRole = 'DOCUMENTATION' | 'TEST' | 'CONFIG' | 'SOURCE';
+
+/**
+ * Classifies a repository file path into its structural role.
+ *
+ * @param filePath Path of the file in the repository.
+ * @returns Classified FileRole.
+ */
+export function classifyFileRole(filePath: string): FileRole {
+  const normalized = filePath.toLowerCase();
+  if (
+    normalized.endsWith('.md') ||
+    normalized.endsWith('.mdx') ||
+    normalized.includes('/docs/') ||
+    normalized.includes('/content/') ||
+    normalized.startsWith('docs/') ||
+    normalized.startsWith('content/')
+  ) {
+    return 'DOCUMENTATION';
+  }
+  if (
+    normalized.includes('.spec.') ||
+    normalized.includes('.test.') ||
+    normalized.startsWith('test/') ||
+    normalized.includes('/test/')
+  ) {
+    return 'TEST';
+  }
+  if (
+    normalized.endsWith('.json') ||
+    normalized.endsWith('.yaml') ||
+    normalized.endsWith('.yml') ||
+    normalized.endsWith('.toml') ||
+    normalized.endsWith('rc') ||
+    normalized.includes('.config.')
+  ) {
+    return 'CONFIG';
+  }
+  return 'SOURCE';
+}
+
+/**
  * Prunes noisy, generated, lock, and binary diffs from the raw git diff before
- * presenting context to the LLM agent.
+ * presenting context to the LLM agent, annotating each retained file with its role.
  */
 export class ContextPruner {
   private static readonly IGNORED_PATTERNS = [
@@ -15,11 +59,11 @@ export class ContextPruner {
   ];
 
   /**
-   * Prunes a multi-file unified git diff string.
+   * Prunes a multi-file unified git diff string and annotates file roles.
    *
    * @param rawDiff Complete unified diff string.
    * @param maxLinesPerFile Max lines allowed per individual file diff (default: 350).
-   * @returns Sanitized and pruned diff string with noise removed.
+   * @returns Sanitized and pruned diff string with noise removed and role annotations.
    */
   static pruneDiff(rawDiff: string, maxLinesPerFile = 350): { prunedDiff: string; ignoredFiles: string[]; truncatedFiles: string[] } {
     if (!rawDiff || rawDiff.trim().length === 0) {
@@ -48,14 +92,17 @@ export class ContextPruner {
         continue;
       }
 
+      const role = classifyFileRole(filePath);
+      const roleHeader = `[FILE ROLE: ${role}] Path: ${filePath}\n`;
+
       const lines = fileDiff.split('\n');
       if (lines.length > maxLinesPerFile) {
-        const truncated = lines.slice(0, maxLinesPerFile).join('\n') +
+        const truncated = roleHeader + lines.slice(0, maxLinesPerFile).join('\n') +
           `\n\n... [TRUNCATED: ${lines.length - maxLinesPerFile} lines omitted for file ${filePath}] ...\n`;
         retainedDiffs.push(truncated);
         truncatedFiles.push(filePath);
       } else {
-        retainedDiffs.push(fileDiff);
+        retainedDiffs.push(roleHeader + fileDiff);
       }
     }
 
