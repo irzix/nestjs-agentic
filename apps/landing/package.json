@@ -2,6 +2,7 @@
   "name": "nestjs-agentic-landing",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev -p 4000",
     "build": "next build",
@@ -19,12 +20,12 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.16",
+    "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2"
   }
 }
