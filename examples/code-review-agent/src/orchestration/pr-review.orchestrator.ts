@@ -357,20 +357,32 @@ Output JSON conforming to: {"reviewerName": string, "category": "security"|"arch
       }
     }
 
-    // 2. Parse changed TypeScript files from the diff and fetch their source for RAG
+    // 2. Parse changed files from the diff and ingest baseline repository context for RAG
     const changedFilePaths = PrReviewOrchestrator.parseDiffFilePaths(rawDiff);
-    if (token && event.repoFullName && changedFilePaths.length > 0) {
+    if (token && event.repoFullName) {
       const ingestStart = Date.now();
+      const baselineManifests = [
+        'package.json',
+        'packages/core/package.json',
+        'packages/memory/package.json',
+        'packages/rag/package.json',
+        'packages/orchestration/package.json',
+        'packages/evaluation/package.json',
+        'packages/mcp/package.json',
+        'packages/model-openai/package.json',
+        'packages/meta/package.json',
+      ];
+      const targetPathsToIngest = Array.from(new Set([...changedFilePaths, ...baselineManifests]));
       const fileContents = await PrReviewOrchestrator.fetchChangedFileContents(
         token,
         event.repoFullName,
-        changedFilePaths,
+        targetPathsToIngest,
       );
       if (fileContents.length > 0) {
         const indexed = await this.ragService.ingestCodebase(fileContents);
         tracer.record(
           'rag_ingest',
-          `🧠 [AST-RAG] Indexed ${fileContents.length} source file(s) -> ${indexed} AST chunk(s) into HybridVectorStore`,
+          `🧠 [AST-RAG] Indexed ${fileContents.length} source & manifest file(s) -> ${indexed} AST chunk(s) into HybridVectorStore`,
           Date.now() - ingestStart,
         );
       }
@@ -504,17 +516,22 @@ ${tracer.formatLog()}
   }
 
   /**
-   * Parses the paths of TypeScript/JavaScript source files modified in a unified diff.
+   * Parses the paths of source, documentation, and configuration files modified in a unified diff.
    *
    * @param diff Raw unified diff text.
-   * @returns Deduplicated array of changed file paths (`.ts`, `.js`, `.tsx`, `.jsx` only).
+   * @returns Deduplicated array of changed file paths.
    */
   private static parseDiffFilePaths(diff: string): string[] {
     const paths = new Set<string>();
     for (const line of diff.split('\n')) {
-      // Match "--- a/path/to/file.ts" or "+++ b/path/to/file.ts" lines
-      const match = line.match(/^(?:\+\+\+|---) [ab]\/(.+\.(ts|js|tsx|jsx))$/);
-      if (match && !match[1].endsWith('.d.ts')) {
+      // Match "--- a/path/to/file.ext" or "+++ b/path/to/file.ext" lines
+      const match = line.match(/^(?:\+\+\+|---) [ab]\/(.+)$/);
+      if (
+        match &&
+        !match[1].endsWith('.d.ts') &&
+        !match[1].endsWith('package-lock.json') &&
+        !match[1].endsWith('.lock')
+      ) {
         paths.add(match[1]);
       }
     }
