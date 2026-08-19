@@ -3,6 +3,7 @@ import { AgentRunner } from 'nestjs-agentic';
 import { ParallelSubAgentRunner } from '@nestjs-agentic/orchestration';
 import { CodebaseRAGService } from '../rag/codebase-rag.service';
 import { ContextPruner } from '../ingestion/context-pruner';
+import { RepositoryInspector } from '../ingestion/repository-inspector';
 import { UCurvePromptAssembler } from '../context/u-curve-prompt-assembler';
 import { SecurityReviewerAgent } from '../agents/security-reviewer.agent';
 import { ArchitectureReviewerAgent } from '../agents/architecture-reviewer.agent';
@@ -357,20 +358,47 @@ Output JSON conforming to: {"reviewerName": string, "category": "security"|"arch
       }
     }
 
-    // 2. Parse changed TypeScript files from the diff and fetch their source for RAG
-    const changedFilePaths = PrReviewOrchestrator.parseDiffFilePaths(rawDiff);
-    if (token && event.repoFullName && changedFilePaths.length > 0) {
+    // 2. Parse changed files from the diff and ingest baseline repository context for RAG
+    const changedFilePaths = RepositoryInspector.parseSafeDiffPaths(rawDiff);
+    if (token && event.repoFullName) {
       const ingestStart = Date.now();
+
+      // Step 2a: Dynamically fetch root package.json to discover workspace topology without hardcoded paths
+      const rootManifestFiles = await PrReviewOrchestrator.fetchChangedFileContents(
+        token,
+        event.repoFullName,
+        ['package.json'],
+      );
+
+      const rootContent = rootManifestFiles.find((f) => f.filePath === 'package.json')?.content;
+      const discoveredDirs = RepositoryInspector.discoverWorkspaceDirectories(rootContent);
+
+      // Step 2b: Resolve actual workspace package.json paths dynamically
+      let workspaceManifestPaths: string[] = [];
+      if (discoveredDirs.length > 0) {
+        workspaceManifestPaths = await PrReviewOrchestrator.fetchWorkspacePackageManifestPaths(
+          token,
+          event.repoFullName,
+          discoveredDirs,
+        );
+      }
+
+      // Merge changed diff paths with discovered project manifests
+      const targetPathsToIngest = Array.from(
+        new Set(['package.json', ...workspaceManifestPaths, ...changedFilePaths]),
+      ).slice(0, RepositoryInspector.MAX_INGESTION_FILES);
+
       const fileContents = await PrReviewOrchestrator.fetchChangedFileContents(
         token,
         event.repoFullName,
-        changedFilePaths,
+        targetPathsToIngest,
       );
+
       if (fileContents.length > 0) {
         const indexed = await this.ragService.ingestCodebase(fileContents);
         tracer.record(
           'rag_ingest',
-          `🧠 [AST-RAG] Indexed ${fileContents.length} source file(s) -> ${indexed} AST chunk(s) into HybridVectorStore`,
+          `🧠 [AST-RAG] Indexed ${fileContents.length} source & manifest file(s) -> ${indexed} AST chunk(s) into HybridVectorStore`,
           Date.now() - ingestStart,
         );
       }
@@ -504,42 +532,24 @@ ${tracer.formatLog()}
   }
 
   /**
-   * Parses the paths of TypeScript/JavaScript source files modified in a unified diff.
-   *
-   * @param diff Raw unified diff text.
-   * @returns Deduplicated array of changed file paths (`.ts`, `.js`, `.tsx`, `.jsx` only).
-   */
-  private static parseDiffFilePaths(diff: string): string[] {
-    const paths = new Set<string>();
-    for (const line of diff.split('\n')) {
-      // Match "--- a/path/to/file.ts" or "+++ b/path/to/file.ts" lines
-      const match = line.match(/^(?:\+\+\+|---) [ab]\/(.+\.(ts|js|tsx|jsx))$/);
-      if (match && !match[1].endsWith('.d.ts')) {
-        paths.add(match[1]);
-      }
-    }
-    return Array.from(paths);
-  }
-
-  /**
-   * Fetches the raw source content of changed files via the GitHub Contents API.
-   * Files that cannot be fetched (deleted, binary, etc.) are silently skipped.
+   * Dynamically resolves and fetches package.json files from discovered workspace directories via GitHub Contents API.
    *
    * @param token GitHub personal access token.
-   * @param repoFullName Repository full name, e.g. `"irzix/nestjs-agentic"`.
-   * @param filePaths Relative file paths within the repository.
-   * @returns Array of objects with `filePath` and decoded `content`.
+   * @param repoFullName Repository full name.
+   * @param workspaceDirs Discovered workspace root folders (e.g. ['packages', 'apps']).
+   * @returns Array of relative manifest paths (e.g. ['packages/core/package.json', ...]).
    */
-  private static async fetchChangedFileContents(
+  private static async fetchWorkspacePackageManifestPaths(
     token: string,
     repoFullName: string,
-    filePaths: string[],
-  ): Promise<Array<{ filePath: string; content: string }>> {
-    const results: Array<{ filePath: string; content: string }> = [];
-    for (const filePath of filePaths) {
+    workspaceDirs: string[],
+  ): Promise<string[]> {
+    const manifestPaths: string[] = [];
+
+    for (const dir of workspaceDirs) {
       try {
         const response = await fetch(
-          `https://api.github.com/repos/${repoFullName}/contents/${encodeURIComponent(filePath)}`,
+          `https://api.github.com/repos/${repoFullName}/contents/${encodeURIComponent(dir)}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -549,13 +559,82 @@ ${tracer.formatLog()}
           },
         );
         if (!response.ok) continue;
-        const data = (await response.json()) as { content?: string; encoding?: string };
-        if (data.encoding === 'base64' && data.content) {
-          const decoded = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
-          results.push({ filePath, content: decoded });
+        const items = (await response.json()) as Array<{ name?: string; type?: string }>;
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            if (item.type === 'dir' && item.name && !item.name.startsWith('.')) {
+              manifestPaths.push(`${dir}/${item.name}/package.json`);
+            }
+          }
         }
       } catch {
-        // Silently skip files that cannot be fetched (deleted, moved, etc.)
+        // Silently skip on network or permission failure
+      }
+    }
+
+    return manifestPaths;
+  }
+
+  /**
+   * Fetches the raw source content of changed files via the GitHub Contents API.
+   * Enforces strict path validation, file size limits, and in-memory secret scrubbing.
+   *
+   * @param token GitHub personal access token.
+   * @param repoFullName Repository full name, e.g. `"irzix/nestjs-agentic"`.
+   * @param filePaths Relative file paths within the repository.
+   * @returns Array of objects with `filePath` and sanitized `content`.
+   */
+  private static async fetchChangedFileContents(
+    token: string,
+    repoFullName: string,
+    filePaths: string[],
+  ): Promise<Array<{ filePath: string; content: string }>> {
+    const results: Array<{ filePath: string; content: string }> = [];
+
+    // Filter through path traversal and security allowlist
+    const sanitizedCandidates = filePaths
+      .map((p) => RepositoryInspector.validateAndSanitizePath(p))
+      .filter((res) => res.valid && res.sanitizedPath)
+      .map((res) => res.sanitizedPath!);
+
+    for (const filePath of sanitizedCandidates.slice(0, RepositoryInspector.MAX_INGESTION_FILES)) {
+      try {
+        // Encode each path segment to prevent URL manipulation
+        const encodedPath = filePath
+          .split('/')
+          .map((segment) => encodeURIComponent(segment))
+          .join('/');
+
+        const response = await fetch(
+          `https://api.github.com/repos/${repoFullName}/contents/${encodedPath}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github.v3+json',
+              'User-Agent': 'Njent-Code-Review-Agent',
+            },
+          },
+        );
+        if (!response.ok) continue;
+        const data = (await response.json()) as { content?: string; encoding?: string; size?: number };
+
+        // Enforce maximum file size boundary (500KB)
+        if (data.size && data.size > RepositoryInspector.MAX_FILE_SIZE_BYTES) {
+          continue;
+        }
+
+        if (data.encoding === 'base64' && data.content) {
+          const rawDecoded = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
+          // Enforce unconditional decoded size cap
+          if (Buffer.byteLength(rawDecoded, 'utf-8') > RepositoryInspector.MAX_FILE_SIZE_BYTES) {
+            continue;
+          }
+          // In-memory credential and secret scrubbing before vectorization
+          const scrubbed = RepositoryInspector.redactSecrets(rawDecoded);
+          results.push({ filePath, content: scrubbed });
+        }
+      } catch {
+        // Silently skip files that cannot be fetched (deleted, binary, or non-existent)
       }
     }
     return results;

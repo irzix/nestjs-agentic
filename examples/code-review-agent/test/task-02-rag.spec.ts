@@ -1,5 +1,6 @@
 import * as assert from 'node:assert';
 import { CodebaseRAGService } from '../src/rag/codebase-rag.service';
+import { RepositoryInspector } from '../src/ingestion/repository-inspector';
 
 async function runTask02Tests() {
   console.log('🧪 Running Njent Task 02: AST Codebase RAG & Hybrid Search Tests...\n');
@@ -64,7 +65,42 @@ export class OrderService {
   );
   console.log('  ✅ PASS: Test 3: GraphRAG traced class constructor dependencies');
 
-  console.log('\n🎉 All 3 Task 02 AST RAG tests passed successfully!\n');
+  // Test 4: RepositoryInspector Path Validation & Security Denylist
+  const secretPath = RepositoryInspector.validateAndSanitizePath('.env.production');
+  assert.strictEqual(secretPath.valid, false, '.env should be rejected');
+
+  const keyPath = RepositoryInspector.validateAndSanitizePath('certs/server.key');
+  assert.strictEqual(keyPath.valid, false, '.key should be rejected');
+
+  const traversalPath = RepositoryInspector.validateAndSanitizePath('../../etc/passwd');
+  assert.strictEqual(traversalPath.valid, false, 'Path traversal should be rejected');
+
+  const encodedTraversal = RepositoryInspector.validateAndSanitizePath('%2e%2e/etc/passwd');
+  assert.strictEqual(encodedTraversal.valid, false, 'Percent-encoded traversal should be rejected');
+
+  const validPath = RepositoryInspector.validateAndSanitizePath('src/agent/sample.ts');
+  assert.strictEqual(validPath.valid, true, 'Valid TypeScript path should be accepted');
+  console.log('  ✅ PASS: Test 4: RepositoryInspector validated path security & encoded traversal boundaries');
+
+  // Test 5: Dynamic Workspace Directory Discovery
+  const mockRootPkg = JSON.stringify({
+    name: 'custom-monorepo',
+    workspaces: ['packages/*', 'apps/*'],
+  });
+  const workspaceDirs = RepositoryInspector.discoverWorkspaceDirectories(mockRootPkg);
+  assert.ok(workspaceDirs.includes('packages'), 'Discovered packages workspace directory');
+  assert.ok(workspaceDirs.includes('apps'), 'Discovered apps workspace directory');
+  console.log('  ✅ PASS: Test 5: Dynamic monorepo workspace directory discovery without hardcoded paths');
+
+  // Test 6: Secret Content Redaction
+  const rawSensitiveCode = 'const token = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"; const sk = "sk-1234567890abcdefghijklmnopqrstuvwxyz";';
+  const scrubbed = RepositoryInspector.redactSecrets(rawSensitiveCode);
+  assert.ok(!scrubbed.includes('ghp_1234567890'), 'GitHub token must be redacted');
+  assert.ok(!scrubbed.includes('sk-1234567890'), 'OpenAI key must be redacted');
+  assert.ok(scrubbed.includes('[REDACTED_SECRET_TOKEN]'), 'Replacement token must be inserted');
+  console.log('  ✅ PASS: Test 6: In-memory secret scrubbing before vectorization');
+
+  console.log('\n🎉 All 6 Task 02 AST RAG & Security tests passed successfully!\n');
 }
 
 runTask02Tests().catch((err) => {
