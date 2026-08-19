@@ -1,0 +1,31 @@
+---
+title: Parallel Sub-Agent Fan-Out
+description: High-throughput concurrent execution across specialist reviewer agents.
+---
+
+## ParallelSubAgentRunner
+
+When analyzing multi-dimensional inputs (such as pull requests with security, architecture, and test coverage concerns), running specialists sequentially wastes precious seconds.
+
+`ParallelSubAgentRunner` executes all specialists concurrently using `Promise.allSettled`:
+
+```typescript
+import { ParallelSubAgentRunner } from '@nestjs-agentic/orchestration';
+
+const runner = new ParallelSubAgentRunner({
+  agents: [securitySpecialist, architectureSpecialist, qualitySpecialist],
+  aggregationStrategy: 'allSettled',
+  timeoutMs: 30000,
+});
+
+const assessments = await runner.runAll({
+  diff: prDiff,
+  astContext: astChunks,
+});
+
+for (const result of assessments) {
+  if (result.status === 'fulfilled') {
+    console.log(`${result.value.reviewerName}: ${result.value.score * 100}%`);
+  }
+}
+```

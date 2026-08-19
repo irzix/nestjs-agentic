@@ -1,0 +1,216 @@
+---
+title: Quickstart
+description: System requirements, prerequisites, installation, and building your first governed AI agent in 5 minutes.
+---
+
+## System Requirements & Prerequisites
+
+Before getting started, ensure your environment meets the following specifications:
+
+| Requirement | Supported Version | Notes |
+| :--- | :--- | :--- |
+| **Node.js** | `>= 18.0.0` | Recommended `>= 20.0.0 LTS` |
+| **NestJS** | `^9.0.0`, `^10.0.0`, `^11.0.0` | Full DI and decorator support |
+| **TypeScript** | `>= 5.0.0` | `experimentalDecorators` and `emitDecoratorMetadata` |
+| **LLM Provider** | OpenAI, Azure, Ollama, vLLM | OpenAI-compatible Chat Completions API |
+
+```json
+// tsconfig.json prerequisites
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "target": "ES2022"
+  }
+}
+```
+
+---
+
+## Installation
+
+Install `nestjs-agentic` and the OpenAI model adapter package into your NestJS project:
+
+```bash
+npm install nestjs-agentic @nestjs-agentic/openai
+```
+
+---
+
+## 1. Register the Root Module
+
+Import `AgenticModule` in your `AppModule` and register the `OpenAiModelAdapter` with execution limits:
+
+```typescript
+// src/app.module.ts
+import { Module } from '@nestjs/common';
+import { AgenticModule } from 'nestjs-agentic';
+import { OpenAiModelAdapter } from '@nestjs-agentic/openai';
+import { WeatherAgent } from './agents/weather.agent';
+import { WeatherTools } from './tools/weather.tools';
+
+@Module({
+  imports: [
+    AgenticModule.forRoot({
+      defaultModel: {
+        provider: 'openai',
+        model: 'gpt-4o',
+      },
+      modelAdapter: new OpenAiModelAdapter({
+        apiKey: process.env.OPENAI_API_KEY,
+      }),
+      limits: {
+        maxTotalTokens: 16000,
+        maxIterations: 5,
+        timeoutMs: 30000,
+      },
+    }),
+    AgenticModule.forFeature({
+      agents: [WeatherAgent],
+      toolSets: [WeatherTools],
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+---
+
+## 2. Define Governed Tools
+
+Create a toolset provider using `@ToolSet()`, `@Tool()`, and `@Param()`:
+
+```typescript
+// src/tools/weather.tools.ts
+import { Injectable } from '@nestjs/common';
+import { ToolSet, Tool, Param, Context, AgentContext } from 'nestjs-agentic';
+
+@Injectable()
+@ToolSet({ name: 'weather_tools', description: 'Real-time weather retrieval tools' })
+export class WeatherTools {
+  @Tool({ description: 'Fetch the current temperature and conditions for a given city' })
+  async getCurrentWeather(
+    @Param('city', { description: 'The name of the city', required: true }) city: string,
+    @Param('units', { description: 'Temperature units (celsius or fahrenheit)', required: false }) units?: string,
+    @Context() ctx?: AgentContext,
+  ) {
+    // Access authenticated user or tenant context
+    const tenantId = ctx?.security.tenantId;
+
+    return {
+      city,
+      temperature: 22,
+      condition: 'Partly Cloudy',
+      units: units || 'celsius',
+    };
+  }
+}
+```
+
+---
+
+## 3. Define the Agent Provider
+
+Implement an agent by decorating a class with `@Agent()` and implementing the `AgentProvider` interface:
+
+```typescript
+// src/agents/weather.agent.ts
+import { Injectable } from '@nestjs/common';
+import { Agent, AgentProvider, AgentConfig } from 'nestjs-agentic';
+import { WeatherTools } from '../tools/weather.tools';
+
+@Injectable()
+@Agent({
+  name: 'weather_assistant',
+  description: 'Specialist assistant for international weather inquiries',
+})
+export class WeatherAgent implements AgentProvider {
+  constructor(private readonly weatherTools: WeatherTools) {}
+
+  define(): AgentConfig {
+    return {
+      instructions: `You are an accurate, professional weather consultant.
+Always check the weather tools before providing temperature and atmospheric conditions.`,
+      tools: [this.weatherTools],
+    };
+  }
+}
+```
+
+---
+
+## 4. Execute the Agent
+
+Inject `AgentRunner` into your controller or service to execute turns:
+
+```typescript
+// src/weather.service.ts
+import { Injectable } from '@nestjs/common';
+import { AgentRunner, AgentContext } from 'nestjs-agentic';
+
+@Injectable()
+export class WeatherService {
+  constructor(private readonly runner: AgentRunner) {}
+
+  async askWeather(userQuestion: string, userId: string, tenantId: string) {
+    const context: AgentContext = {
+      security: {
+        userId,
+        tenantId,
+        roles: ['standard_user'],
+      },
+    };
+
+    const response = await this.runner.run(
+      'weather_assistant',
+      userQuestion,
+      context,
+    );
+
+    return {
+      answer: response.content,
+      tokensUsed: response.usage.totalTokens,
+      durationMs: response.durationMs,
+    };
+  }
+}
+```
+
+---
+
+## 5. Streaming Agent Responses
+
+To stream token deltas and tool lifecycle events directly to web clients:
+
+```typescript
+// src/weather.controller.ts
+import { Controller, Post, Body, Res } from '@nestjs/common';
+import { Response } from 'express';
+import { AgentRunner } from 'nestjs-agentic';
+
+@Controller('agent')
+export class WeatherController {
+  constructor(private readonly runner: AgentRunner) {}
+
+  @Post('stream')
+  async streamAgent(@Body('prompt') prompt: string, @Res() res: Response) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const stream = this.runner.runStream('weather_assistant', prompt);
+
+    for await (const event of stream) {
+      if (event.type === 'token') {
+        res.write(`data: ${JSON.stringify({ token: event.token })}\n\n`);
+      } else if (event.type === 'tool_start') {
+        res.write(`data: ${JSON.stringify({ tool: event.toolName, status: 'started' })}\n\n`);
+      } else if (event.type === 'complete') {
+        res.write(`data: ${JSON.stringify({ done: true, totalTokens: event.usage.totalTokens })}\n\n`);
+      }
+    }
+
+    res.end();
+  }
+}
+```

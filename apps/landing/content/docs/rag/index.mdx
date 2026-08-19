@@ -1,0 +1,15 @@
+---
+title: Context Engineering and RAG Overview
+description: High-performance retrieval-augmented generation engine with AST code parsing and hybrid search.
+---
+
+## Overview
+
+`@nestjs-agentic/rag` is an enterprise RAG engine designed specifically for codebases, technical documentation, and relational knowledge bases.
+
+Naive character-count chunking fractures classes, splits function definitions, and loses lexical context. `@nestjs-agentic/rag` solves this via:
+
+1. **AST Hierarchical Chunking**: Parses TypeScript/JavaScript files into Abstract Syntax Trees, preserving function, class, and method scope boundaries.
+2. **Hybrid BM25 + Vector Retrieval**: Combines exact lexical term matching (essential for variable/function names) with dense semantic embeddings.
+3. **GraphRAG Traversal**: Follows import graphs, dependency injection links, and relational entity structures.
+4. **Cross-Encoder Reranking**: Re-scores candidate passages using multi-sequence attention models.

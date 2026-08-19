@@ -1,0 +1,14 @@
+---
+title: Ingress Security, HMAC, and RBAC Guards
+description: Defending production agent webhooks from unauthenticated spoofing and token draining attacks.
+---
+
+## Threat Model: The Public Agent Endpoint
+
+Exposing AI agent endpoints to public webhooks invites token-draining attacks if anonymous external users can trigger expensive LLM completions.
+
+Njent employs a three-tier defense:
+
+1. **HMAC-SHA256 Payload Signature Verification**: Validates the `X-Hub-Signature-256` header against the repository webhook secret.
+2. **CollaboratorGuard**: Verifies through GitHub's Collaborators API that the PR author is an authorized repository maintainer/contributor.
+3. **Idempotency Cache**: Stores processed delivery IDs in Redis to prevent duplicate webhook replays.

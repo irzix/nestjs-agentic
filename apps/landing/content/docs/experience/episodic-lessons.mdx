@@ -1,0 +1,20 @@
+---
+title: Episodic Lesson Extraction
+description: Distilling persistent heuristics from failed trajectories and human review feedback.
+---
+
+## Lesson Extraction Engine
+
+When a trajectory fails or encounters policy refusals, `LessonExtractor` converts the raw trace into an indexed lesson:
+
+```typescript
+import { LessonExtractor } from '@nestjs-agentic/experience';
+
+const extractor = new LessonExtractor({ modelAdapter });
+
+const lesson = await extractor.extractFromTrajectory(failedTrajectory);
+
+console.log('Distilled Rule:', lesson.rule);
+console.log('Applicable Categories:', lesson.tags);
+console.log('Importance Score:', lesson.importanceScore);
+```

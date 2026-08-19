@@ -1,0 +1,9 @@
+{
+  "title": "@nestjs-agentic/evaluation",
+  "pages": [
+    "index",
+    "debiased-llm-judge",
+    "automated-benchmarks"
+  ],
+  "defaultOpen": false
+}

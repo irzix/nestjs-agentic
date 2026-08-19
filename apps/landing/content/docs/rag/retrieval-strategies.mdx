@@ -1,0 +1,35 @@
+---
+title: Advanced Retrieval Strategies
+description: Query expansion, late chunking, parent-child hydration, and contextual compression.
+---
+
+## Modular Retrieval Strategies
+
+`@nestjs-agentic/rag` supports pluggable retrieval strategies:
+
+### 1. `QueryExpansionStrategy`
+Expands the raw user query into multi-perspective variants and domain-specific synonyms before querying the vector store.
+
+### 2. `LateChunkingStrategy`
+Passes the entire document through the transformer embedding model first to capture full-document contextual embeddings before pooling chunk vectors.
+
+### 3. `ParentChildHydrationStrategy`
+Indexes small sub-chunks (methods, paragraphs) for high vector search precision, but hydrates the entire parent class/document when constructing the final context prompt.
+
+```typescript
+import {
+  KnowledgeBase,
+  QueryExpansionStrategy,
+  ParentChildHydrationStrategy,
+} from '@nestjs-agentic/rag';
+
+const kb = new KnowledgeBase({
+  vectorStore: hybridStore,
+  strategies: [
+    new QueryExpansionStrategy({ maxExpansions: 3 }),
+    new ParentChildHydrationStrategy(),
+  ],
+});
+
+const context = await kb.retrieve('Find order checkout verification methods');
+```

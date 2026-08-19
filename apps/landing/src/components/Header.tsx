@@ -1,11 +1,18 @@
 'use client';
-
-import React, { useRef, useCallback, useState } from 'react';
-import { Github, Copy, Check } from 'lucide-react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
+import Link from 'next/link';
+import { Github, Copy, Check, Sun, Moon } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useTheme } from 'next-themes';
 
 export function Header() {
   const [copied, setCopied] = useState(false);
+  const { theme, setTheme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleCopy = () => {
     navigator.clipboard.writeText('npm i nestjs-agentic');
@@ -13,26 +20,40 @@ export function Header() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const isDark = mounted && (theme === 'dark' || resolvedTheme === 'dark');
+
   return (
     <header className="sticky top-4 sm:top-6 z-50 max-w-4xl mx-auto w-full px-2 sm:px-4">
       <nav className="nest-nav px-4 sm:px-8 py-2.5 sm:py-3 flex items-center justify-between shadow-2xl gap-2">
-        <span className="font-bold text-xs sm:text-sm tracking-tight text-white font-sans whitespace-nowrap">
+        <Link href="/" className="font-bold text-xs sm:text-sm tracking-tight text-white font-sans whitespace-nowrap">
           nestjs-agentic
-        </span>
+        </Link>
 
         <div className="hidden md:flex items-center gap-8 text-[13px] font-medium text-zinc-300">
-          <a href="#syntax" className="hover:text-white transition-colors">Syntax</a>
-          <a href="#pillars" className="hover:text-white transition-colors">Overview</a>
+          <a href="/#syntax" className="hover:text-white transition-colors">Syntax</a>
+          <a href="/#pillars" className="hover:text-white transition-colors">Overview</a>
           <a href="https://github.com/irzix/nestjs-agentic/blob/main/docs/ROADMAP.md" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Roadmap</a>
-          <a href="https://github.com/irzix/nestjs-agentic#readme" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Docs</a>
+          <Link href="/docs" className="hover:text-white transition-colors">Docs</Link>
         </div>
 
-        <div className="flex items-center gap-2.5 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* <button
+            onClick={() => setTheme(isDark ? 'light' : 'dark')}
+            className="text-zinc-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-zinc-800/50"
+            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {mounted ? (
+              isDark ? <Sun className="w-4 h-4 text-amber-300" /> : <Moon className="w-4 h-4 text-zinc-300" />
+            ) : (
+              <div className="w-4 h-4" />
+            )}
+          </button> */}
+
           <a
             href="https://github.com/irzix/nestjs-agentic"
             target="_blank"
             rel="noreferrer"
-            className="text-zinc-400 hover:text-white transition-colors p-1"
+            className="text-zinc-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-zinc-800/50"
             title="GitHub"
           >
             <Github className="w-4 h-4" />

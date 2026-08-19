@@ -1,0 +1,32 @@
+---
+title: Composite Memory Aggregation
+description: Unified multi-tier memory store federating queries across all cognitive memory tiers.
+---
+
+## CompositeMemoryStore
+
+`CompositeMemoryStore` unifies Tier 1 through Tier 5 stores into a single interface for agent context assembly:
+
+```typescript
+import {
+  CompositeMemoryStore,
+  ShortTermMemory,
+  ScratchpadMemory,
+  SemanticMemory,
+  EpisodicMemory,
+} from '@nestjs-agentic/memory';
+
+const compositeStore = new CompositeMemoryStore({
+  shortTerm: new ShortTermMemory(),
+  scratchpad: new ScratchpadMemory(),
+  semantic: new SemanticMemory(),
+  episodic: new EpisodicMemory(),
+});
+
+// Single unified recall query
+const contextBundle = await compositeStore.recall('Audit pull request for SQL injections');
+
+console.log('Active turns:', contextBundle.shortTerm);
+console.log('Relevant facts:', contextBundle.semantic);
+console.log('Past lessons:', contextBundle.episodic);
+```

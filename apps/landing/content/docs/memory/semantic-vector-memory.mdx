@@ -1,0 +1,27 @@
+---
+title: Semantic Vector Memory
+description: Long-term factual indexing and dense semantic similarity search.
+---
+
+## SemanticMemory Store
+
+`SemanticMemory` indexes unstructured facts, developer documentation, and organizational knowledge into vector embeddings for semantic recall:
+
+```typescript
+import { SemanticMemory } from '@nestjs-agentic/memory';
+
+const semantic = new SemanticMemory({
+  embeddingProvider: myEmbeddingService,
+  similarityThreshold: 0.78,
+  topK: 5,
+});
+
+// Store factual knowledge
+await semantic.store(
+  'Corporate travel policy requires manager sign-off for flights exceeding $1,200.',
+  { category: 'travel_policy', department: 'finance' },
+);
+
+// Recall relevant facts
+const results = await semantic.recall('Can I book a $1,500 flight to London?');
+```

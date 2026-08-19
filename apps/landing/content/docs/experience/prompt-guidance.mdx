@@ -1,0 +1,22 @@
+---
+title: Dynamic Ingress Prompt Guidance
+description: Injecting historical lessons and operational guardrails into agent system prompts.
+---
+
+## Ingress Guidance Service
+
+Before an agent runs, `IngressGuidanceService` queries `EpisodicMemory` for past lessons matching the user's intent:
+
+```typescript
+import { IngressGuidanceService } from '@nestjs-agentic/experience';
+
+const guidanceService = new IngressGuidanceService({ episodicMemory });
+
+// Fetch relevant past lessons
+const guidance = await guidanceService.getGuidanceForPrompt('Process customer refund for order #123');
+
+// Injected into system prompt:
+// "Operational Guidance from Past Experience:
+// - Always verify tenant isolation credentials before mutating order status.
+// - Check refund policy limits (> $500 requires managerial sign-off)."
+```

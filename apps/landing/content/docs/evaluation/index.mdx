@@ -1,0 +1,14 @@
+---
+title: Agent Evaluation and Quality Gates
+description: Systematic benchmarking, trajectory scoring, and CI regression testing for AI agents.
+---
+
+## Overview
+
+Deploying AI agents to production without quantitative evaluation invites regressions and prompt drift.
+
+`@nestjs-agentic/evaluation` provides an automated benchmarking framework:
+
+- **Position-Debiased Pairwise LLM Judges**: Eliminates position bias when comparing agent outputs.
+- **Trajectory Efficiency Scoring**: Measures step counts, tool call precision, and token waste.
+- **Continuous CI Quality Gates**: Runs benchmark suites in GitHub Actions to block breaking agent changes.

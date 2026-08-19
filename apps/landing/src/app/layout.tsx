@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Manrope, JetBrains_Mono } from 'next/font/google';
+import { RootProvider } from 'fumadocs-ui/provider';
 import './globals.css';
 
 const manrope = Manrope({
@@ -136,7 +137,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`dark ${manrope.variable} ${mono.variable}`}>
+    <html lang="en" className={`${manrope.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <script
           type="application/ld+json"
@@ -144,7 +145,16 @@ export default function RootLayout({
         />
         <meta name="google-site-verification" content="Pn9iwq4ZmlEOfWnel04fFMcPJNusg3wZM6HMW20N4MM" />
       </head>
-      <body className="bg-[#000000] text-zinc-100 font-sans">{children}</body>
+      <body className="bg-fd-background text-fd-foreground font-sans min-h-screen transition-colors duration-200">
+        <RootProvider
+          theme={{
+            defaultTheme: 'dark',
+            enableSystem: false,
+          }}
+        >
+          {children}
+        </RootProvider>
+      </body>
     </html>
   );
 }

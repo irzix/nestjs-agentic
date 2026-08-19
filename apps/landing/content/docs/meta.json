@@ -1,0 +1,19 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "---Getting Started---",
+    "index",
+    "quickstart",
+    "---Runtime Ecosystem---",
+    "core",
+    "openai",
+    "memory",
+    "rag",
+    "orchestration",
+    "experience",
+    "evaluation",
+    "mcp",
+    "---Reference Systems---",
+    "showcase-njent"
+  ]
+}

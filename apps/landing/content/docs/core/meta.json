@@ -1,0 +1,15 @@
+{
+  "title": "@nestjs-agentic/core",
+  "pages": [
+    "index",
+    "decorators",
+    "module-configuration",
+    "runtime-and-execution",
+    "governance-and-policies",
+    "human-in-the-loop",
+    "state-stores",
+    "execution-limits",
+    "observability-and-tracing"
+  ],
+  "defaultOpen": false
+}

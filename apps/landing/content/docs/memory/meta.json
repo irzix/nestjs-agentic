@@ -1,0 +1,12 @@
+{
+  "title": "@nestjs-agentic/memory",
+  "pages": [
+    "index",
+    "short-term-and-session",
+    "scratchpad-working-memory",
+    "semantic-vector-memory",
+    "episodic-tri-factor",
+    "composite-aggregation"
+  ],
+  "defaultOpen": false
+}

@@ -1,0 +1,115 @@
+---
+title: Decorators Reference
+description: Complete specification for NestJS Agentic core decorators.
+---
+
+## Overview
+
+`@nestjs-agentic/core` provides TypeScript decorators to declare agent providers, tools, schema parameters, and security policies.
+
+---
+
+## `@Agent(options)`
+
+Marks a class as an agent provider and automatically applies NestJS `@Injectable()`.
+
+```typescript
+interface AgentDecoratorOptions {
+  name: string;
+  description: string;
+  model?: ModelConfig;
+}
+```
+
+### Usage
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { Agent, AgentProvider, AgentConfig } from 'nestjs-agentic';
+
+@Injectable()
+@Agent({
+  name: 'code_reviewer',
+  description: 'Specialist agent analyzing pull requests for architecture and security issues',
+})
+export class CodeReviewerAgent implements AgentProvider {
+  define(): AgentConfig {
+    return {
+      instructions: 'You are an expert code reviewer...',
+      tools: [],
+    };
+  }
+}
+```
+
+---
+
+## `@ToolSet(options)`
+
+Marks a NestJS provider class as a container for model-callable tool methods.
+
+```typescript
+interface ToolSetOptions {
+  name: string;
+  description?: string;
+  tags?: string[];
+}
+```
+
+---
+
+## `@Tool(options)`
+
+Marks a method within a `@ToolSet()` class as a model-callable tool.
+
+```typescript
+interface ToolOptions {
+  description: string;
+  name?: string; // Defaults to the method name
+}
+```
+
+---
+
+## `@Param(name, options?)`
+
+Exposes a method argument in the model tool schema. The runtime automatically generates a JSON Schema from the parameter options.
+
+```typescript
+interface ParamOptions {
+  description?: string;
+  type?: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  required?: boolean;
+}
+```
+
+---
+
+## `@Context()`
+
+Injects the active `AgentContext` into a tool method parameter without exposing it to the model tool schema.
+
+```typescript
+@Tool({ description: 'Transfer funds securely' })
+async transferFunds(
+  @Param('amount', { description: 'Amount in USD', required: true }) amount: number,
+  @Param('recipientId', { description: 'Target user ID', required: true }) recipientId: string,
+  @Context() ctx: AgentContext,
+) {
+  const callerTenant = ctx.security.tenantId;
+  const callerId = ctx.security.userId;
+  // Deterministic execution using caller identity
+}
+```
+
+---
+
+## `@UsePolicies(...policies)`
+
+Attaches one or more `ToolPolicy` classes to a tool method or toolset class.
+
+```typescript
+@UsePolicies(FinanceRolePolicy, HighValueApprovalPolicy)
+@Tool({ description: 'Disburse corporate funds' })
+async disburseFunds(...) { ... }
+```

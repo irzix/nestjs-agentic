@@ -8,11 +8,15 @@
     "start": "next start -p 3000"
   },
   "dependencies": {
+    "framer-motion": "^11.15.0",
+    "fumadocs-core": "^15.8.5",
+    "fumadocs-mdx": "^14.2.13",
+    "fumadocs-ui": "^15.8.5",
+    "lucide-react": "^0.469.0",
+    "mermaid": "^11.16.1",
     "next": "^15.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "lucide-react": "^0.469.0",
-    "framer-motion": "^11.15.0"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

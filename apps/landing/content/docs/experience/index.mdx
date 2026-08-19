@@ -1,0 +1,15 @@
+---
+title: Self-Reflective Learning Overview
+description: Post-execution trajectory critiques, experiential lesson extraction, and self-correction.
+---
+
+## Overview
+
+Static prompts repeat the same mistakes indefinitely.
+
+`@nestjs-agentic/experience` implements **Experiential Self-Correction**:
+
+1. **Trajectory Recording**: Collects complete prompt, thought, tool call, and error sequences.
+2. **The Critic Agent**: Analyzes why an execution failed or why a human rejected an approval request.
+3. **Lesson Extraction**: Synthesizes actionable, generalizable rules.
+4. **Ingress Prompt Guidance**: Dynamically injects relevant historical lessons into future runs before the agent begins executing.

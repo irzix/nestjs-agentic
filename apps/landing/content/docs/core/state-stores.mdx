@@ -1,0 +1,82 @@
+---
+title: State Stores
+description: Durable state storage for Human-in-the-Loop checkpoints and agent session persistence.
+---
+
+## Overview
+
+State stores persist pending approval checkpoints, conversation histories, and agent execution sessions.
+
+`@nestjs-agentic/core` provides three built-in implementations and a standard `StateStore` interface.
+
+---
+
+## StateStore Interface
+
+```typescript
+export interface StateStore {
+  saveApprovalRequest(request: ApprovalRequest): Promise<void>;
+  getApprovalRequest(id: string): Promise<ApprovalRequest | null>;
+  updateApprovalRequest(id: string, updates: Partial<ApprovalRequest>): Promise<void>;
+  listPendingApprovals(tenantId?: string): Promise<ApprovalRequest[]>;
+  deleteApprovalRequest(id: string): Promise<void>;
+}
+```
+
+---
+
+## Built-In Store Drivers
+
+### 1. `InMemoryStateStore` (Default for Testing / Dev)
+
+Stores checkpoints in an in-memory `Map`. Useful for local testing and unit tests.
+
+```typescript
+import { InMemoryStateStore } from 'nestjs-agentic';
+
+AgenticModule.forRoot({
+  stateStore: new InMemoryStateStore(),
+});
+```
+
+---
+
+### 2. `RedisStateStore` (Distributed Production Caching)
+
+Stores serialized checkpoints as JSON strings with automatic TTL expiration:
+
+```typescript
+import { RedisStateStore } from 'nestjs-agentic';
+import Redis from 'ioredis';
+
+const redisClient = new Redis(process.env.REDIS_URL);
+
+AgenticModule.forRoot({
+  stateStore: new RedisStateStore({
+    client: redisClient,
+    keyPrefix: 'agentic:approvals:',
+    defaultTtlSeconds: 86400 * 7, // 7 days
+  }),
+});
+```
+
+---
+
+### 3. `PostgresStateStore` (Relational Enterprise Auditability)
+
+Stores approval records in a dedicated PostgreSQL table for transactional integrity and long-term compliance auditing.
+
+```sql
+CREATE TABLE agentic_approval_requests (
+  id VARCHAR(64) PRIMARY KEY,
+  agent_name VARCHAR(128) NOT NULL,
+  tenant_id VARCHAR(128),
+  user_id VARCHAR(128),
+  tool_name VARCHAR(128) NOT NULL,
+  tool_args JSONB NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  checkpoint_data JSONB NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```

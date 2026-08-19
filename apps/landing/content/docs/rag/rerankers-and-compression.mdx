@@ -1,0 +1,28 @@
+---
+title: Cross-Encoder Rerankers and Compression
+description: Re-scoring candidate passages and extractive compression to maximize prompt signal-to-noise ratio.
+---
+
+## Cross-Encoder Rerankers
+
+Bi-encoder vector search produces candidate matches quickly, but computes query and document embeddings independently.
+
+`CrossEncoderReranker` runs cross-attention over `[Query, Document]` pairs using high-precision models (e.g. Cohere Rerank, BGE-Reranker, or custom scoring functions):
+
+```typescript
+import { CrossEncoderReranker } from '@nestjs-agentic/rag';
+
+const reranker = new CrossEncoderReranker({
+  rerankFn: async (query, documents) => {
+    // Call Cohere / HuggingFace reranker endpoint
+    return scoredDocuments;
+  },
+  topK: 3,
+});
+```
+
+---
+
+## Contextual Compression
+
+`ContextualCompressionStrategy` trims boilerplate, comments, and unreferenced lines from retrieved passages before injecting them into the system prompt, keeping token usage minimal.

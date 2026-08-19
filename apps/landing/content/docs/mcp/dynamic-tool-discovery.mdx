@@ -1,0 +1,29 @@
+---
+title: Dynamic Tool Discovery and Execution
+description: Exposing remote MCP tools directly to NestJS agent providers.
+---
+
+## McpToolProvider
+
+`McpToolProvider` queries the connected MCP client, fetches available tools and schemas, and wraps them as callable NestJS tools:
+
+```typescript
+import { McpToolProvider } from '@nestjs-agentic/mcp';
+import { Agent, AgentProvider, AgentConfig } from 'nestjs-agentic';
+
+@Injectable()
+@Agent({ name: 'database_analyst', description: 'Agent querying databases via MCP' })
+export class DatabaseAnalystAgent implements AgentProvider {
+  constructor(private readonly mcpProvider: McpToolProvider) {}
+
+  async define(): Promise<AgentConfig> {
+    // Dynamically discover all tools from the remote MCP server
+    const remoteTools = await this.mcpProvider.getDiscoveredTools();
+
+    return {
+      instructions: 'You are a database analyst. Query tables and summarize schema relationships.',
+      tools: remoteTools,
+    };
+  }
+}
+```

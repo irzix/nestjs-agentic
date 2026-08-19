@@ -1,0 +1,31 @@
+---
+title: Short-Term and Session Memory
+description: Managing conversational state, message history, and sliding context windows.
+---
+
+## ShortTermMemory Store
+
+`ShortTermMemory` maintains the immediate conversation turns between the user and the agent:
+
+```typescript
+import { ShortTermMemory } from '@nestjs-agentic/memory';
+
+const shortTerm = new ShortTermMemory({
+  maxMessages: 10,
+  strategy: 'sliding_window',
+});
+
+// Append turns
+await shortTerm.append({ role: 'user', content: 'What is my current balance?' });
+await shortTerm.append({ role: 'assistant', content: 'Your balance is $4,200.' });
+
+// Retrieve active window
+const history = await shortTerm.getHistory();
+```
+
+---
+
+## Window Pruning Strategies
+
+- **`sliding_window` (FIFO)**: Keeps the most recent $N$ messages, dropping older turns when capacity is reached.
+- **`summarizing_window`**: Triggers a background summarization agent to compress historical messages into a consolidated system prompt before pruning.

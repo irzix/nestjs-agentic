@@ -1,0 +1,32 @@
+---
+title: Hybrid Vector Store
+description: Fusing BM25 keyword search and dense semantic vector embeddings via Reciprocal Rank Fusion.
+---
+
+## Hybrid Retrieval Architecture
+
+Pure vector search struggles with exact identifier names (e.g. `UserRepository.findByTenantId`), while pure lexical BM25 misses conceptual synonyms.
+
+`HybridVectorStore` blends both scores using **Reciprocal Rank Fusion (RRF)**:
+
+```text
+RRF_score(d) = sum( weight_m / (k + rank_m(d)) ) for m in [BM25, Vector]
+```
+
+Where `k = 60` acts as a rank smoothing constant.
+
+```typescript
+import { HybridVectorStore } from '@nestjs-agentic/rag';
+
+const store = new HybridVectorStore({
+  embeddingProvider: perplexityEmbeddings,
+  bm25Weight: 0.5,
+  vectorWeight: 0.5,
+});
+
+await store.addDocuments([
+  { id: 'doc_1', content: 'export class AuthService { validateToken() {} }', metadata: { filePath: 'src/auth.service.ts' } },
+]);
+
+const results = await store.search('How does token validation work?', { topK: 5 });
+```

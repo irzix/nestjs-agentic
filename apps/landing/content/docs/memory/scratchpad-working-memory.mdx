@@ -1,0 +1,35 @@
+---
+title: Scratchpad Working Memory
+description: In-flight execution checkpoints, structured task state, and sub-goal tracking.
+---
+
+## ScratchpadMemory Store
+
+Complex multi-step agents require a dedicated working memory to track intermediate hypotheses, extracted entities, and incomplete sub-tasks across tool calls without polluting the conversation history.
+
+```typescript
+import { ScratchpadMemory } from '@nestjs-agentic/memory';
+
+const scratchpad = new ScratchpadMemory();
+
+// Set structured task state during turn execution
+await scratchpad.set('analyzedFiles', ['src/app.ts', 'src/auth.ts']);
+await scratchpad.set('discoveredVulnerabilities', [
+  { file: 'src/auth.ts', line: 42, type: 'CWE-89' },
+]);
+
+// Read working state
+const files = await scratchpad.get<string[]>('analyzedFiles');
+```
+
+---
+
+## Formatted Prompt Injection
+
+`ScratchpadMemory.toSystemPrompt()` compiles the active key-value state into a concise markdown section injected directly into the agent's system prompt:
+
+```markdown
+### Active Working Scratchpad:
+- analyzedFiles: ["src/app.ts", "src/auth.ts"]
+- discoveredVulnerabilities: [{"file": "src/auth.ts", "line": 42, "type": "CWE-89"}]
+```

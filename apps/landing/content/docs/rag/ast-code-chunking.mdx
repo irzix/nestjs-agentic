@@ -1,0 +1,28 @@
+---
+title: AST Hierarchical Code Chunking
+description: Semantic syntax-aware chunking preserving scopes, classes, methods, and interface definitions.
+---
+
+## Why AST Chunking?
+
+Splitting code by line or token count cuts across functions, leaving the model with broken syntax and missing parameter context.
+
+`AstCodeChunker` parses source files into Abstract Syntax Trees using `ts-morph` and extracts semantically coherent chunks:
+
+- **Class Declarations**: Preserves class decorators, properties, constructor signatures, and method interfaces.
+- **Functions & Methods**: Self-contained chunks with enclosing module imports and parameter types.
+- **Enums & Interfaces**: Preserved in whole units.
+
+```typescript
+import { AstCodeChunker } from '@nestjs-agentic/rag';
+
+const chunker = new AstCodeChunker();
+
+const chunks = chunker.chunkSourceFile('src/payment.service.ts', fileContent);
+
+for (const chunk of chunks) {
+  console.log(`Symbol: ${chunk.symbolName} (${chunk.kind})`);
+  console.log(`Lines: ${chunk.startLine}-${chunk.endLine}`);
+  console.log(`Context: ${chunk.enclosingScope}`);
+}
+```

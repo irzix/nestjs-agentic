@@ -1,0 +1,35 @@
+---
+title: Position-Debiased Pairwise LLM-as-a-Judge
+description: Eliminating order and position bias in automated model-based evaluation.
+---
+
+## Position Bias in LLM Judges
+
+LLMs tend to favor whichever candidate answer is placed first (`Candidate A`).
+
+`DebiasedPairwiseJudge` runs two mirrored evaluations with swapped positions (`[A, B]` and `[B, A]`):
+
+```mermaid
+graph TD
+    A[Candidate A] & B[Candidate B] --> J1[Judge Run 1: Prompt [A, B]]
+    A & B --> J2[Judge Run 2: Prompt [B, A]]
+    J1 & J2 --> Reconcile[Debias Reconciler]
+    Reconcile --> Score[Final Debiased Score & Win Rate]
+```
+
+```typescript
+import { DebiasedPairwiseJudge } from '@nestjs-agentic/evaluation';
+
+const judge = new DebiasedPairwiseJudge({ modelAdapter });
+
+const result = await judge.evaluatePairwise({
+  prompt: 'Summarize pull request security risks',
+  candidateA: outputModelV1,
+  candidateB: outputModelV2,
+  rubric: 'Security depth, actionable remediation, no false positives',
+});
+
+console.log('Winner:', result.winner); // 'A' | 'B' | 'tie'
+console.log('Confidence:', result.confidence);
+console.log('Reasoning:', result.critique);
+```
