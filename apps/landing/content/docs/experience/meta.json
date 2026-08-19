@@ -1,9 +1,0 @@
-{
-  "title": "@nestjs-agentic/experience",
-  "pages": [
-    "index",
-    "episodic-lessons",
-    "prompt-guidance"
-  ],
-  "defaultOpen": false
-}
