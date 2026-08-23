@@ -1238,6 +1238,75 @@ export class BenchmarkService${i} {
       threwOnMisaligned = true;
     }
     assert(threwOnMisaligned, 'Test 18g: a misaligned embedDocuments response length from the underlying provider throws instead of silently misapplying');
+
+    // 18h. maxSize is NOT validated when a store is provided, since it's documented as ignored in that case (review feedback)
+    let rejectedZeroWithStore = false;
+    try {
+      new CachedEmbeddingProvider({ provider: countingProvider, store: new InMemoryStateStore(), maxSize: 0 });
+    } catch {
+      rejectedZeroWithStore = true;
+    }
+    assert(!rejectedZeroWithStore, "Test 18h: maxSize: 0 is accepted when a store is provided, matching the documented 'ignored' behavior");
+
+    // 18i. Duplicate texts within one embedDocuments call are deduplicated, not re-embedded (review feedback)
+    let dedupCallCount = 0;
+    const dedupProvider = {
+      embedQuery: async (t: string) => [t.length, 0],
+      embedDocuments: async (texts: string[]) => { dedupCallCount += texts.length; return texts.map((t) => [t.length, 0]); },
+    };
+    const dedupCache = new CachedEmbeddingProvider({ provider: dedupProvider });
+    const dedupResult = await dedupCache.embedDocuments(['same', 'same', 'different']);
+    assert(dedupCallCount === 2, 'Test 18i: duplicate texts within one embedDocuments call are sent to the provider only once');
+    assert(
+      dedupResult[0][0] === 4 && dedupResult[1][0] === 4 && dedupResult[2][0] === 9,
+      'Test 18i2: deduplicated results are still correctly assigned back to every original index',
+    );
+
+    // 18j. embedQuery and embedDocuments use separate cache entries for identical text (review feedback)
+    const modeProvider = {
+      embedQuery: async () => [111],
+      embedDocuments: async (texts: string[]) => texts.map(() => [222]),
+    };
+    const modeCache = new CachedEmbeddingProvider({ provider: modeProvider });
+    const queryResult = await modeCache.embedQuery('shared text');
+    const docResult = (await modeCache.embedDocuments(['shared text']))[0];
+    assert(
+      queryResult[0] === 111 && docResult[0] === 222,
+      'Test 18j: embedQuery and embedDocuments do not share a cache entry for identical text',
+    );
+
+    // 18k. Concurrent embedQuery calls for the same uncached text coalesce into one provider call (review feedback)
+    let concurrentCallCount = 0;
+    const concurrentProvider = {
+      embedQuery: async (t: string) => {
+        concurrentCallCount++;
+        await new Promise((r) => setTimeout(r, 5));
+        return [t.length, 0];
+      },
+      embedDocuments: async (t: string[]) => t.map((x) => [x.length, 0]),
+    };
+    const concurrentCache = new CachedEmbeddingProvider({ provider: concurrentProvider });
+    const [concA, concB] = await Promise.all([concurrentCache.embedQuery('concurrent'), concurrentCache.embedQuery('concurrent')]);
+    assert(concurrentCallCount === 1, 'Test 18k: two concurrent embedQuery calls for the same uncached text coalesce into a single provider call');
+    assert(JSON.stringify(concA) === JSON.stringify(concB), 'Test 18k2: coalesced concurrent calls return equivalent results');
+
+    // 18l. Returned/cached embeddings are copies: mutating a returned array does not corrupt the cache (review feedback)
+    const mutTestCache = new CachedEmbeddingProvider({ provider: countingProvider });
+    const originalCallCount = callCount;
+    const returned1 = await mutTestCache.embedQuery('mutation test');
+    returned1[0] = -99999; // mutate the caller's copy
+    const returned2 = await mutTestCache.embedQuery('mutation test');
+    assert(returned2[0] !== -99999, 'Test 18l: mutating a returned embedding does not corrupt the cached value for subsequent calls');
+    assert(callCount === originalCallCount + 1, 'Test 18l2: the second call was still a cache hit (mutation did not force a re-embed)');
+
+    // 18m. ttlSeconds is validated at construction (review feedback)
+    let rejectedTtl = false;
+    try {
+      new CachedEmbeddingProvider({ provider: countingProvider, store: new InMemoryStateStore(), ttlSeconds: -5 });
+    } catch {
+      rejectedTtl = true;
+    }
+    assert(rejectedTtl, 'Test 18m: CachedEmbeddingProvider rejects a negative ttlSeconds at construction');
   } catch (err: any) {
     assert(false, 'Test 18: CachedEmbeddingProvider', err.message);
   }
