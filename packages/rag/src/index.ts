@@ -19,6 +19,8 @@ export * from './strategies/late-chunking.strategy';
 export * from './strategies/parent-child-hydration.strategy';
 export * from './strategies/contextual-compression.strategy';
 export * from './strategies/reranker.strategy';
+export * from './strategies/mmr.strategy';
+export * from './utils/cosine-similarity';
 export * from './strategies/graph-rag.strategy';
 export * from './strategies/graph-dependency.strategy';
 export * from './strategies/u-shaped-context.strategy';

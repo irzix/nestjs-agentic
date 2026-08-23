@@ -1037,6 +1037,62 @@ export class BenchmarkService${i} {
     assert(false, 'Test 16: Built-in Cohere/Voyage rerank provider adapters', err.message);
   }
 
+  // TEST 17: MmrStrategy diversity selection (#133)
+  try {
+    const { MmrStrategy, cosineSimilarity } = await import('../src');
+
+    // 17a. cosineSimilarity utility: known values and edge cases
+    assert(Math.abs(cosineSimilarity([1, 0], [1, 0]) - 1) < 1e-9, 'Test 17a: cosineSimilarity of identical vectors is 1');
+    assert(Math.abs(cosineSimilarity([1, 0], [0, 1])) < 1e-9, 'Test 17a2: cosineSimilarity of orthogonal vectors is 0');
+    assert(cosineSimilarity([1, 0], [1, 0, 0]) === 0, 'Test 17a3: cosineSimilarity of mismatched-length vectors returns 0, not a throw');
+    assert(cosineSimilarity([0, 0], [1, 0]) === 0, 'Test 17a4: cosineSimilarity of a zero-magnitude vector returns 0, not NaN');
+
+    // A and B are near-duplicates (identical embedding); C is distinct but lower-scored.
+    const chunkA = { id: 'a', parentId: 'p', content: 'auth token validation', metadata: {}, embedding: [1, 0] };
+    const chunkB = { id: 'b', parentId: 'p', content: 'auth token validation (near dup)', metadata: {}, embedding: [1, 0] };
+    const chunkC = { id: 'c', parentId: 'p', content: 'unrelated billing export', metadata: {}, embedding: [0, 1] };
+    const scores = new Map([['a', 0.9], ['b', 0.85], ['c', 0.5]]);
+
+    // 17b. Plain top-K by score would pick A, B (both near-duplicates) — establish the baseline being improved on.
+    const plainTopK = [chunkA, chunkB, chunkC].sort((x, y) => scores.get(y.id)! - scores.get(x.id)!).slice(0, 2);
+    assert(
+      plainTopK.map((c) => c.id).sort().join(',') === 'a,b',
+      'Test 17b: baseline top-K by score selects the two near-duplicate chunks (A, B)',
+    );
+
+    // 17c. MMR selects A (most relevant) then C (distinct), not A+B, given the near-duplicate penalty
+    const mmr = new MmrStrategy({ topK: 2, lambda: 0.5 });
+    const mmrResult = mmr.process({ query: 'auth', chunks: [chunkA, chunkB, chunkC], scores });
+    const mmrIds = mmrResult.chunks!.map((c) => c.id).sort();
+    assert(mmrIds.join(',') === 'a,c', 'Test 17c: MMR selects the relevant chunk plus a distinct one (A, C), surfacing more unique context than plain top-K (A, B)');
+
+    // 17d. lambda close to 1 behaves like pure relevance ranking (ignores diversity)
+    const pureRelevance = new MmrStrategy({ topK: 2, lambda: 1 });
+    const pureResult = pureRelevance.process({ query: 'auth', chunks: [chunkA, chunkB, chunkC], scores });
+    assert(
+      pureResult.chunks!.map((c) => c.id).sort().join(',') === 'a,b',
+      'Test 17d: lambda=1 (pure relevance) reduces to plain top-K by score, picking A and B',
+    );
+
+    // 17e. topK is respected
+    const cappedResult = mmr.process({ query: 'auth', chunks: [chunkA, chunkB, chunkC], scores: scores });
+    assert(cappedResult.chunks!.length === 2, 'Test 17e: MmrStrategy respects the configured topK');
+
+    // 17f. Chunks without embeddings pass through unchanged (capped at topK), no throw
+    const noEmbedChunks = [
+      { id: 'x', parentId: 'p', content: 'x', metadata: {} },
+      { id: 'y', parentId: 'p', content: 'y', metadata: {} },
+    ];
+    const noEmbedResult = mmr.process({ query: 'q', chunks: noEmbedChunks });
+    assert(noEmbedResult.chunks!.length === 2, 'Test 17f: chunks without embeddings pass through without throwing');
+
+    // 17g. Empty chunks array is a no-op
+    const emptyResult = mmr.process({ query: 'q', chunks: [] });
+    assert(emptyResult.chunks!.length === 0, 'Test 17g: an empty chunks array is handled without throwing');
+  } catch (err: any) {
+    assert(false, 'Test 17: MmrStrategy diversity selection', err.message);
+  }
+
   console.log(`\n  📊 Core RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');
