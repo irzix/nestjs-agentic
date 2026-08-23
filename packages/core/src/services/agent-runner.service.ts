@@ -297,6 +297,7 @@ export class AgentRunner {
           pending.toolName,
           pending.args,
           pending.context,
+          pending.agentName,
         )
       : { success: false, status: 'denied', reason: decision.reason ?? pending.reason };
 
@@ -504,6 +505,7 @@ export class AgentRunner {
     toolName: string,
     args: Record<string, unknown>,
     context: AgentContext,
+    agentName = '',
   ): Promise<ToolExecutionResult> {
     const localTokens: (object | Function)[] = [];
 
@@ -521,7 +523,7 @@ export class AgentRunner {
     }
 
     if (localTokens.length > 0) {
-      return this.localToolProvider.invokeApprovedTool(localTokens, toolName, args, context);
+      return this.localToolProvider.invokeApprovedTool(localTokens, toolName, args, context, agentName);
     }
 
     throw new ApprovalToolNotFoundError(toolName);

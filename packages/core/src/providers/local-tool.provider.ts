@@ -103,18 +103,26 @@ export class LocalToolProvider {
   }
 
   /**
-   * Invokes a tool method directly, bypassing policy evaluation.
+   * Invokes a tool method directly, bypassing *pre-execution* policy evaluation.
    *
    * Used to resolve an already-approved `PendingApproval`: the policy that
    * required approval already ran once, and a human decision now stands in
-   * for it. Any policies declared after it in the chain were never evaluated
-   * originally and are not evaluated here either, matching prior behavior.
+   * for it. Any policies declared after it in the pre-execution chain were
+   * never evaluated originally and are not evaluated here either, matching
+   * prior behavior.
+   *
+   * Output Rails (`evaluateOutput`) are **not** skipped: an approved call is
+   * often the most sensitive one a tool makes, and its result still passes
+   * through the same `evaluateOutput` chain that a normal `allow`-decision
+   * call would, so `SecretRedactionPolicy`/`CanaryDetectionPolicy`/custom
+   * output rails still see and can sanitize or deny the result.
    */
   async invokeApprovedTool(
     toolSetTokensOrInstances: (object | Function)[],
     toolName: string,
     args: Record<string, unknown>,
     agentContext: AgentContext,
+    agentName = '',
   ): Promise<ToolExecutionResult> {
     if (agentContext.signal?.aborted) {
       throw new ExecutionCancelledError();
@@ -124,10 +132,11 @@ export class LocalToolProvider {
       throw new ExecutionLimitExceededError('timeout', 0);
     }
 
-    const tool = this.discoverToolByName(toolSetTokensOrInstances, toolName);
-    if (!tool) {
+    const discovered = this.discoverToolByName(toolSetTokensOrInstances, toolName);
+    if (!discovered) {
       throw new ApprovalToolNotFoundError(toolName);
     }
+    const { tool, allPolicyConstructors } = discovered;
 
     const idempotencyKey =
       (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
@@ -136,33 +145,119 @@ export class LocalToolProvider {
       if (cached) return cached.result;
     }
 
-    const result = await this.invokeMethod(tool, args, agentContext);
+    const executionResult = await this.invokeMethod(tool, args, agentContext);
 
-    if (idempotencyKey && this.idempotencyStore && result.success) {
+    const finalResult = await this.runOutputRails(
+      executionResult,
+      allPolicyConstructors,
+      agentContext,
+      agentName,
+      tool.toolName,
+      args,
+    );
+
+    if (idempotencyKey && this.idempotencyStore && finalResult.success) {
       await this.idempotencyStore.save({
         key: idempotencyKey,
         toolName,
-        result,
+        result: finalResult,
         createdAt: new Date(),
       });
     }
 
-    return result;
+    return finalResult;
   }
 
   private discoverToolByName(
     toolSetTokensOrInstances: (object | Function)[],
     toolName: string,
-  ): DiscoveredTool | undefined {
+  ): { tool: DiscoveredTool; allPolicyConstructors: PolicyConstructor[] } | undefined {
     for (const tokenOrInstance of toolSetTokensOrInstances) {
       const instance = this.resolveInstance(tokenOrInstance);
       if (!instance) continue;
 
       const discovered = this.discovery.discover(instance);
       const match = discovered?.tools.find((t) => t.toolName === toolName);
-      if (match) return match;
+      if (match) {
+        return {
+          tool: match,
+          allPolicyConstructors: [...(discovered!.classPolicyConstructors ?? []), ...match.policyConstructors],
+        };
+      }
     }
     return undefined;
+  }
+
+  /**
+   * Runs the post-execution Output Rail chain (`evaluateOutput`) against a
+   * tool's execution result, applying `sanitize`/`deny`/`allow` decisions and
+   * recording the corresponding audit events. Shared by the normal
+   * policy-guarded closure and `invokeApprovedTool`, so an approved call's
+   * result is never exempt from output sanitization.
+   */
+  private async runOutputRails(
+    executionResult: ToolExecutionResult,
+    allPolicyConstructors: PolicyConstructor[],
+    agentContext: AgentContext,
+    agentName: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<ToolExecutionResult> {
+    let finalResult = executionResult;
+    if (!finalResult.success) {
+      return finalResult;
+    }
+
+    const policyMap = this.getPolicyMap();
+
+    for (const Constructor of allPolicyConstructors) {
+      const policy = this.resolvePolicy(Constructor, policyMap);
+      if (!policy?.evaluateOutput) continue;
+
+      const outputResult = await policy.evaluateOutput(agentContext, toolName, finalResult.data);
+
+      if (outputResult.decision === 'deny') {
+        await this.audit?.record({
+          ...auditEnvelope(agentContext),
+          type: 'tool_output_policy_decision',
+          agentName,
+          toolName,
+          policyName: Constructor.name,
+          decision: 'deny',
+          reason: outputResult.reason,
+          args,
+        });
+
+        return { success: false, status: 'denied', reason: outputResult.reason };
+      }
+
+      if (outputResult.decision === 'sanitize') {
+        finalResult = { ...finalResult, data: outputResult.sanitizedResult };
+
+        await this.audit?.record({
+          ...auditEnvelope(agentContext),
+          type: 'tool_output_policy_decision',
+          agentName,
+          toolName,
+          policyName: Constructor.name,
+          decision: 'sanitize',
+          reason: 'Output sanitized by policy',
+          args,
+        });
+      } else if (outputResult.decision === 'allow') {
+        await this.audit?.record({
+          ...auditEnvelope(agentContext),
+          type: 'tool_output_policy_decision',
+          agentName,
+          toolName,
+          policyName: Constructor.name,
+          decision: 'allow',
+          args,
+        });
+      }
+    }
+
+    return finalResult;
   }
 
   private resolveInstance(tokenOrInstance: object | Function): object | undefined {
@@ -326,60 +421,14 @@ export class LocalToolProvider {
         }
 
         const executionResult = await this.invokeMethod(tool, args, agentContext);
-        let finalResult = executionResult;
-
-        if (finalResult.success) {
-          for (const Constructor of allPolicyConstructors) {
-            const policy = this.resolvePolicy(Constructor, policyMap);
-            if (policy?.evaluateOutput) {
-              const outputResult = await policy.evaluateOutput(
-                agentContext,
-                tool.toolName,
-                finalResult.data,
-              );
-
-              if (outputResult.decision === 'deny') {
-                await this.audit?.record({
-                  ...auditEnvelope(agentContext),
-                  type: 'tool_output_policy_decision',
-                  agentName,
-                  toolName: tool.toolName,
-                  policyName: Constructor.name,
-                  decision: 'deny',
-                  reason: outputResult.reason,
-                  args,
-                });
-
-                return { success: false, status: 'denied', reason: outputResult.reason };
-              }
-
-              if (outputResult.decision === 'sanitize') {
-                finalResult = { ...finalResult, data: outputResult.sanitizedResult };
-
-                await this.audit?.record({
-                  ...auditEnvelope(agentContext),
-                  type: 'tool_output_policy_decision',
-                  agentName,
-                  toolName: tool.toolName,
-                  policyName: Constructor.name,
-                  decision: 'sanitize',
-                  reason: 'Output sanitized by policy',
-                  args,
-                });
-              } else if (outputResult.decision === 'allow') {
-                await this.audit?.record({
-                  ...auditEnvelope(agentContext),
-                  type: 'tool_output_policy_decision',
-                  agentName,
-                  toolName: tool.toolName,
-                  policyName: Constructor.name,
-                  decision: 'allow',
-                  args,
-                });
-              }
-            }
-          }
-        }
+        const finalResult = await this.runOutputRails(
+          executionResult,
+          allPolicyConstructors,
+          agentContext,
+          agentName,
+          tool.toolName,
+          args,
+        );
 
         if (idempotencyKey && this.idempotencyStore && finalResult.success) {
           await this.idempotencyStore.save({
