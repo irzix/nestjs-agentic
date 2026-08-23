@@ -131,13 +131,7 @@ export async function runIdempotencyTests() {
     assert(resAllow.decision === 'allow', 'Test 4b: Present idempotencyKey is allowed');
   }
 
-  // 5. Cross-tenant idempotency isolation
-  //
-  // Regression test for the bug where IdempotencyStore lookups/saves were
-  // keyed on the raw caller-supplied idempotencyKey alone, so two tenants
-  // supplying the same literal key would read and cache each other's
-  // ToolExecutionResult. LocalToolProvider now namespaces the store key by
-  // agentContext.security.tenantId before it reaches the store.
+  // 5. Cross-tenant idempotency isolation (regression test for #126)
   {
     const store = new InMemoryIdempotencyStore();
     let executionCount = 0;

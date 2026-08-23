@@ -113,14 +113,7 @@ export async function runIdempotencyStoreContract(
     check(loaded2Data?.txId === 'tx_123', 'modifying loaded record does not mutate store');
   }
 
-  // 6. Distinct tenant-scoped keys remain isolated
-  //
-  // IdempotencyStore itself has no concept of tenancy — it is a flat
-  // key-value store, same as SessionStore. Isolation across tenants is the
-  // caller's responsibility (LocalToolProvider now namespaces keys as
-  // `${tenantId}:${idempotencyKey}` before they reach the store). This
-  // assertion mirrors session-store-contract.ts's tenant isolation check:
-  // two records saved under distinct tenant-prefixed keys must not collide.
+  // 6. Distinct tenant-scoped keys remain isolated (mirrors session-store-contract.ts)
   {
     const store = await options.createStore();
     const recordA: IdempotencyRecord = {
