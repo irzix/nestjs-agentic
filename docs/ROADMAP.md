@@ -177,6 +177,7 @@ Goal: production-hardening primitives for the model-call boundary and quantitati
 
 - [ ] Support structured output with JSON Schema validation and bounded repair retries ([#140](https://github.com/irzix/nestjs-agentic/issues/140)).
 - [ ] Add framework-level retry with backoff/jitter and a circuit breaker for model calls, independent of adapter-specific SDK retry behavior ([#141](https://github.com/irzix/nestjs-agentic/issues/141)).
+- [x] Fix `RateLimitPolicy`'s unbounded in-process history growth by evicting fully-expired entries ([#142](https://github.com/irzix/nestjs-agentic/issues/142)).
 - [ ] Replace `RateLimitPolicy`'s in-process static state with a distributed (Redis-backed) implementation ([#142](https://github.com/irzix/nestjs-agentic/issues/142)).
 - [ ] Add retrieval-quality metrics (recall@k, precision@k, MRR, nDCG, faithfulness) to `@nestjs-agentic/evaluation` ([#143](https://github.com/irzix/nestjs-agentic/issues/143)).
 

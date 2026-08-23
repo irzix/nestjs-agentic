@@ -66,6 +66,50 @@ export async function runPolicyTests() {
     assert(false, 'Test 2: RateLimitPolicy Evaluation', err.message);
   }
 
+  // TEST 2C: RateLimitPolicy evicts fully-expired history entries (memory leak fix)
+  //
+  // history is a process-wide static Map, so every distinct (tenant, user,
+  // tool) key ever seen previously stayed in it forever, even once its
+  // window had fully expired. sweepIntervalMs: 0 forces the opportunistic
+  // sweep on every evaluate() call, so this test doesn't need to wait a
+  // real 60s window.
+  try {
+    const sweepingPolicy = new RateLimitPolicy({ maxCallsPerMinute: 5, sweepIntervalMs: 0 });
+    const internalHistory = (RateLimitPolicy as unknown as { history: Map<string, number[]> }).history;
+
+    const sizeBefore = internalHistory.size;
+
+    // Seed a distinct, never-repeated key so we can prove it gets evicted.
+    const evictionCtx: AgentContext = {
+      sessionId: 'sess_evict',
+      traceId: 'trace_evict',
+      security: { userId: 'usr_evict_test', tenantId: 'tenant_evict_test' },
+    };
+    await sweepingPolicy.evaluate(evictionCtx, 'evictionProbeTool', {});
+    assert(
+      internalHistory.size === sizeBefore + 1,
+      'Test 2Ca: A new (tenant, user, tool) combination adds exactly one history entry',
+    );
+
+    // Manually backdate the seeded entry's only timestamp past the window,
+    // simulating "60+ seconds have passed since the last call", then make
+    // any other evaluate() call (with sweepIntervalMs: 0) and confirm the
+    // expired entry -- not just its timestamp array -- is removed.
+    const probeKey = [...internalHistory.keys()].find((k) => k.includes('evictionProbeTool'));
+    if (probeKey) {
+      internalHistory.set(probeKey, [Date.now() - 61_000]);
+    }
+
+    await sweepingPolicy.evaluate(dummyCtx, 'unrelatedSweepTrigger', {});
+
+    assert(
+      probeKey !== undefined && !internalHistory.has(probeKey),
+      'Test 2Cb: An entry whose entire window has expired is evicted from the shared history map, not just emptied',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 2C: RateLimitPolicy history eviction', err.message);
+  }
+
   // TEST 3: LoggingPolicy Basic Functionality
   try {
     let loggedMessage = '';
