@@ -1,7 +1,7 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
-import { APPROVAL_STORE, IDEMPOTENCY_STORE, POLICY_INSTANCES } from '../constants';
+import { AGENTIC_OPTIONS, APPROVAL_STORE, IDEMPOTENCY_STORE, POLICY_INSTANCES } from '../constants';
 import {
   ApprovalToolNotFoundError,
   ExecutionCancelledError,
@@ -21,6 +21,7 @@ import type {
   ToolParamSchema,
   ToolPolicy,
 } from '../interfaces';
+import type { AgenticModuleOptions } from '../services/agent-runner.service';
 import { AuditTrail } from '../services/audit-trail.service';
 
 type PolicyConstructor = new (...args: unknown[]) => ToolPolicy;
@@ -34,7 +35,19 @@ export class LocalToolProvider {
     private readonly moduleRef: ModuleRef,
     @Optional() private readonly audit?: AuditTrail,
     @Optional() @Inject(IDEMPOTENCY_STORE) private readonly idempotencyStore?: IdempotencyStore,
+    @Optional() @Inject(AGENTIC_OPTIONS) private readonly options?: AgenticModuleOptions,
   ) {}
+
+  /**
+   * Module-wide default policies, prepended to every tool's own policy chain
+   * unless the tool is exempted via `@ExemptFromDefaultPolicies()`. Runs
+   * first so a deny-by-default guard short-circuits before any tool-specific
+   * policy is even evaluated.
+   */
+  private defaultPolicyConstructors(exempt: boolean): PolicyConstructor[] {
+    if (exempt) return [];
+    return (this.options?.defaultPolicies ?? []) as PolicyConstructor[];
+  }
 
   private getPolicyMap(): Map<Function | string, ToolPolicy> {
     let instances = Array.isArray(this.policyInstances) ? this.policyInstances : [];
@@ -115,7 +128,7 @@ export class LocalToolProvider {
       return discovered.tools.map((tool) =>
         this.buildResolvedTool(
           tool,
-          discovered.classPolicyConstructors,
+          [...this.defaultPolicyConstructors(tool.exemptFromDefaultPolicies), ...discovered.classPolicyConstructors],
           agentContext,
           agentName,
           defaultApprovalTtlSeconds,
@@ -191,7 +204,11 @@ export class LocalToolProvider {
       if (match) {
         return {
           tool: match,
-          allPolicyConstructors: [...(discovered!.classPolicyConstructors ?? []), ...match.policyConstructors],
+          allPolicyConstructors: [
+            ...this.defaultPolicyConstructors(match.exemptFromDefaultPolicies),
+            ...(discovered!.classPolicyConstructors ?? []),
+            ...match.policyConstructors,
+          ],
         };
       }
     }
@@ -356,12 +373,13 @@ export class LocalToolProvider {
 
   private buildResolvedTool(
     tool: DiscoveredTool,
-    classPolicyConstructors: PolicyConstructor[],
+    /** Module defaults (unless exempted) followed by class-level `@UsePolicies`. */
+    upstreamPolicyConstructors: PolicyConstructor[],
     agentContext: AgentContext,
     agentName: string,
     defaultApprovalTtlSeconds?: number,
   ): ResolvedTool {
-    const allPolicyConstructors = [...classPolicyConstructors, ...tool.policyConstructors];
+    const allPolicyConstructors = [...upstreamPolicyConstructors, ...tool.policyConstructors];
 
     const parameters: ToolParamSchema[] = tool.params.map((p) => ({
       name: p.name,

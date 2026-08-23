@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional, Type } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import {
@@ -38,6 +38,7 @@ import type {
   ResolvedTool,
   RuntimeAdapter,
   ToolExecutionResult,
+  ToolPolicy,
   ToolProvider,
 } from '../interfaces';
 import { APPROVAL_CHECKPOINT_VERSION, isToolProvider } from '../interfaces';
@@ -118,6 +119,15 @@ export interface AgenticModuleOptions {
    * Default: 1.0
    */
   samplingRate?: number;
+  /**
+   * Policy classes run against every discovered tool that doesn't opt out via
+   * `@ExemptFromDefaultPolicies()`, so a tool with no `@UsePolicies` at all is
+   * not silently unguarded. Each class must also be registered as a provider
+   * (e.g. via `AgenticModule.forFeature({ policies: [...] })`) so it resolves
+   * through DI like any other policy. Evaluated before class-level and
+   * method-level `@UsePolicies`, in array order.
+   */
+  defaultPolicies?: Type<ToolPolicy>[];
 }
 
 export interface RunInput {

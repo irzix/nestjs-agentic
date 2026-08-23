@@ -163,7 +163,7 @@ Goal: bring `@nestjs-agentic/rag`'s retrieval and reranking up to what its own d
 
 Goal: extend Tri-Rail Guardrails beyond opt-in per-tool policies into deny-by-default governance, and close indirect-injection, PII, and audit-integrity gaps.
 
-- [ ] Support module-level default policy chains so tools are governed even without explicit `@UsePolicies` ([#135](https://github.com/irzix/nestjs-agentic/issues/135)).
+- [x] Support module-level default policy chains so tools are governed even without explicit `@UsePolicies` ([#135](https://github.com/irzix/nestjs-agentic/issues/135)).
 - [ ] Promote the example-only prompt-injection sanitizer into `@nestjs-agentic/core` and apply boundary-wrapping to retrieved RAG content ([#136](https://github.com/irzix/nestjs-agentic/issues/136)).
 - [ ] Add provenance/taint labeling so policies can distinguish model, tool, and externally-sourced content ([#137](https://github.com/irzix/nestjs-agentic/issues/137)).
 - [ ] Ship a `PiiRedactionPolicy` covering email, phone, credit card, and national ID patterns ([#138](https://github.com/irzix/nestjs-agentic/issues/138)).

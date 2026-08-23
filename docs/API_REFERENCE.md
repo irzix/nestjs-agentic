@@ -62,7 +62,11 @@ Injects the current `AgentContext` into a tool method parameter. This parameter 
 
 ### `@UsePolicies(...policies)`
 
-Attaches `ToolPolicy` classes to a tool method or tool-set class. Register each policy class through `AgenticModule.forFeature({ policies: [...] })`.
+Attaches `ToolPolicy` classes to a tool method or tool-set class. Register each policy class through `AgenticModule.forFeature({ policies: [...] })`. Runs after any module-wide `defaultPolicies` (see [Module Configuration](#module-configuration)) — class-level policies before method-level ones.
+
+### `@ExemptFromDefaultPolicies()`
+
+Opts a tool method or an entire tool-set class out of `AgenticModuleOptions.defaultPolicies`. `@UsePolicies` on the same tool/class still applies as normal.
 
 ## Agent Contracts
 
@@ -544,6 +548,16 @@ interface AgenticModuleOptions {
   modelAdapter?: ModelAdapter;
   /** Default execution budgets for every run. */
   limits?: ExecutionLimits;
+  /**
+   * Policies run against every discovered tool that doesn't opt out via
+   * @ExemptFromDefaultPolicies(), so a tool with no @UsePolicies at all is
+   * not silently unguarded. Evaluated before class-level and method-level
+   * @UsePolicies, in array order. Each class must also be registered via
+   * forFeature({ policies: [...] }) so it resolves through DI.
+   */
+  defaultPolicies?: Type<ToolPolicy>[];
+  // ...plus stateStore/approvalStore/sessionStore/idempotencyStore, audit
+  // options, observers, and other fields — see the full interface in source.
 }
 
 interface ForFeatureOptions {
@@ -565,14 +579,37 @@ AgenticModule.forRoot({
   defaultModel: { provider: 'mock', model: 'deterministic' },
   modelAdapter: myModelAdapter,
   limits: { maxIterations: 6 },
+  defaultPolicies: [SecretRedactionPolicy, RateLimitPolicy],
 });
 
 AgenticModule.forFeature({
   agents: [SupportAgent],
   toolSets: [OrderTools],
-  policies: [RefundLimitPolicy],
+  // defaultPolicies classes must also be listed here (or in another
+  // forFeature call) so they resolve through DI like any other policy.
+  policies: [RefundLimitPolicy, SecretRedactionPolicy, RateLimitPolicy],
 });
 ```
+
+### Deny-by-default governance with `defaultPolicies`
+
+Without `defaultPolicies`, policies are entirely opt-in per tool via `@UsePolicies(...)` — a tool with no annotation ships completely unguarded. `defaultPolicies` runs a shared policy chain against every discovered tool automatically:
+
+**Evaluation order** (deterministic, module defaults first so a deny-by-default guard short-circuits before any tool-specific policy runs):
+
+```
+defaultPolicies -> class-level @UsePolicies -> method-level @UsePolicies
+```
+
+**Opting out**: a tool or an entire `@ToolSet` class can be exempted with `@ExemptFromDefaultPolicies()`. The exemption is itself discoverable metadata, not a silent bypass — `@UsePolicies` on the same tool/class still applies as normal.
+
+```typescript
+@Tool({ description: 'Read-only lookup' })
+@ExemptFromDefaultPolicies()
+async getOrderStatus(@Param('orderId') orderId: string) {}
+```
+
+**Backward compatibility**: with no `defaultPolicies` configured, every existing tool behaves exactly as before.
 
 The application must register either a `ModelAdapter` or a `RuntimeAdapter`. Passing `modelAdapter` to `forRoot()` is the recommended path, because `AgentExecutor` is instantiated inside `AgenticModule` and resolves the token from that context.
 
@@ -808,7 +845,7 @@ new CanaryDetectionPolicy({
 
 Detects known canary tokens (secrets deliberately embedded in a system prompt to trap leakage) appearing in either tool call arguments (`evaluate()`, denies — treated as an exfiltration attempt) or tool output (`evaluateOutput()`, denies — treated as reflection back into the transcript). Narrower in scope than general prompt-injection detection: it only catches tokens you've planted and know to check for.
 
-**Both `SecretRedactionPolicy` and `CanaryDetectionPolicy` are opt-in per tool via `@UsePolicies(...)`.** Neither is applied by default, and a tool with no explicit `@UsePolicies` runs with no output rail at all.
+**Both `SecretRedactionPolicy` and `CanaryDetectionPolicy` ship opt-in via `@UsePolicies(...)`** — neither is applied automatically. A tool with no explicit `@UsePolicies` runs with no output rail *unless* the module configures `defaultPolicies` (see [Module Configuration](#module-configuration)), in which case it still runs the module's default policy chain.
 
 ## Model Cascading (FrugalGPT)
 

@@ -452,6 +452,137 @@ export async function runLocalToolProviderTests() {
     assert(false, 'Test 7: Output Rails run on approval-resume path', err.message);
   }
 
+  // TEST 8: Module-level default policy chain (#135)
+  try {
+    const { ExemptFromDefaultPolicies } = await import('../src');
+
+    class DefaultDenyPolicy implements ToolPolicy {
+      async evaluate(): Promise<PolicyResult> {
+        return { decision: 'deny', reason: 'Blocked by module default policy' };
+      }
+    }
+
+    @ToolSet({ name: 'default-policy-tools' })
+    class DefaultPolicyTools {
+      @Tool({ description: 'No explicit @UsePolicies at all' })
+      async unguardedAction(@Param('value') value: string) {
+        return { value };
+      }
+
+      @Tool({ description: 'Exempted from module defaults' })
+      @ExemptFromDefaultPolicies()
+      async exemptAction(@Param('value') value: string) {
+        return { value };
+      }
+    }
+
+    class DefaultPolicyModuleRef {
+      get(token: any): any {
+        if (token === DefaultDenyPolicy) return new DefaultDenyPolicy();
+        return undefined;
+      }
+    }
+
+    const defaultPolicyProvider = new LocalToolProvider(
+      [new DefaultDenyPolicy()],
+      approvalStore,
+      discovery,
+      new DefaultPolicyModuleRef() as unknown as ModuleRef,
+      undefined,
+      undefined,
+      { defaultModel: {} as any, defaultPolicies: [DefaultDenyPolicy] },
+    );
+
+    const defaultPolicyTools = defaultPolicyProvider.buildTools(
+      [new DefaultPolicyTools()],
+      agentContext,
+    );
+
+    const unguardedTool = defaultPolicyTools.find((t) => t.name === 'unguardedAction');
+    const unguardedResult = (await unguardedTool?.execute({ args: { value: 'x' } })) as ToolExecutionResult;
+    assert(
+      !unguardedResult.success && unguardedResult.status === 'denied',
+      'Test 8a: a tool with zero explicit @UsePolicies still runs the module default policy chain',
+    );
+
+    const exemptTool = defaultPolicyTools.find((t) => t.name === 'exemptAction');
+    const exemptResult = (await exemptTool?.execute({ args: { value: 'y' } })) as ToolExecutionResult;
+    assert(
+      exemptResult.success === true,
+      'Test 8b: @ExemptFromDefaultPolicies() opts a tool out of the module default chain',
+    );
+
+    // Backward compatibility: no defaultPolicies configured -> no behavior change
+    const noDefaultsProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      discovery,
+      new DefaultPolicyModuleRef() as unknown as ModuleRef,
+    );
+    const noDefaultsTools = noDefaultsProvider.buildTools([new DefaultPolicyTools()], agentContext);
+    const noDefaultsResult = (await noDefaultsTools
+      .find((t) => t.name === 'unguardedAction')
+      ?.execute({ args: { value: 'z' } })) as ToolExecutionResult;
+    assert(
+      noDefaultsResult.success === true,
+      'Test 8c: with no defaultPolicies configured, an unguarded tool behaves exactly as before (backward compatible)',
+    );
+
+    // Ordering: default policies run before class/method policies, so an
+    // earlier deny short-circuits before a later allow would run.
+    class OrderTrackingAllowPolicy implements ToolPolicy {
+      static callOrder: string[] = [];
+      async evaluate(): Promise<PolicyResult> {
+        OrderTrackingAllowPolicy.callOrder.push('method-level');
+        return { decision: 'allow' };
+      }
+    }
+    class OrderTrackingDefaultPolicy implements ToolPolicy {
+      static callOrder: string[] = [];
+      async evaluate(): Promise<PolicyResult> {
+        OrderTrackingDefaultPolicy.callOrder.push('default');
+        OrderTrackingAllowPolicy.callOrder.push('default');
+        return { decision: 'allow' };
+      }
+    }
+
+    @ToolSet({ name: 'order-tracking-tools' })
+    class OrderTrackingTools {
+      @Tool({ description: 'Tracks policy evaluation order' })
+      @UsePolicies(OrderTrackingAllowPolicy)
+      async trackedAction() {
+        return { done: true };
+      }
+    }
+
+    class OrderModuleRef {
+      get(token: any): any {
+        if (token === OrderTrackingDefaultPolicy) return new OrderTrackingDefaultPolicy();
+        if (token === OrderTrackingAllowPolicy) return new OrderTrackingAllowPolicy();
+        return undefined;
+      }
+    }
+
+    const orderProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      discovery,
+      new OrderModuleRef() as unknown as ModuleRef,
+      undefined,
+      undefined,
+      { defaultModel: {} as any, defaultPolicies: [OrderTrackingDefaultPolicy] },
+    );
+
+    const orderTools = orderProvider.buildTools([new OrderTrackingTools()], agentContext);
+    await orderTools.find((t) => t.name === 'trackedAction')?.execute({ args: {} });
+    assert(
+      OrderTrackingAllowPolicy.callOrder.join(',') === 'default,method-level',
+      'Test 8d: module default policies evaluate before class/method-level @UsePolicies',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 8: Module-level default policy chain', err.message);
+  }
+
   console.log(`\n  📊 Step 2 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 2 Unit Tests Failed');

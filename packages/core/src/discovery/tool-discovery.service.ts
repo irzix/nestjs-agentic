@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  EXEMPT_DEFAULT_POLICIES_METADATA,
   TOOLSET_METADATA,
   TOOL_METADATA,
   TOOL_PARAMS_METADATA,
@@ -28,6 +29,8 @@ export interface DiscoveredTool {
   params: DiscoveredParam[];
   contextParamIndex: number | undefined;
   policyConstructors: PolicyConstructor[];
+  /** Whether this tool opts out of `AgenticModuleOptions.defaultPolicies`, via class- or method-level `@ExemptFromDefaultPolicies()`. */
+  exemptFromDefaultPolicies: boolean;
   instance: object;
 }
 
@@ -52,6 +55,7 @@ export class ToolDiscoveryService {
 
     const classPolicyConstructors: PolicyConstructor[] =
       Reflect.getMetadata(TOOL_POLICIES_METADATA, target) ?? [];
+    const classExempt: boolean = Reflect.getMetadata(EXEMPT_DEFAULT_POLICIES_METADATA, target) ?? false;
 
     const prototype = typeof instance === 'function' ? instance.prototype : Object.getPrototypeOf(instance);
     if (!prototype) return null;
@@ -111,6 +115,15 @@ export class ToolDiscoveryService {
           methodName,
         ) ?? [];
 
+      const methodExempt = this.getMethodMetadata<boolean>(
+        EXEMPT_DEFAULT_POLICIES_METADATA,
+        prototype,
+        instance,
+        target,
+        methodName,
+      );
+      const exemptFromDefaultPolicies = methodExempt ?? classExempt;
+
       tools.push({
         methodName,
         toolName: toolOptions.name ?? methodName,
@@ -118,6 +131,7 @@ export class ToolDiscoveryService {
         params,
         contextParamIndex,
         policyConstructors,
+        exemptFromDefaultPolicies,
         instance,
       });
     }

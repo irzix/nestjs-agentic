@@ -224,6 +224,86 @@ export async function runAgenticModuleTests() {
     assert(false, 'Test 3: Module-level execution limits', err.message);
   }
 
+  // TEST 4: defaultPolicies wired end-to-end through forRoot()/forFeature() (#135)
+  try {
+    const { ExemptFromDefaultPolicies } = await import('../src');
+
+    @Injectable()
+    class ModuleDefaultDenyPolicy implements ToolPolicy {
+      async evaluate(): Promise<PolicyResult> {
+        return { decision: 'deny', reason: 'Blocked by module default policy chain' };
+      }
+    }
+
+    @ToolSet({ name: 'default-policy-di-tools' })
+    class DefaultPolicyDiTools {
+      @Tool({ name: 'unguarded', description: 'No explicit @UsePolicies' })
+      async unguarded() {
+        return { ok: true };
+      }
+
+      @Tool({ name: 'exempt', description: 'Opted out of module defaults' })
+      @ExemptFromDefaultPolicies()
+      async exempt() {
+        return { ok: true };
+      }
+    }
+
+    @Agent({ name: 'default-policy-agent', description: 'Exercises module default policies' })
+    class DefaultPolicyAgent implements AgentProvider {
+      constructor(private readonly tools: DefaultPolicyDiTools) {}
+      define(): AgentConfig {
+        return { instructions: 'Call tools as asked.', tools: [this.tools] };
+      }
+    }
+
+    const model = new MockModelAdapter();
+    model.whenAsked('Call unguarded').callTool('unguarded', {}).reply('done');
+    model.whenAsked('Call exempt').callTool('exempt', {}).reply('done');
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        AgenticModule.forRoot({
+          defaultModel: { provider: 'mock', model: 'deterministic' },
+          modelAdapter: model,
+          defaultPolicies: [ModuleDefaultDenyPolicy],
+        }),
+        AgenticModule.forFeature({
+          agents: [DefaultPolicyAgent],
+          toolSets: [DefaultPolicyDiTools],
+          policies: [ModuleDefaultDenyPolicy],
+        }),
+      ],
+    }).compile();
+
+    const runner = moduleRef.get(AgentRunner, { strict: false });
+
+    const unguardedRun = await runner.run('default-policy-agent', {
+      sessionId: 'sess_default_policy_1',
+      message: 'Call unguarded',
+    });
+    const unguardedToolResult = unguardedRun.toolCalls[0]?.result as { status?: string } | undefined;
+    assert(
+      unguardedToolResult?.status === 'denied',
+      'Test 4a: a tool with zero @UsePolicies is denied by the module default policy chain, resolved through real DI',
+    );
+
+    const exemptRun = await runner.run('default-policy-agent', {
+      sessionId: 'sess_default_policy_2',
+      message: 'Call exempt',
+    });
+    const exemptToolResult = exemptRun.toolCalls[0]?.result as { success?: boolean } | undefined;
+    assert(
+      exemptToolResult?.success === true,
+      'Test 4b: @ExemptFromDefaultPolicies() lets the tool run despite the module default policy chain, resolved through real DI',
+    );
+
+    await moduleRef.close();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    assert(false, 'Test 4: defaultPolicies wired through forRoot/forFeature', message);
+  }
+
   console.log(`\n  📊 Step 8 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 8 Unit Tests Failed');
