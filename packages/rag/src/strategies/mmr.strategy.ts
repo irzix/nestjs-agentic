@@ -42,8 +42,17 @@ export class MmrStrategy implements RAGStrategy {
    * @param options Configuration for top-K cutoff and the relevance/diversity balance (`lambda`).
    */
   constructor(options?: MmrStrategyOptions) {
-    this.topK = options?.topK ?? 5;
-    this.lambda = options?.lambda ?? 0.5;
+    const topK = options?.topK ?? 5;
+    if (!Number.isInteger(topK) || topK < 0) {
+      throw new RangeError(`MmrStrategy: topK must be a non-negative integer, got ${topK}`);
+    }
+    this.topK = topK;
+
+    const lambda = options?.lambda ?? 0.5;
+    if (!Number.isFinite(lambda) || lambda < 0 || lambda > 1) {
+      throw new RangeError(`MmrStrategy: lambda must be a finite number in [0, 1], got ${lambda}`);
+    }
+    this.lambda = lambda;
   }
 
   /**
@@ -78,7 +87,9 @@ export class MmrStrategy implements RAGStrategy {
 
         // Chunks without an embedding can't be compared for similarity, so
         // they never get diversity-penalized (or credited) against selected chunks.
-        let maxSimToSelected = 0;
+        // Starts at -Infinity (not 0) so a genuinely negative cosine similarity
+        // — an anti-correlated embedding — still counts as the max, per the MMR formula.
+        let maxSimToSelected = -Infinity;
         if (candidate.embedding) {
           for (const s of selected) {
             if (!s.embedding) continue;
@@ -86,6 +97,7 @@ export class MmrStrategy implements RAGStrategy {
             if (sim > maxSimToSelected) maxSimToSelected = sim;
           }
         }
+        if (maxSimToSelected === -Infinity) maxSimToSelected = 0;
 
         const mmrScore = this.lambda * relevanceScore - (1 - this.lambda) * maxSimToSelected;
         if (mmrScore > bestScore) {

@@ -28,7 +28,7 @@ const mmr = new MmrStrategy({
 });
 ```
 
-Requires chunk embeddings to diversify by; chunks without one pass through unranked. Relevance comes from `context.scores` (populated by `RAGPipeline` during retrieval).
+Relevance comes from `context.scores` (populated by `RAGPipeline` during retrieval). Chunks without an `embedding` still participate in MMR selection using their relevance score, they just skip the diversity comparison against other chunks. If no chunk in the set has an embedding at all, MMR has no diversity signal to work with and passes the incoming order through, capped at `topK`.
 
 Strategies aren't passed to `KnowledgeBase` directly — they're registered on a `RAGPipeline`, which runs pre-retrieval strategies, retrieves via the `KnowledgeBase`, then runs post-retrieval strategies:
 

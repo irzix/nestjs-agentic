@@ -2,6 +2,10 @@
  * Cosine similarity between two vectors of equal length. Returns `0` for
  * mismatched lengths or zero-magnitude vectors, rather than throwing or
  * producing `NaN`.
+ *
+ * @param a First vector.
+ * @param b Second vector, compared against `a`.
+ * @returns Cosine similarity in `[-1, 1]`, or `0` if the inputs are incomparable.
  */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;

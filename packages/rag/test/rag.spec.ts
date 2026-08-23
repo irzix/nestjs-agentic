@@ -1089,6 +1089,58 @@ export class BenchmarkService${i} {
     // 17g. Empty chunks array is a no-op
     const emptyResult = mmr.process({ query: 'q', chunks: [] });
     assert(emptyResult.chunks!.length === 0, 'Test 17g: an empty chunks array is handled without throwing');
+
+    // 17h. Selection order matters, not just membership: the most relevant chunk must be picked first
+    assert(mmrResult.chunks![0].id === 'a', 'Test 17h: MMR selects the most relevant chunk (A) first, not just as a set member');
+
+    // 17i. Invalid topK/lambda are rejected at construction, per review feedback
+    let rejectedTopK = false;
+    try {
+      new MmrStrategy({ topK: -1 });
+    } catch {
+      rejectedTopK = true;
+    }
+    assert(rejectedTopK, 'Test 17i: MmrStrategy rejects a negative topK at construction');
+
+    let rejectedLambda = false;
+    try {
+      new MmrStrategy({ lambda: 1.5 });
+    } catch {
+      rejectedLambda = true;
+    }
+    assert(rejectedLambda, 'Test 17j: MmrStrategy rejects a lambda outside [0, 1] at construction');
+
+    // 17k. Anti-correlated (negative cosine similarity) embeddings still participate
+    // in the diversity penalty per the MMR formula, instead of being clamped to 0, per review feedback
+    const chunkP = { id: 'p1', parentId: 'p', content: 'p', metadata: {}, embedding: [1, 0] };
+    const chunkQ = { id: 'q1', parentId: 'p', content: 'q', metadata: {}, embedding: [-1, 0] }; // anti-correlated with P
+    const antiScores = new Map([['p1', 1], ['q1', 0.99]]);
+    // lambda=0 -> pure diversity: after picking P, the score for Q becomes -(1)*(-1) = +1 (rewarded for being anti-correlated),
+    // which must be strictly greater than picking a chunk identical to P would score (-(1)*(1) = -1).
+    const pureDiversity = new MmrStrategy({ topK: 2, lambda: 0 });
+    const chunkR = { id: 'r1', parentId: 'p', content: 'r', metadata: {}, embedding: [1, 0] }; // identical to P
+    const antiResult = pureDiversity.process({
+      query: 'q',
+      chunks: [chunkP, chunkQ, chunkR],
+      scores: new Map([...antiScores, ['r1', 0.98]]),
+    });
+    assert(
+      antiResult.chunks![1].id === 'q1',
+      'Test 17k: an anti-correlated (negative cosine similarity) chunk is preferred over a duplicate under pure diversity, proving negative similarity is not clamped to 0',
+    );
+
+    // 17l. Mixed embedded/non-embedded chunks: the non-embedded chunk still participates via its score
+    const embedded = { id: 'e1', parentId: 'p', content: 'e', metadata: {}, embedding: [1, 0] };
+    const noEmbed = { id: 'n1', parentId: 'p', content: 'n', metadata: {} };
+    const mixedResult = mmr.process({
+      query: 'q',
+      chunks: [embedded, noEmbed],
+      scores: new Map([['e1', 0.5], ['n1', 0.9]]),
+    });
+    assert(
+      mixedResult.chunks!.length === 2 && mixedResult.chunks!.some((c) => c.id === 'n1'),
+      'Test 17l: a chunk without an embedding still participates in selection via its relevance score, in a mixed set',
+    );
   } catch (err: any) {
     assert(false, 'Test 17: MmrStrategy diversity selection', err.message);
   }
