@@ -1,5 +1,15 @@
 # @nestjs-agentic/rag
 
+## 1.2.0
+
+### Minor Changes
+
+- d1e6079: Add real Reciprocal Rank Fusion (RRF) support to `HybridVectorStore` via a new `fusionMethod: 'weighted' | 'rrf'` option (default `'weighted'`, preserving existing behavior), plus a standalone `reciprocalRankFusion` utility for fusing any ranked id lists (e.g. RAG-Fusion-style multi-query variants). Closes #130.
+
+### Patch Changes
+
+- @nestjs-agentic/memory@1.2.0
+
 ## 1.1.0
 
 ### Minor Changes
