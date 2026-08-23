@@ -113,6 +113,48 @@ export async function runIdempotencyStoreContract(
     check(loaded2Data?.txId === 'tx_123', 'modifying loaded record does not mutate store');
   }
 
+  // 6. Distinct tenant-scoped keys remain isolated
+  //
+  // IdempotencyStore itself has no concept of tenancy — it is a flat
+  // key-value store, same as SessionStore. Isolation across tenants is the
+  // caller's responsibility (LocalToolProvider now namespaces keys as
+  // `${tenantId}:${idempotencyKey}` before they reach the store). This
+  // assertion mirrors session-store-contract.ts's tenant isolation check:
+  // two records saved under distinct tenant-prefixed keys must not collide.
+  {
+    const store = await options.createStore();
+    const recordA: IdempotencyRecord = {
+      key: 'tenant_a:idem_shared_key',
+      toolName: 'transferFunds',
+      result: { success: true, data: { txId: 'tx_tenant_a' } },
+      createdAt: new Date(),
+    };
+    const recordB: IdempotencyRecord = {
+      key: 'tenant_b:idem_shared_key',
+      toolName: 'transferFunds',
+      result: { success: true, data: { txId: 'tx_tenant_b' } },
+      createdAt: new Date(),
+    };
+
+    await store.save(recordA);
+    await store.save(recordB);
+
+    const loadedA = await store.get(recordA.key);
+    const loadedB = await store.get(recordB.key);
+
+    const loadedAData =
+      loadedA?.result && 'data' in loadedA.result
+        ? (loadedA.result.data as Record<string, unknown>)
+        : undefined;
+    const loadedBData =
+      loadedB?.result && 'data' in loadedB.result
+        ? (loadedB.result.data as Record<string, unknown>)
+        : undefined;
+
+    check(loadedAData?.txId === 'tx_tenant_a', 'tenant-a-scoped key isolated from tenant-b-scoped key');
+    check(loadedBData?.txId === 'tx_tenant_b', 'tenant-b-scoped key isolated from tenant-a-scoped key');
+  }
+
   if (log) {
     console.log(`\n  📊 ${options.name} contract: ${result.passed} passed, ${result.failed} failed.\n`);
   }

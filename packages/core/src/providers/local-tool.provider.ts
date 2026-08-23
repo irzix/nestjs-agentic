@@ -72,6 +72,22 @@ export class LocalToolProvider {
   }
 
   /**
+   * Namespaces a caller-supplied idempotency key by tenant before it reaches
+   * the `IdempotencyStore`.
+   *
+   * Without this, `IdempotencyStore` lookups and saves are keyed on the raw
+   * `idempotencyKey` string alone, so two tenants supplying the same literal
+   * key (accidentally or deliberately) would read and cache each other's
+   * `ToolExecutionResult`, including its `data` payload. `SessionStore`
+   * already scopes by tenant this way (`AgentRunner.sessionKey()`); this
+   * brings idempotency in line with it.
+   */
+  private scopedIdempotencyKey(agentContext: AgentContext, idempotencyKey: string): string {
+    const tenantId = agentContext.security.tenantId ?? 'default';
+    return `${tenantId}:${idempotencyKey}`;
+  }
+
+  /**
    * Builds policy-guarded tool closures for one agent turn.
    * `agentName` is stored on any `PendingApproval` created while executing
    * these tools, so a later resume can re-resolve the same agent's tool set
@@ -138,8 +154,11 @@ export class LocalToolProvider {
     }
     const { tool, allPolicyConstructors } = discovered;
 
-    const idempotencyKey =
+    const rawIdempotencyKey =
       (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
+    const idempotencyKey = rawIdempotencyKey
+      ? this.scopedIdempotencyKey(agentContext, rawIdempotencyKey)
+      : undefined;
     if (idempotencyKey && this.idempotencyStore) {
       const cached = await this.idempotencyStore.get(idempotencyKey);
       if (cached) return cached.result;
@@ -317,8 +336,11 @@ export class LocalToolProvider {
           throw new ExecutionLimitExceededError('timeout', 0);
         }
 
-        const idempotencyKey =
+        const rawIdempotencyKey =
           (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
+        const idempotencyKey = rawIdempotencyKey
+          ? this.scopedIdempotencyKey(agentContext, rawIdempotencyKey)
+          : undefined;
         if (idempotencyKey && this.idempotencyStore) {
           const cached = await this.idempotencyStore.get(idempotencyKey);
           if (cached) return cached.result;

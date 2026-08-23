@@ -131,6 +131,98 @@ export async function runIdempotencyTests() {
     assert(resAllow.decision === 'allow', 'Test 4b: Present idempotencyKey is allowed');
   }
 
+  // 5. Cross-tenant idempotency isolation
+  //
+  // Regression test for the bug where IdempotencyStore lookups/saves were
+  // keyed on the raw caller-supplied idempotencyKey alone, so two tenants
+  // supplying the same literal key would read and cache each other's
+  // ToolExecutionResult. LocalToolProvider now namespaces the store key by
+  // agentContext.security.tenantId before it reaches the store.
+  {
+    const store = new InMemoryIdempotencyStore();
+    let executionCount = 0;
+
+    class TenantTools {
+      // invokeMethod() maps declared params positionally by `index`, not as
+      // a single destructured object, so this must take positional args.
+      async transfer(amount: number, tenant: string) {
+        executionCount++;
+        return { txId: `tx_${tenant}_${executionCount}`, tenant };
+      }
+    }
+
+    const toolInstance = new TenantTools();
+    const discovery = new ToolDiscoveryService();
+    (discovery as any).discover = () => ({
+      tools: [
+        {
+          toolName: 'transfer',
+          methodName: 'transfer',
+          description: 'Transfer funds',
+          instance: toolInstance,
+          params: [
+            { name: 'amount', index: 0, type: 'number', required: true },
+            { name: 'tenant', index: 1, type: 'string', required: true },
+          ],
+          policyConstructors: [],
+        },
+      ],
+      classPolicyConstructors: [],
+    });
+
+    const provider = new LocalToolProvider([], {} as any, discovery, {} as any, undefined, store);
+
+    const tenantAContext = {
+      sessionId: 's_a',
+      traceId: 't_a',
+      security: { tenantId: 'tenant_a' },
+      data: {},
+    };
+    const tenantBContext = {
+      sessionId: 's_b',
+      traceId: 't_b',
+      security: { tenantId: 'tenant_b' },
+      data: {},
+    };
+
+    const resolvedForA = provider.buildTools([TenantTools], tenantAContext as any);
+    const resolvedForB = provider.buildTools([TenantTools], tenantBContext as any);
+
+    // Both tenants deliberately reuse the same literal idempotencyKey.
+    const sharedKey = 'idem_shared_key';
+
+    const resultA = await resolvedForA[0].execute({
+      args: { amount: 100, tenant: 'tenant_a', idempotencyKey: sharedKey },
+    });
+    assert(
+      resultA.success === true && (resultA as any).data?.tenant === 'tenant_a',
+      'Test 5a: Tenant A executes and caches under its own scoped key',
+    );
+
+    const resultB = await resolvedForB[0].execute({
+      args: { amount: 999, tenant: 'tenant_b', idempotencyKey: sharedKey },
+    });
+    assert(
+      resultB.success === true &&
+        (resultB as any).data?.tenant === 'tenant_b' &&
+        executionCount === 2,
+      'Test 5b: Tenant B with the same literal key executes independently, not served Tenant A\u2019s cached result',
+    );
+
+    // A second call from Tenant A with the same key should now hit its own
+    // cache (executionCount stays at 2) rather than executing a third time.
+    const resultARepeat = await resolvedForA[0].execute({
+      args: { amount: 100, tenant: 'tenant_a', idempotencyKey: sharedKey },
+    });
+    assert(
+      resultARepeat.success === true &&
+        (resultARepeat as any).data?.tenant === 'tenant_a' &&
+        (resultARepeat as any).data?.txId === (resultA as any).data?.txId &&
+        executionCount === 2,
+      'Test 5c: Tenant A\u2019s repeated call still hits its own cache, unaffected by Tenant B',
+    );
+  }
+
   console.log(`\n  📊 Idempotency Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) throw new Error('Idempotency Tests Failed');
 }
