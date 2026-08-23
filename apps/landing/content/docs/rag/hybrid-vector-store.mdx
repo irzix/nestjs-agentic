@@ -1,6 +1,6 @@
 ---
 title: Hybrid Vector Store
-description: Fusing sparse keyword matching and dense semantic vector embeddings via a weighted linear blend.
+description: Fusing sparse keyword matching and dense semantic vector embeddings, with batched and cached embedding generation.
 ---
 
 ## Hybrid Retrieval Architecture
@@ -64,4 +64,33 @@ const fused = reciprocalRankFusion(
   ],
   { k: 60 },
 );
+```
+
+## Batched Embedding & Caching
+
+`addChunks` embeds any chunk missing a vector via batched `embedDocuments` calls (`embeddingBatchSize`, default `100`), rather than one `embedQuery` call per chunk — ingesting hundreds of chunks issues a handful of requests instead of hundreds of individual ones.
+
+`CachedEmbeddingProvider` wraps any `EmbeddingProvider` with a cache keyed by a hash of the text (and a `cacheNamespace`, to keep distinct models/dimensions from colliding), so re-ingesting unchanged content or repeating an identical query skips the network call entirely:
+
+```typescript
+import { CachedEmbeddingProvider, OpenAIEmbeddingAdapter, HybridVectorStore } from '@nestjs-agentic/rag';
+
+const cachedEmbedder = new CachedEmbeddingProvider({
+  provider: new OpenAIEmbeddingAdapter({ apiKey: process.env.OPENAI_API_KEY }),
+  cacheNamespace: 'text-embedding-3-small', // distinguishes this model/dimension from others sharing a store
+  maxSize: 5000, // in-memory LRU cache size, ignored when `store` is provided
+});
+
+const store = new HybridVectorStore({ embeddingProvider: cachedEmbedder });
+```
+
+By default, the cache is an in-memory LRU. Pass a `StateStore` (e.g. `RedisStateStore` from `@nestjs-agentic/core`) to share the cache across processes:
+
+```typescript
+const cachedEmbedder = new CachedEmbeddingProvider({
+  provider: new OpenAIEmbeddingAdapter({ apiKey: process.env.OPENAI_API_KEY }),
+  store: myRedisStateStore,
+  cacheNamespace: 'text-embedding-3-small',
+  ttlSeconds: 60 * 60 * 24, // only applies to store-backed caches
+});
 ```

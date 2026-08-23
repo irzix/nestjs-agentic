@@ -155,7 +155,7 @@ Goal: bring `@nestjs-agentic/rag`'s retrieval and reranking up to what its own d
 - [x] Ship built-in reranker provider adapters (Cohere, Voyage) and a `minScore` cutoff ([#132](https://github.com/irzix/nestjs-agentic/issues/132)).
 - [x] Add an MMR (Maximal Marginal Relevance) diversity strategy to reduce near-duplicate chunks in context ([#133](https://github.com/irzix/nestjs-agentic/issues/133)).
 - [x] Fix `HybridVectorStore.addChunks` to embed via batched `embedDocuments` instead of one `embedQuery` call per chunk ([#134](https://github.com/irzix/nestjs-agentic/issues/134)).
-- [ ] Add an embedding cache (in-memory LRU, pluggable Redis backend) wrapping any `EmbeddingProvider` ([#134](https://github.com/irzix/nestjs-agentic/issues/134)).
+- [x] Add an embedding cache (in-memory LRU, pluggable Redis/`StateStore` backend) wrapping any `EmbeddingProvider` ([#134](https://github.com/irzix/nestjs-agentic/issues/134)).
 
 ### 1.3 — Security Hardening
 
