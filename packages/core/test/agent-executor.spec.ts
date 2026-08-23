@@ -12,6 +12,7 @@ import {
   MockModelAdapter,
   Param,
   PolicyNotRegisteredError,
+  SecretRedactionPolicy,
   Tool,
   ToolDiscoveryService,
   ToolSet,
@@ -48,6 +49,21 @@ class BlockExportPolicy implements ToolPolicy {
 class UnregisteredPolicy implements ToolPolicy {
   async evaluate(): Promise<PolicyResult> {
     return { decision: 'allow' };
+  }
+}
+
+/**
+ * Zero-arg wrapper so `SecretRedactionPolicy` (whose constructor takes an
+ * optional typed options object) can be referenced as a bare class in
+ * `@UsePolicies`. `PolicyInput`'s `new (...args: unknown[]) => ToolPolicy`
+ * signature isn't assignable from a constructor with an options-typed
+ * parameter, since `unknown` isn't assignable to that options type — a
+ * pre-existing type-strictness gap in every built-in policy with
+ * constructor options, unrelated to this test.
+ */
+class DefaultSecretRedactionPolicy extends SecretRedactionPolicy {
+  constructor() {
+    super();
   }
 }
 
@@ -88,6 +104,14 @@ class OrderTools {
     const error = new Error(`Order ${orderId} not found in ledger`);
     error.stack = 'Error: secret internal stack trace\n    at Ledger.query';
     throw error;
+  }
+
+  @Tool({ name: 'leakySecretLookup', description: 'A tool whose failure message contains a secret' })
+  @UsePolicies(DefaultSecretRedactionPolicy)
+  async leakySecretLookup() {
+    throw new Error(
+      'Connection failed: postgres://admin:sup3rSecretPW@db.internal:5432/orders',
+    );
   }
 
   @Tool({ name: 'misconfigured', description: 'Tool with an unregistered policy' })
@@ -134,7 +158,7 @@ export async function runAgentExecutorTests() {
     const tools = new OrderTools();
     const approvalStore = new InMemoryApprovalStore();
     const localToolProvider = new LocalToolProvider(
-      [new RefundLimitPolicy(), new BlockExportPolicy()],
+      [new RefundLimitPolicy(), new BlockExportPolicy(), new DefaultSecretRedactionPolicy()],
       approvalStore,
       new ToolDiscoveryService(),
       moduleRef,
@@ -719,6 +743,34 @@ export async function runAgentExecutorTests() {
     assert(recovered.output === 'Finished.', 'Test 18c: recoverLatestCheckpoint succeeded');
   } catch (err: any) {
     assert(false, 'Test 18: StateStore Checkpoint Recovery', err.message);
+  }
+
+  // TEST 19: A thrown error containing a secret is sanitized by Output Rails (#127)
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Connect to the ledger database')
+      .callTool('leakySecretLookup', {})
+      .reply('Could not reach the database.');
+
+    const { runner } = createHarness(model);
+    const result = await runner.run('support', {
+      sessionId: 'sess_19_secret',
+      message: 'Connect to the ledger database',
+    });
+
+    const failure = result.toolCalls[0]?.result as any;
+    assert(failure?.status === 'error', 'Test 19a: Failure recorded on the tool call');
+    assert(
+      !String(failure?.error).includes('sup3rSecretPW'),
+      'Test 19b: SecretRedactionPolicy sanitizes the thrown error before it reaches the model',
+    );
+    assert(
+      String(failure?.error).includes('[REDACTED_SECRET]'),
+      'Test 19c: Redaction placeholder present in the sanitized message',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 19: Output Rails sanitize thrown errors', err.message);
   }
 
   console.log(`\n  📊 Step 7 Results: ${passed} passed, ${failed} failed.\n`);

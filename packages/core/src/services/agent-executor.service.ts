@@ -796,7 +796,7 @@ export class AgentExecutor {
 
         if (toolErrorHandling === 'throw') throw err;
 
-        const failure = this.toFailurePayload(err);
+        const failure = await this.toFailurePayload(err, tool, validation.args);
         state.toolCalls.push({ toolName: tool.name, args: validation.args, result: failure });
         this.pushToolMessage(state, call, failure);
         events?.push({
@@ -878,12 +878,34 @@ export class AgentExecutor {
    * Normalizes a thrown value into a compact payload.
    * Only the message is forwarded, never a stack trace, so internal details do
    * not reach the model or the transcript.
+   *
+   * If the tool exposes `sanitizeErrorMessage` (providers with Output Rail
+   * policies, e.g. `LocalToolProvider`, always do), the message runs through
+   * the tool's attached policies first — the same `SecretRedactionPolicy`/
+   * `CanaryDetectionPolicy` treatment a successful result's `data` gets —
+   * before truncation. A sanitizer that itself throws is swallowed and the
+   * raw message is used, so a broken policy can't turn a reportable tool
+   * failure into an unreportable one.
    */
-  private toFailurePayload(err: unknown): ToolFailurePayload {
+  private async toFailurePayload(
+    err: unknown,
+    tool: ResolvedTool,
+    args: Record<string, unknown>,
+  ): Promise<ToolFailurePayload> {
     const raw = err instanceof Error ? err.message : String(err);
-    const message = raw.length > MAX_TOOL_ERROR_LENGTH
-      ? `${raw.slice(0, MAX_TOOL_ERROR_LENGTH)}...`
-      : raw;
+
+    let sanitized = raw;
+    if (tool.sanitizeErrorMessage) {
+      try {
+        sanitized = await tool.sanitizeErrorMessage(raw, args);
+      } catch {
+        sanitized = raw;
+      }
+    }
+
+    const message = sanitized.length > MAX_TOOL_ERROR_LENGTH
+      ? `${sanitized.slice(0, MAX_TOOL_ERROR_LENGTH)}...`
+      : sanitized;
 
     return { success: false, status: 'error', error: message || 'Tool execution failed.' };
   }

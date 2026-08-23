@@ -264,6 +264,77 @@ export class LocalToolProvider {
     return finalResult;
   }
 
+  /**
+   * Runs Output Rail policies against a tool's error message, so a thrown
+   * exception (a connection string, an upstream response body, a stack
+   * trace fragment folded into `Error.message`) gets the same
+   * `SecretRedactionPolicy`/`CanaryDetectionPolicy` treatment as a
+   * successful result's `data`. Reuses `evaluateOutput` against a
+   * `{ error: rawMessage }` wrapper rather than the bare string, since
+   * policies are written to sanitize an arbitrary output value, not
+   * specifically a string.
+   *
+   * A `deny` decision here doesn't withhold the tool call the way it would
+   * for a successful result — the call already happened and already failed.
+   * It instead replaces the message with the policy's `reason`, so the
+   * original (potentially sensitive) error text is not reported to the model
+   * even when a policy chooses to fully block it rather than sanitize it.
+   */
+  private async sanitizeErrorMessage(
+    rawMessage: string,
+    allPolicyConstructors: PolicyConstructor[],
+    agentContext: AgentContext,
+    agentName: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<string> {
+    const policyMap = this.getPolicyMap();
+    let message = rawMessage;
+
+    for (const Constructor of allPolicyConstructors) {
+      const policy = this.resolvePolicy(Constructor, policyMap);
+      if (!policy?.evaluateOutput) continue;
+
+      const outputResult = await policy.evaluateOutput(agentContext, toolName, { error: message });
+
+      if (outputResult.decision === 'deny') {
+        await this.audit?.record({
+          ...auditEnvelope(agentContext),
+          type: 'tool_output_policy_decision',
+          agentName,
+          toolName,
+          policyName: Constructor.name,
+          decision: 'deny',
+          reason: outputResult.reason,
+          args,
+        });
+        message = outputResult.reason;
+        continue;
+      }
+
+      if (outputResult.decision === 'sanitize') {
+        const sanitized = outputResult.sanitizedResult;
+        message =
+          sanitized && typeof sanitized === 'object' && 'error' in sanitized
+            ? String((sanitized as { error: unknown }).error)
+            : String(sanitized);
+
+        await this.audit?.record({
+          ...auditEnvelope(agentContext),
+          type: 'tool_output_policy_decision',
+          agentName,
+          toolName,
+          policyName: Constructor.name,
+          decision: 'sanitize',
+          reason: 'Tool error message sanitized by policy',
+          args,
+        });
+      }
+    }
+
+    return message;
+  }
+
   private resolveInstance(tokenOrInstance: object | Function): object | undefined {
     if (typeof tokenOrInstance !== 'function') {
       return tokenOrInstance;
@@ -306,6 +377,8 @@ export class LocalToolProvider {
       name: tool.toolName,
       description: tool.description,
       parameters,
+      sanitizeErrorMessage: (rawMessage, args) =>
+        this.sanitizeErrorMessage(rawMessage, allPolicyConstructors, agentContext, agentName, tool.toolName, args),
       execute: async ({
         args,
         toolCallId,

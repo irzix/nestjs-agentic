@@ -135,6 +135,8 @@ interface ResolvedTool {
   description: string;
   parameters: ToolParamSchema[];
   execute(input: ToolExecutionInput): Promise<ToolExecutionResult>;
+  /** Optional: runs Output Rail policies against a thrown error's message. See "Tool Failures". */
+  sanitizeErrorMessage?(rawMessage: string, args: Record<string, unknown>): Promise<string>;
 }
 
 interface ToolProvider {
@@ -312,6 +314,8 @@ When an application tool throws, the runtime reports the failure to the model an
 The same payload is recorded on `AgentResult.toolCalls`, and `runStream()` emits a `tool_error` event so a stream never leaves a `tool_start` without a terminal event.
 
 Only the error message is forwarded, truncated to 500 characters. Stack traces are never sent to the model or written into the transcript.
+
+Before truncation, the message passes through the tool's attached Output Rail policies (`ToolPolicy.evaluateOutput`) the same way a successful result's `data` does — so `SecretRedactionPolicy`, `CanaryDetectionPolicy`, or a custom policy can sanitize a thrown error's message just as they would a normal result. This applies only to `toolErrorHandling: 'report'`; in `'throw'` mode the original exception propagates unmodified, since the run ends before it would be reported to the model.
 
 Set `toolErrorHandling: 'throw'` to end the run instead, resolved per run with the precedence: `RunInput`, then `AgentConfig`, then `AgenticModuleOptions`, then the default.
 

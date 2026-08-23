@@ -39,6 +39,17 @@ export interface ResolvedTool {
   description: string;
   parameters: ToolParamSchema[];
   execute(input: ToolExecutionInput): Promise<ToolExecutionResult>;
+
+  /**
+   * Optional hook letting a provider run its Output Rail policies
+   * (`ToolPolicy.evaluateOutput`) against a tool's error message before it's
+   * reported to the model. Only called on the `toolErrorHandling: 'report'`
+   * path — `'throw'` mode ends the run before this would ever run, so the
+   * original exception is never altered by it. Providers without output
+   * rails (e.g. MCP tool providers) can omit this; the raw, truncated
+   * message is used as-is.
+   */
+  sanitizeErrorMessage?(rawMessage: string, args: Record<string, unknown>): Promise<string>;
 }
 
 /**
