@@ -62,7 +62,14 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     this.vectorWeight = options?.vectorWeight ?? 0.5;
     this.bm25K1 = options?.bm25K1 ?? 1.2;
     this.bm25B = options?.bm25B ?? 0.75;
-    this.embeddingBatchSize = options?.embeddingBatchSize ?? 100;
+
+    const batchSize = options?.embeddingBatchSize ?? 100;
+    if (!Number.isSafeInteger(batchSize) || batchSize <= 0) {
+      throw new RangeError(
+        `HybridVectorStore: embeddingBatchSize must be a positive integer, got ${batchSize}`,
+      );
+    }
+    this.embeddingBatchSize = batchSize;
 
     if (options?.stopWords) {
       this.stopWordsSet = new Set(Array.from(options.stopWords).map((w) => w.toLowerCase()));
@@ -182,6 +189,14 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
       for (let i = 0; i < chunksNeedingEmbed.length; i += this.embeddingBatchSize) {
         const batch = chunksNeedingEmbed.slice(i, i + this.embeddingBatchSize);
         const embeddings = await this.embeddingProvider.embedDocuments(batch.map((c) => c.content));
+
+        if (embeddings.length !== batch.length) {
+          throw new Error(
+            `HybridVectorStore: embedding provider "${this.embeddingProvider.constructor?.name ?? 'unknown'}" ` +
+              `returned ${embeddings.length} embedding(s) for a batch of ${batch.length} chunk(s). ` +
+              `A misaligned response would silently attach wrong or undefined embeddings.`,
+          );
+        }
 
         for (let j = 0; j < batch.length; j++) {
           batch[j].embedding = embeddings[j];

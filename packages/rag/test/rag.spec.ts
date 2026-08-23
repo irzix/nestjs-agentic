@@ -212,6 +212,61 @@ export async function runRAGTests() {
     assert(false, 'Test 4C: HybridVectorStore batches embedding via embedDocuments', err.message);
   }
 
+  // TEST 4D: embeddingBatchSize is validated to prevent an infinite ingestion loop.
+  // A value of 0 or a negative number as the loop increment in addChunks
+  // would otherwise leave the loop index unchanged forever.
+  try {
+    const invalidSizes = [0, -1, -100, 1.5, NaN, Infinity];
+    let allRejected = true;
+    for (const size of invalidSizes) {
+      try {
+        new HybridVectorStore({ embeddingBatchSize: size });
+        allRejected = false;
+      } catch {
+        // expected
+      }
+    }
+    assert(allRejected, 'Test 4Da: Zero, negative, fractional, NaN, and Infinity batch sizes are all rejected at construction');
+
+    let validAccepted = true;
+    try {
+      new HybridVectorStore({ embeddingBatchSize: 50 });
+    } catch {
+      validAccepted = false;
+    }
+    assert(validAccepted, 'Test 4Db: A valid positive integer batch size is still accepted');
+  } catch (err: any) {
+    assert(false, 'Test 4D: embeddingBatchSize validation', err.message);
+  }
+
+  // TEST 4E: A misaligned embedDocuments response (wrong vector count) is rejected
+  // rather than silently attaching undefined/mismatched embeddings.
+  try {
+    const misalignedProvider = {
+      async embedQuery(text: string) {
+        return [text.length];
+      },
+      async embedDocuments(texts: string[]) {
+        // Deliberately return one fewer embedding than requested.
+        return texts.slice(0, -1).map((t) => [t.length]);
+      },
+    };
+
+    const store = new HybridVectorStore({ embeddingProvider: misalignedProvider });
+    let threw = false;
+    try {
+      await store.addChunks([
+        { id: 'ma_1', parentId: 'p', content: 'alpha', metadata: {} },
+        { id: 'ma_2', parentId: 'p', content: 'beta', metadata: {} },
+      ]);
+    } catch {
+      threw = true;
+    }
+    assert(threw, 'Test 4E: A mismatched embedDocuments response length is rejected, not silently applied');
+  } catch (err: any) {
+    assert(false, 'Test 4E: Misaligned embedding response validation', err.message);
+  }
+
   // TEST 5: InMemoryKnowledgeGraphProvider Entity Traversal
   try {
     const graph = new InMemoryKnowledgeGraphProvider();
