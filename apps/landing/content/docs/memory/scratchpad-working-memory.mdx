@@ -7,29 +7,28 @@ description: In-flight execution checkpoints, structured task state, and sub-goa
 
 Complex multi-step agents require a dedicated working memory to track intermediate hypotheses, extracted entities, and incomplete sub-tasks across tool calls without polluting the conversation history.
 
+`ScratchpadMemory` keys entries by `metadata.taskId` (falling back to the record id) within a session, and implements the standard `AgentMemoryStore` interface — there's no separate `get`/`set` key-value API:
+
 ```typescript
 import { ScratchpadMemory } from '@nestjs-agentic/memory';
 
 const scratchpad = new ScratchpadMemory();
 
-// Set structured task state during turn execution
-await scratchpad.set('analyzedFiles', ['src/app.ts', 'src/auth.ts']);
-await scratchpad.set('discoveredVulnerabilities', [
-  { file: 'src/auth.ts', line: 42, type: 'CWE-89' },
-]);
+// Save structured task state during turn execution
+await scratchpad.save({
+  id: 'analyzedFiles',
+  sessionId: 'session_42',
+  type: 'scratchpad',
+  content: JSON.stringify(['src/app.ts', 'src/auth.ts']),
+  metadata: { taskId: 'analyzedFiles' },
+  timestamp: new Date(),
+});
 
-// Read working state
-const files = await scratchpad.get<string[]>('analyzedFiles');
+// Read the full working set for a session
+const workingSet = await scratchpad.getWorkingSet('session_42');
+
+// Or search within it
+const matches = await scratchpad.recall('auth.ts', { sessionId: 'session_42' });
 ```
 
----
-
-## Formatted Prompt Injection
-
-`ScratchpadMemory.toSystemPrompt()` compiles the active key-value state into a concise markdown section injected directly into the agent's system prompt:
-
-```markdown
-### Active Working Scratchpad:
-- analyzedFiles: ["src/app.ts", "src/auth.ts"]
-- discoveredVulnerabilities: [{"file": "src/auth.ts", "line": 42, "type": "CWE-89"}]
-```
+There is no built-in `toSystemPrompt()` formatter today — formatting `getWorkingSet()`'s results into a system-prompt section is left to the application.

@@ -36,13 +36,13 @@ nestjs-agentic (Meta Package)
     │     ShortTerm, Working Scratchpad, Semantic Vector, Episodic Tri-Factor
     │
     ├── @nestjs-agentic/rag
-    │     AST Code Chunking, HybridVectorStore, GraphRAG, Cross-Encoders
+    │     AST-Aligned Code Chunking, HybridVectorStore, GraphRAG, Pluggable Reranking
     │
     ├── @nestjs-agentic/orchestration
     │     Parallel Fan-Out (Bounded Concurrency), Refinement Loops, Debate Consensus
     │
     ├── @nestjs-agentic/evaluation
-    │     Debiased Pairwise Judge, BenchmarkRunner, Trajectory Scoring
+    │     Debiased Pairwise Judge, BenchmarkRunner, Trajectory Inspection
     │
     └── @nestjs-agentic/mcp
           Model Context Protocol (Stdio / SSE Client Transports, Tool Discovery)
@@ -52,10 +52,10 @@ nestjs-agentic (Meta Package)
 | :--- | :--- | :--- |
 | **`@nestjs-agentic/core`** | Agent lifecycle, DI discovery, tool policy governance, execution limits, state stores, and OpenTelemetry tracing. | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context`, `@UsePolicies`, `AgenticModule`, `ApprovalService`, `ExecutionLimits` |
 | **`@nestjs-agentic/openai`** | Model adapter for OpenAI and compatible Chat Completions endpoints with streaming and token tracking. | `OpenAiModelAdapter`, `ModelAdapter`, `ModelResponseChunk` |
-| **`@nestjs-agentic/memory`** | 5-tier cognitive memory architecture with Stanford tri-factor retrieval scoring. | `ShortTermMemory`, `ScratchpadMemory`, `SemanticMemory`, `EpisodicMemory`, `CompositeMemoryStore` |
-| **`@nestjs-agentic/rag`** | Context engineering engine with AST hierarchical chunking, hybrid BM25 + vector search, GraphRAG, and cross-encoders. | `KnowledgeBase`, `HybridVectorStore`, `AstCodeChunker`, `GraphRAGStrategy`, `CrossEncoderReranker` |
-| **`@nestjs-agentic/orchestration`** | Multi-agent delegation, parallel fan-out runners, supervisor refinement loops, and multi-agent debate consensus. | `ParallelSubAgentRunner`, `RefinementLoopRunner`, `DebateRoundRunner`, `ConsensusEngine` |
-| **`@nestjs-agentic/evaluation`** | Benchmarking suite with position-debiased pairwise LLM judges and CI/CD quality regression gates. | `DebiasedPairwiseJudge`, `BenchmarkRunner`, `TrajectoryScorer` |
+| **`@nestjs-agentic/memory`** | 5-tier cognitive memory architecture with Stanford tri-factor retrieval scoring. | `ShortTermMemory`, `ScratchpadMemory`, `SemanticMemory`, `EpisodicMemory`, `CompositeMemory` |
+| **`@nestjs-agentic/rag`** | Context engineering engine with AST-aligned code chunking, hybrid vector + lexical search, GraphRAG, and pluggable reranking. | `KnowledgeBase`, `HybridVectorStore`, `AstCodebaseSplitter`, `GraphRAGStrategy`, `RerankerStrategy` |
+| **`@nestjs-agentic/orchestration`** | Multi-agent delegation, parallel fan-out runners, supervisor refinement loops, and multi-agent debate consensus. | `ParallelSubAgentRunner`, `RefinementLoopRunner`, `DebateRunner`, `SubAgentDelegator` |
+| **`@nestjs-agentic/evaluation`** | Benchmarking suite with position-debiased pairwise LLM judges and CI/CD quality regression gates. | `PairwiseDebiasedJudge`, `BenchmarkRunner`, `TrajectoryInspectorMetric` |
 | **`@nestjs-agentic/mcp`** | Model Context Protocol integration providing standardized client transports and dynamic tool providers. | `McpClientTransport`, `McpToolProvider`, `StdioTransport`, `SseTransport` |
 | **`nestjs-agentic`** | Umbrella meta-package providing streamlined exports and zero-configuration developer ergonomics. | Re-exports all core primitives |
 
@@ -158,23 +158,25 @@ sequenceDiagram
 
 `@nestjs-agentic/memory` provides a 5-tier hierarchical cognitive memory system:
 
-1. **Short-Term Session Memory (`ShortTermMemory`)**: In-memory and Redis-backed sliding window conversation transcripts.
-2. **Epistemic Working Scratchpad (`ScratchpadMemory`)**: Structured scratchpad for interim reasoning, task decomposition, and hypothesis testing.
-3. **Semantic Vector Memory (`SemanticMemory`)**: Embeddings-based similarity recall for domain facts and unstructured reference documents.
-4. **Episodic Experiential Memory (`EpisodicMemory`)**: Stores historical execution episodes scored using the **Stanford Tri-Factor Formula**:
+1. **Short-Term Session Memory (`ShortTermMemory`)**: Sliding-window conversation transcripts, backed by an optional `StateStore` (in-memory or Redis).
+2. **Working Scratchpad (`ScratchpadMemory`)**: Per-session, per-task working set for interim reasoning notes, keyed by `metadata.taskId`.
+3. **Semantic Vector Memory (`SemanticMemory`)**: Recall over a pluggable `SemanticStoreProvider` (defaults to an in-memory term-overlap store; `@nestjs-agentic/rag`'s `HybridVectorStore` can be supplied for real vector search).
+4. **Episodic Experiential Memory (`EpisodicMemory`)**: Stores historical execution episodes; the Stanford Tri-Factor scoring formula is implemented separately in `StanfordMemoryScorer` (`@nestjs-agentic/memory`'s `scoring` module) and applied via `GenerativeMemoryStore`:
    $$\text{Score} = (w_{\text{recency}} \cdot S_{\text{recency}}) + (w_{\text{importance}} \cdot S_{\text{importance}}) + (w_{\text{relevance}} \cdot S_{\text{relevance}})$$
-5. **Composite Memory Aggregation (`CompositeMemoryStore`)**: Unified interface orchestrating retrieval across all active tiers.
+5. **Composite Memory Aggregation (`CompositeMemory`)**: Fans out `save()` and unions `recall()` (deduplicated by record id) across multiple `AgentMemoryStore` instances.
+
+All stores implement the shared `AgentMemoryStore` interface (`save(record)` / `recall(query, options?)` / `clear?(sessionId?)`), so any store can be composed or swapped without changing calling code.
 
 ---
 
 ## 🔍 Context Engineering & GraphRAG (`@nestjs-agentic/rag`)
 
-`@nestjs-agentic/rag` solves the *Lost in the Middle* phenomenon and contextual fragmentation:
+`@nestjs-agentic/rag` addresses the *Lost in the Middle* phenomenon and contextual fragmentation:
 
-* **AST Hierarchical Code Splitting (`AstCodeChunker`)**: Parses source code into semantic AST blocks (classes, methods, interfaces) with full scope and import metadata.
-* **Hybrid Retrieval (`HybridVectorStore`)**: Combines dense semantic vector embeddings with sparse BM25 keyword matching using Reciprocal Rank Fusion (RRF).
-* **Relational Traversal (`GraphRAGStrategy`)**: Traverses entity-relationship graphs (imports, callers, inheritance) to retrieve deep dependency subgraphs.
-* **Cross-Encoder Reranking (`CrossEncoderReranker`)**: Re-scores top candidates using cross-attention models before final prompt formatting.
+* **AST-Aligned Code Splitting (`AstCodebaseSplitter`)**: Splits source code along regex-matched syntactic boundaries (classes, interfaces, functions, enums) while preserving JSDoc, decorators, and import metadata. Deliberately regex-based rather than a full compiler AST parse, to avoid pulling in a TypeScript-program dependency and to stay immune to catastrophic backtracking.
+* **Hybrid Retrieval (`HybridVectorStore`)**: Combines dense cosine-similarity vector search with a sparse term-frequency keyword score, fused via a configurable weighted sum (`vectorWeight`, default `0.5`). A real BM25 (IDF-weighted) sparse score and Reciprocal Rank Fusion are tracked as forward work — see [issue #131](https://github.com/irzix/nestjs-agentic/issues/131) and [#130](https://github.com/irzix/nestjs-agentic/issues/130).
+* **Relational Traversal (`GraphRAGStrategy` + `InMemoryKnowledgeGraphProvider`)**: Traverses a manually or programmatically populated entity-relationship graph (imports, callers, inheritance) via BFS sub-graph queries, boosting chunks that mention matched entities.
+* **Pluggable Reranking (`RerankerStrategy`)**: A post-retrieval hook accepting any custom `rerankFn` (e.g. a Cohere Rerank or cross-encoder call you supply); falls back to term-overlap scoring when no function is provided. Built-in provider adapters are tracked in [issue #132](https://github.com/irzix/nestjs-agentic/issues/132).
 
 ---
 
@@ -182,10 +184,10 @@ sequenceDiagram
 
 `@nestjs-agentic/orchestration` coordinates parallel, distributed, and iterative agent workflows:
 
-* **Parallel Fan-Out (`ParallelSubAgentRunner`)**: Executes multiple specialist agents concurrently with bounded resource limits (`maxConcurrency`) and unified `AbortSignal` cancellation propagation.
-* **Supervisor Refinement Loops (`RefinementLoopRunner`)**: Iterative review-and-correct loops where a supervisor critiques and refines draft outputs until acceptance criteria or iteration limits are met.
-* **Multi-Agent Debate & Consensus (`DebateRoundRunner`, `ConsensusEngine`)**: Facilitates multi-round dialectic debates among competing agents, measuring convergence via **Fleiss' Kappa inter-rater reliability**:
-  $$\kappa = \frac{\bar{P} - \bar{P}_e}{1 - \bar{P}_e}$$
+* **Parallel Fan-Out (`ParallelSubAgentRunner`)**: Executes multiple specialist agents concurrently with bounded resource limits (`maxConcurrency`), unified `AbortSignal` cancellation propagation, and configurable aggregation strategies (`allSettled`, `firstSuccess`, `fallbackChain`, `bestOf`, `consensusMerge`).
+* **Supervisor Refinement Loops (`RefinementLoopRunner`)**: Iterative review-and-correct loops where a supervisor critiques and refines draft outputs until acceptance criteria or iteration limits are met, with distributed-lock-protected, checkpointed resumption via an optional `StateStore`.
+* **Multi-Agent Debate (`DebateRunner`)**: Facilitates multi-round cross-critique debates among competing agents. Convergence is measured via a normalized-variance consensus score over each round's confidence scores (not Fleiss' Kappa — that formula is tracked as a possible future consensus metric, not what ships today):
+  $$\text{Consensus} = 1 - \frac{\text{Variance}(\text{scores})}{0.25}$$
 
 ---
 
@@ -193,9 +195,9 @@ sequenceDiagram
 
 `@nestjs-agentic/evaluation` provides automated quality gates for CI/CD pipelines:
 
-* **Position-Debiased Pairwise Judge (`DebiasedPairwiseJudge`)**: Runs bidirectional pairwise evaluations $(A \text{ vs } B \text{ and } B \text{ vs } A)$ to eliminate position and verbosity bias.
-* **Trajectory Scorer (`TrajectoryScorer`)**: Evaluates agent decision paths based on token efficiency, tool-calling precision, and policy compliance.
-* **Automated Benchmark Runner (`BenchmarkRunner`)**: Executes structured test suites with pass/fail regression thresholds.
+* **Position-Debiased Pairwise Judge (`PairwiseDebiasedJudge`)**: Runs bidirectional pairwise evaluations $(A \text{ vs } B \text{ and } B \text{ vs } A)$ to eliminate position and verbosity bias.
+* **Trajectory Inspection (`TrajectoryInspectorMetric`)**, alongside `ExecutionEfficiencyMetric` and `ToolPrecisionMetric`: Evaluate agent decision paths based on token efficiency, tool-calling precision, and step count.
+* **Automated Benchmark Runner (`BenchmarkRunner`)**: Executes structured test suites against a registered `AgentRunner` with pass/fail regression thresholds. Retrieval-specific metrics (recall@k, nDCG, faithfulness) are not yet implemented — tracked in [issue #143](https://github.com/irzix/nestjs-agentic/issues/143).
 
 ---
 

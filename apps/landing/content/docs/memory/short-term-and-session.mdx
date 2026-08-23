@@ -5,27 +5,31 @@ description: Managing conversational state, message history, and sliding context
 
 ## ShortTermMemory Store
 
-`ShortTermMemory` maintains the immediate conversation turns between the user and the agent:
+`ShortTermMemory` maintains a sliding-window record of recent turns per session, implementing the standard `AgentMemoryStore` interface (`save`/`recall`). It optionally persists through a core `StateStore` (e.g. Redis-backed) instead of an in-process fallback map:
 
 ```typescript
 import { ShortTermMemory } from '@nestjs-agentic/memory';
 
 const shortTerm = new ShortTermMemory({
   maxMessages: 10,
-  strategy: 'sliding_window',
+  // stateStore: myRedisStateStore, // optional, for cross-instance persistence
 });
 
-// Append turns
-await shortTerm.append({ role: 'user', content: 'What is my current balance?' });
-await shortTerm.append({ role: 'assistant', content: 'Your balance is $4,200.' });
+// Save turns
+await shortTerm.save({
+  id: 'turn_1',
+  sessionId: 'session_42',
+  type: 'short_term',
+  content: 'User: What is my current balance?',
+  timestamp: new Date(),
+});
 
-// Retrieve active window
-const history = await shortTerm.getHistory();
+// Retrieve the active window for a session
+const history = await shortTerm.recall('', { sessionId: 'session_42' });
 ```
 
 ---
 
-## Window Pruning Strategies
+## Window Pruning
 
-- **`sliding_window` (FIFO)**: Keeps the most recent $N$ messages, dropping older turns when capacity is reached.
-- **`summarizing_window`**: Triggers a background summarization agent to compress historical messages into a consolidated system prompt before pruning.
+`ShortTermMemory` prunes with a FIFO sliding window: once a session exceeds `maxMessages` (default `20`), the oldest records are dropped on the next `save()`. There is no built-in `summarizing_window` strategy that compresses older turns via a summarization agent — `@nestjs-agentic/memory`'s `TokenBudgetSummarizer` utility performs a simpler concatenation-based reduction and can be composed manually if that behavior is needed.

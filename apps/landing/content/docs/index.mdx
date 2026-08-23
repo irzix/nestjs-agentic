@@ -13,7 +13,7 @@ Traditional LLM integrations treat models as simple stateless request-response e
 2. **Context Engineering**: Dynamically assembling relevant symbols, memories, and codebase syntax trees (AST RAG) within bounded token budgets.
 3. **Reasoning and Decision Loops**: Iterative turn-taking where the model invokes tools, inspects outputs, and refines internal scratchpad states.
 4. **Deterministic Governance**: Intercepting model intents before execution using policy boundaries (`allow`, `deny`, `require_approval`) and durable Human-in-the-Loop (HITL) state machines.
-5. **Multi-Agent Collective Intelligence**: Delegating specialized sub-tasks across parallel agents, conducting dialectic multi-agent debates, and computing consensus via inter-rater reliability metrics (Fleiss' Kappa).
+5. **Multi-Agent Collective Intelligence**: Delegating specialized sub-tasks across parallel agents, conducting dialectic multi-agent debates, and computing convergence via variance-based consensus scoring.
 6. **Episodic Reflection**: Automatically critiquing execution trajectories post-run to distill persistent lessons and prevent recurring failures.
 7. **Rigorous Quality Gates**: Running debiased LLM-as-a-Judge evaluations and trajectory efficiency benchmarks in automated CI/CD pipelines.
 
@@ -47,10 +47,10 @@ The runtime ecosystem is decomposed into seven modular packages plus one umbrell
 | :--- | :--- | :--- |
 | **`@nestjs-agentic/core`** | Agent definition, dependency injection, runtime execution loop, policy governance, state stores, and OpenTelemetry tracing. | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context`, `@UsePolicies`, `AgenticModule`, `ApprovalService`, `ExecutionLimits` |
 | **`@nestjs-agentic/openai`** | Model adapter for OpenAI and compatible Chat Completions endpoints (Ollama, vLLM, Groq, OpenRouter, Azure). | `OpenAiModelAdapter`, `ModelAdapter`, `ModelResponseChunk` |
-| **`@nestjs-agentic/memory`** | 5-tier cognitive memory architecture with Stanford tri-factor retrieval scoring. | `ShortTermMemory`, `ScratchpadMemory`, `SemanticMemory`, `EpisodicMemory`, `CompositeMemoryStore` |
-| **`@nestjs-agentic/rag`** | Context engineering engine with AST hierarchical chunking, hybrid BM25 + vector search, GraphRAG, and cross-encoders. | `KnowledgeBase`, `HybridVectorStore`, `AstCodeChunker`, `GraphRAGStrategy`, `CrossEncoderReranker` |
-| **`@nestjs-agentic/orchestration`** | Multi-agent delegation, parallel fan-out runners, supervisor refinement loops, and multi-agent debate consensus. | `ParallelSubAgentRunner`, `RefinementLoopRunner`, `DebateRoundRunner`, `ConsensusEngine` |
-| **`@nestjs-agentic/evaluation`** | Benchmarking suite with position-debiased pairwise LLM judges and CI/CD quality regression gates. | `DebiasedPairwiseJudge`, `BenchmarkRunner`, `TrajectoryScorer` |
+| **`@nestjs-agentic/memory`** | 5-tier cognitive memory architecture with Stanford tri-factor retrieval scoring. | `ShortTermMemory`, `ScratchpadMemory`, `SemanticMemory`, `EpisodicMemory`, `CompositeMemory` |
+| **`@nestjs-agentic/rag`** | Context engineering engine with AST-aligned chunking, hybrid vector + lexical search, GraphRAG, and pluggable reranking. | `KnowledgeBase`, `HybridVectorStore`, `AstCodebaseSplitter`, `GraphRAGStrategy`, `RerankerStrategy` |
+| **`@nestjs-agentic/orchestration`** | Multi-agent delegation, parallel fan-out runners, supervisor refinement loops, and multi-agent debate consensus. | `ParallelSubAgentRunner`, `RefinementLoopRunner`, `DebateRunner`, `SubAgentDelegator` |
+| **`@nestjs-agentic/evaluation`** | Benchmarking suite with position-debiased pairwise LLM judges and CI/CD quality regression gates. | `PairwiseDebiasedJudge`, `BenchmarkRunner`, `TrajectoryInspectorMetric` |
 | **`@nestjs-agentic/mcp`** | Model Context Protocol integration providing standardized client transports and dynamic tool providers. | `McpClientTransport`, `McpToolProvider`, `StdioTransport`, `SseTransport` |
 | **`nestjs-agentic`** | Umbrella meta-package providing streamlined exports and zero-configuration developer ergonomics. | Re-exports all core primitives |
 

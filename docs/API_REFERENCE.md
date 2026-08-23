@@ -1,6 +1,6 @@
 # Core API Reference
 
-This document describes the public API exported by `@nestjs-agentic/core` and re-exported by the `nestjs-agentic` meta-package in the `0.4.x` release line.
+This document describes the public API exported by `@nestjs-agentic/core` and re-exported by the `nestjs-agentic` meta-package as of the `v1.0.0` release line.
 
 Runtime-specific, memory, RAG, orchestration, experience, and evaluation APIs are documented by their own packages. Experimental behavior and planned contracts are identified explicitly below.
 
@@ -84,7 +84,7 @@ interface AgentProvider {
 }
 ```
 
-`AgentConfig.subAgents` is present in the public type but is not automatically converted to tools or executed by `AgentRunner` in `0.4.x`. Use the experimental `@nestjs-agentic/orchestration` package explicitly for current delegation APIs.
+`AgentConfig.subAgents` is present in the public type but is not automatically converted to tools or executed by `AgentRunner`. Use `@nestjs-agentic/orchestration`'s `SubAgentDelegator`, `ParallelSubAgentRunner`, `RefinementLoopRunner`, and `DebateRunner` explicitly for delegation, fan-out, refinement, and debate.
 
 ## Agent Context
 
@@ -503,7 +503,7 @@ class ApprovalService {
 Behavior of `approve()` and `reject()`:
 
 - When the approval originated from the built-in runtime (it carries a `toolCallId`), the tool outcome is spliced into the exact suspended tool message in the persisted transcript and the model turn **resumes**: the model sees the outcome and can answer, request another tool, or suspend again. The return value is the full `AgentResult`.
-- When the approval did not originate from the built-in runtime (no `toolCallId`, for example an agent driven entirely by a `RuntimeAdapter`), only the tool is invoked or the denial is built, and the bare `ToolExecutionResult` is returned, matching `0.4.x` behavior.
+- When the approval did not originate from the built-in runtime (no `toolCallId`, for example an agent driven entirely by a `RuntimeAdapter`), only the tool is invoked or the denial is built, and the bare `ToolExecutionResult` is returned.
 - Both methods throw `ApprovalNotFoundError` if the ID is unknown or was already resolved. Approvals are single-use.
 - Resuming uses the approval's own `checkpoint`, so it does not depend on `SessionStore`. Approvals without one (created before checkpointing, or by a `RuntimeAdapter`) fall back to session history and throw `ApprovalTranscriptMissingError` if it was cleared or trimmed past the suspension point.
 
@@ -775,6 +775,49 @@ new IdempotencyPolicy({
 ```
 
 Enforces that tool calls carry an `idempotencyKey` in arguments or context, guarding side-effecting operations against accidental non-idempotent execution.
+
+### `SecretRedactionPolicy`
+
+```typescript
+new SecretRedactionPolicy({
+  customPatterns: [/internal-[a-z0-9]{16}/g],
+  sensitiveKeys: ['password', 'apiKey', 'privateKey'], // defaults shown are illustrative subset
+  maskPlaceholder: '[REDACTED_SECRET]',
+  maxDepth: 50,
+});
+```
+
+An Output Rail policy: `evaluate()` always allows, `evaluateOutput()` walks the tool's result and redacts values matching default patterns (OpenAI/GitHub/AWS key formats, JWTs, PEM private keys, database connection strings with embedded credentials) or matching a sensitive key name. Traversal is cycle-safe (`WeakMap`-based) so circular object graphs don't cause infinite recursion. Key-based masking only applies when the value under a sensitive key is a string; non-string values under a sensitive key are not masked. Arguments are not redacted, only output — apply a separate policy at the input stage if argument scrubbing is required.
+
+### `CanaryDetectionPolicy`
+
+```typescript
+new CanaryDetectionPolicy({
+  canaryTokens: ['CANARY_SECRET_TOKEN_99'],
+  denyReason: 'Canary token detected in tool call',
+});
+```
+
+Detects known canary tokens (secrets deliberately embedded in a system prompt to trap leakage) appearing in either tool call arguments (`evaluate()`, denies — treated as an exfiltration attempt) or tool output (`evaluateOutput()`, denies — treated as reflection back into the transcript). Narrower in scope than general prompt-injection detection: it only catches tokens you've planted and know to check for.
+
+**Both `SecretRedactionPolicy` and `CanaryDetectionPolicy` are opt-in per tool via `@UsePolicies(...)`.** Neither is applied by default, and a tool with no explicit `@UsePolicies` runs with no output rail at all.
+
+## Model Cascading (FrugalGPT)
+
+```typescript
+import { ModelCascadeAdapter } from '@nestjs-agentic/core';
+
+const cascadedAdapter = new ModelCascadeAdapter(underlyingModelAdapter, {
+  tiers: [
+    { model: { provider: 'openai', model: 'gpt-4o-mini' }, confidenceThreshold: 0.85 },
+    { model: { provider: 'openai', model: 'gpt-4o' } }, // final tier, no threshold needed
+  ],
+  fallbackStrategy: 'accept_last', // or 'throw'
+  onEscalate: (event) => console.log(`Escalated tier ${event.fromTier} -> ${event.toTier}`),
+});
+```
+
+`ModelCascadeAdapter` wraps an existing `ModelAdapter` and implements `ModelAdapter` itself, so it's a drop-in replacement wherever a `ModelAdapter` is registered (e.g. `AgenticModule.forRoot({ modelAdapter: cascadedAdapter })`). It attempts each tier in order, extracting a confidence score from the response via each tier's `extractorFn` (or a default extractor), and escalates to the next tier when confidence falls below that tier's `confidenceThreshold`. The response carries `cascadeMetadata` (tiers attempted, final tier, confidence, cumulative token usage, whether escalation occurred) so cost/quality tradeoffs are inspectable per turn.
 
 ## Audit Trail
 

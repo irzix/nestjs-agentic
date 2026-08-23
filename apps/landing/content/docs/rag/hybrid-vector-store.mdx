@@ -1,32 +1,35 @@
 ---
 title: Hybrid Vector Store
-description: Fusing BM25 keyword search and dense semantic vector embeddings via Reciprocal Rank Fusion.
+description: Fusing sparse keyword matching and dense semantic vector embeddings via a weighted linear blend.
 ---
 
 ## Hybrid Retrieval Architecture
 
-Pure vector search struggles with exact identifier names (e.g. `UserRepository.findByTenantId`), while pure lexical BM25 misses conceptual synonyms.
+Pure vector search struggles with exact identifier names (e.g. `UserRepository.findByTenantId`), while pure lexical matching misses conceptual synonyms.
 
-`HybridVectorStore` blends both scores using **Reciprocal Rank Fusion (RRF)**:
+`HybridVectorStore` blends both scores with a max-normalized weighted sum:
 
 ```text
-RRF_score(d) = sum( weight_m / (k + rank_m(d)) ) for m in [BM25, Vector]
+score(d) = (1 - vectorWeight) * normalize(termScore(d)) + vectorWeight * normalize(cosineScore(d))
 ```
 
-Where `k = 60` acts as a rank smoothing constant.
+The sparse `termScore` today is term-frequency based (matches divided by document length), not full BM25 with IDF weighting — see [issue #131](https://github.com/irzix/nestjs-agentic/issues/131) for tracked work to add real IDF/k1/b saturation. Reciprocal Rank Fusion is tracked separately in [issue #130](https://github.com/irzix/nestjs-agentic/issues/130) and is not yet implemented.
 
 ```typescript
 import { HybridVectorStore } from '@nestjs-agentic/rag';
 
 const store = new HybridVectorStore({
-  embeddingProvider: perplexityEmbeddings,
-  bm25Weight: 0.5,
-  vectorWeight: 0.5,
+  embeddingProvider: myEmbeddingProvider,
+  vectorWeight: 0.5, // sparse weight is derived as 1 - vectorWeight
 });
 
-await store.addDocuments([
-  { id: 'doc_1', content: 'export class AuthService { validateToken() {} }', metadata: { filePath: 'src/auth.service.ts' } },
+await store.addChunks([
+  {
+    id: 'chunk_1',
+    content: 'export class AuthService { validateToken() {} }',
+    metadata: { filePath: 'src/auth.service.ts' },
+  },
 ]);
 
-const results = await store.search('How does token validation work?', { topK: 5 });
+const results = await store.searchHybrid('How does token validation work?', 5);
 ```

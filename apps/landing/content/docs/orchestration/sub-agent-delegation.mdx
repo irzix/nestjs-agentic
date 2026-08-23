@@ -7,19 +7,19 @@ description: The Principle of Least Privilege and dynamic capability narrowing f
 
 Giving every tool to a single agent increases hallucination rates and security attack surfaces.
 
-`SubAgentDelegator` isolates sub-tasks to specialized agents configured with strictly scoped tools:
+`SubAgentDelegator` delegates a single task to a registered sub-agent while enforcing tenant isolation, delegation-depth limits, and `CapabilityNarrowing` (a whitelist/blacklist of tools, plus narrowed roles/permissions that can only be a *subset* of the parent's — attempting to escalate throws `CapabilityEscalationError`):
 
 ```typescript
 import { SubAgentDelegator } from '@nestjs-agentic/orchestration';
 
-const delegator = new SubAgentDelegator({
-  supervisor: leadAgent,
-  subAgents: [securityReviewer, architectureReviewer, testQualityReviewer],
-});
+const delegator = new SubAgentDelegator(agentRunner, { maxDelegationDepth: 3 });
 
-// Supervisor delegates sub-goal to specialist
-const securityFindings = await delegator.delegateTo(
-  'security_reviewer',
-  'Audit auth controller diff for CWE-79 and CWE-89 vulnerabilities',
-);
+// Supervisor delegates a sub-goal to a specialist, narrowed to a tool whitelist
+const securityFindings = await delegator.delegate(parentContext, {
+  agentName: 'securityReviewer',
+  message: 'Audit auth controller diff for CWE-79 and CWE-89 vulnerabilities',
+  narrowing: { allowedTools: ['readFile', 'flagVulnerability'] },
+});
 ```
+
+`CapabilityNarrowingPolicy` (a `ToolPolicy`) is the enforcement side of this: register it on tools so a narrowed sub-agent is actually blocked from calling anything outside its `allowedTools`/`deniedTools`, not just told not to.

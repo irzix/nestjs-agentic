@@ -7,25 +7,26 @@ description: High-throughput concurrent execution across specialist reviewer age
 
 When analyzing multi-dimensional inputs (such as pull requests with security, architecture, and test coverage concerns), running specialists sequentially wastes precious seconds.
 
-`ParallelSubAgentRunner` executes all specialists concurrently using `Promise.allSettled`:
+`ParallelSubAgentRunner` takes the shared `AgentRunner` and delegates a list of `SubAgentTask`s (each naming a registered sub-agent by `agentName`), fanning them out concurrently according to `aggregationStrategy` (`allSettled`, `firstSuccess`, `fallbackChain`, `bestOf`, or `consensusMerge`):
 
 ```typescript
 import { ParallelSubAgentRunner } from '@nestjs-agentic/orchestration';
 
-const runner = new ParallelSubAgentRunner({
-  agents: [securitySpecialist, architectureSpecialist, qualitySpecialist],
+const runner = new ParallelSubAgentRunner(agentRunner, {
   aggregationStrategy: 'allSettled',
   timeoutMs: 30000,
+  maxConcurrency: 3,
 });
 
-const assessments = await runner.runAll({
-  diff: prDiff,
-  astContext: astChunks,
-});
+const { results, combinedResponse, successCount, failedCount } = await runner.run(parentContext, [
+  { agentName: 'securitySpecialist', message: prDiff },
+  { agentName: 'architectureSpecialist', message: prDiff },
+  { agentName: 'qualitySpecialist', message: prDiff },
+]);
 
-for (const result of assessments) {
-  if (result.status === 'fulfilled') {
-    console.log(`${result.value.reviewerName}: ${result.value.score * 100}%`);
+for (const result of results) {
+  if (result.status === 'success') {
+    console.log(`${result.agentName}: ${(result.score ?? 0) * 100}%`);
   }
 }
 ```

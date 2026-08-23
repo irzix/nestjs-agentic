@@ -1,39 +1,34 @@
 ---
-title: Consensus Evaluation and Fleiss' Kappa
-description: Mathematical measurement of inter-rater agreement and convergence across autonomous agents.
+title: Consensus Scoring
+description: Mathematical measurement of agreement and convergence across debating agents.
 ---
 
-## Fleiss' Kappa Inter-Rater Reliability
+## Variance-Based Consensus Scoring
 
-`ConsensusEngine` evaluates agreement among $N$ agents classifying $n$ findings into categorical severity buckets.
-
-The Fleiss' Kappa coefficient (kappa) is computed as:
+`DebateRunner.calculateConsensusScore()` measures agreement among debaters' confidence scores for a round using normalized variance, not Fleiss' Kappa — Fleiss' Kappa requires categorical ratings across raters and isn't what's computed here.
 
 ```text
-kappa = (P_observed - P_chance) / (1 - P_chance)
+Variance = (1/N) * sum((s_i - mean)^2)
+Consensus = 1 - Variance / MaxVariance     // MaxVariance = 0.25 for scores bounded [0, 1]
 ```
 
-Where:
-- `P_observed` is the observed proportion of pairwise agreement among raters.
-- `P_chance` is the expected agreement occurring purely by chance.
+Debaters with no reported `score` default to a `0.5` prior confidence before the variance calculation.
 
-### Interpretation Scale
+### Interpretation
 
-| $\kappa$ Value | Consensus Level | System Action |
+| Consensus Score | Meaning | `DebateRunner` behavior |
 | :--- | :--- | :--- |
-| **$> 0.80$** | Almost Perfect Agreement | Direct Merge / Auto-Approve |
-| **$0.61 - 0.80$** | Substantial Agreement | Standard Summary with Comment |
-| **$< 0.60$** | Moderate to Poor Agreement | Triggers Debate Round 2 or Human Sign-off |
+| **`>= consensusThreshold`** (default `0.7`) | Debaters converged | Debate ends early; highest-scoring debater's response wins |
+| **`< consensusThreshold`, rounds remain** | Debaters diverge | Next round runs with the cross-critique transcript prepended |
+| **`< consensusThreshold` after `maxRounds`** | No convergence reached | `requiresHumanReview: true` on the result |
 
 ```typescript
-import { ConsensusEngine } from '@nestjs-agentic/orchestration';
+import { DebateRunner } from '@nestjs-agentic/orchestration';
 
-const consensus = ConsensusEngine.computeKappa([
-  securityAssessment,
-  architectureAssessment,
-  qualityAssessment,
-]);
+const debate = new DebateRunner(agentRunner);
 
-console.log(`Consensus Score: ${(consensus.score * 100).toFixed(1)}%`);
-console.log(`Kappa: ${consensus.kappa.toFixed(3)}`);
+// calculateConsensusScore is also usable standalone against any round's results
+const score = debate.calculateConsensusScore(round.results);
 ```
+
+A Fleiss' Kappa-based multi-rater consensus metric, suited to independent categorical severity classifications rather than debate convergence, is tracked as possible future work and does not ship today.

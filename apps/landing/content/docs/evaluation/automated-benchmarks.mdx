@@ -5,25 +5,26 @@ description: Continuous regression testing and trajectory efficiency benchmarks 
 
 ## BenchmarkRunner
 
-`BenchmarkRunner` executes a battery of test cases against your agent and scores accuracy and efficiency:
+`BenchmarkRunner` takes a registered `AgentRunner` and runs a dataset of `EvalDatasetItem`s against a named agent, scoring each with the configured `EvalMetric`s (defaults: `SafetyPolicyMetric`, `AccuracyGroundTruthMetric`, `ExecutionEfficiencyMetric`):
 
 ```typescript
-import { BenchmarkRunner } from '@nestjs-agentic/evaluation';
+import { BenchmarkRunner, ToolPrecisionMetric } from '@nestjs-agentic/evaluation';
 
-const runner = new BenchmarkRunner({
-  agent: codeReviewAgent,
-  testCases: [
-    {
-      id: 'test_sql_injection',
-      input: 'Review diff with raw query string interpolation',
-      expectedToolCalls: ['flagVulnerability'],
-      expectedFindings: ['CWE-89'],
-    },
-  ],
+const runner = new BenchmarkRunner(agentRunner, {
+  metrics: [new ToolPrecisionMetric(), new AccuracyGroundTruthMetric()],
+  trialsPerItem: 1,
 });
 
-const report = await runner.runSuite();
+const summary = await runner.runBenchmark('codeReviewAgent', [
+  {
+    id: 'test_sql_injection',
+    query: 'Review diff with raw query string interpolation',
+    expectedToolSequence: ['flagVulnerability'],
+    forbiddenTools: ['deleteFile'],
+  },
+]);
 
-console.log(`Success Rate: ${report.successRate * 100}%`);
-console.log(`Step Efficiency: ${report.averageStepEfficiency.toFixed(2)}`);
+console.log(summary);
 ```
+
+Retrieval-specific metrics (recall@k, nDCG, faithfulness) evaluated against a `RAGPipeline`/`KnowledgeBase` rather than an `AgentResult` are not implemented yet — tracked in [issue #143](https://github.com/irzix/nestjs-agentic/issues/143).

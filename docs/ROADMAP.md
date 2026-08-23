@@ -111,7 +111,7 @@ Goal: deliver the flagship production reference agent unifying all 8 ecosystem p
 - [x] U-Curve context formatting and FrugalGPT model cascading for cost-effective review rounds (`@nestjs-agentic/core`).
 - [x] Stanford Tri-Factor cognitive memory and procedural review SOPs (`@nestjs-agentic/memory`).
 - [x] Multi-agent specialized reviewers (Security, Quality & Performance, NestJS Architecture) with bounded concurrency (`@nestjs-agentic/orchestration`).
-- [x] Fleiss' Kappa consensus calculation across independent evaluator agents.
+- [x] Variance-based consensus scoring across independent evaluator agents (labeled "Fleiss' Kappa" in Njent's own logs, though the underlying calculation is normalized variance, not categorical inter-rater Kappa).
 - [x] Position-debiased quality evaluation for review comments before publishing (`@nestjs-agentic/evaluation`).
 - [x] Human-in-the-loop (HITL) approval policy for autonomous code fixes and PR modifications (`@nestjs-agentic/core`).
 
@@ -132,7 +132,54 @@ Goal: frozen public APIs, zero breaking changes guarantee, multi-tenant enterpri
 
 ## 🔮 Forward Roadmap (v1.x & v2.0)
 
-### 1.1 — Dynamic Agent Tooling & Multi-Modal Perception
+### 1.1 — Governance Correctness
+
+> **Status: Planned** | [Milestone 1.1](https://github.com/irzix/nestjs-agentic/milestone/6)
+
+Goal: close governance-boundary gaps found in a post-GA audit of the v1.0.0 codebase against its own documented guarantees, and bring documentation back in line with what actually ships.
+
+- [ ] Run Output Rails (`SecretRedactionPolicy`, `CanaryDetectionPolicy`, custom policies) on the approved-tool resume path, which bypasses them today ([#125](https://github.com/irzix/nestjs-agentic/issues/125)).
+- [ ] Scope `IdempotencyStore` keys by tenant, matching `SessionStore`'s existing tenant isolation ([#126](https://github.com/irzix/nestjs-agentic/issues/126)).
+- [ ] Run Output Rails against tool error messages, not just successful results, so failure payloads aren't exempt from secret/PII scrubbing ([#127](https://github.com/irzix/nestjs-agentic/issues/127)).
+- [ ] Correct fabricated class names and unimplemented RRF/BM25/Fleiss'-Kappa claims across `docs/ARCHITECTURE.md` and the documentation site ([#128](https://github.com/irzix/nestjs-agentic/issues/128)).
+- [ ] Populate `RAGContext.scores` during retrieval, unblocking rank-aware fusion strategies ([#129](https://github.com/irzix/nestjs-agentic/issues/129)).
+
+### 1.2 — Retrieval Quality
+
+> **Status: Planned** | [Milestone 1.2](https://github.com/irzix/nestjs-agentic/milestone/7)
+
+Goal: bring `@nestjs-agentic/rag`'s retrieval and reranking up to what its own documentation has claimed since GA.
+
+- [ ] Implement real Reciprocal Rank Fusion (RRF) for combining dense and sparse result lists ([#130](https://github.com/irzix/nestjs-agentic/issues/130)).
+- [ ] Replace `HybridVectorStore`'s term-frequency-only sparse score with real BM25 (IDF, k1/b saturation) ([#131](https://github.com/irzix/nestjs-agentic/issues/131)).
+- [ ] Ship built-in reranker provider adapters (Cohere, Voyage) and a `minScore` cutoff ([#132](https://github.com/irzix/nestjs-agentic/issues/132)).
+- [ ] Add an MMR (Maximal Marginal Relevance) diversity strategy to reduce near-duplicate chunks in context ([#133](https://github.com/irzix/nestjs-agentic/issues/133)).
+- [ ] Add an embedding cache and fix `HybridVectorStore.addChunks` to use batched `embedDocuments` ([#134](https://github.com/irzix/nestjs-agentic/issues/134)).
+
+### 1.3 — Security Hardening
+
+> **Status: Planned** | [Milestone 1.3](https://github.com/irzix/nestjs-agentic/milestone/8)
+
+Goal: extend Tri-Rail Guardrails beyond opt-in per-tool policies into deny-by-default governance, and close indirect-injection, PII, and audit-integrity gaps.
+
+- [ ] Support module-level default policy chains so tools are governed even without explicit `@UsePolicies` ([#135](https://github.com/irzix/nestjs-agentic/issues/135)).
+- [ ] Promote the example-only prompt-injection sanitizer into `@nestjs-agentic/core` and apply boundary-wrapping to retrieved RAG content ([#136](https://github.com/irzix/nestjs-agentic/issues/136)).
+- [ ] Add provenance/taint labeling so policies can distinguish model, tool, and externally-sourced content ([#137](https://github.com/irzix/nestjs-agentic/issues/137)).
+- [ ] Ship a `PiiRedactionPolicy` covering email, phone, credit card, and national ID patterns ([#138](https://github.com/irzix/nestjs-agentic/issues/138)).
+- [ ] Add approver authorization/separation-of-duties checks on `ApprovalService` and a tamper-evident (hash-chained) audit sink ([#139](https://github.com/irzix/nestjs-agentic/issues/139)).
+
+### 1.4 — Reliability & Output Quality
+
+> **Status: Planned** | [Milestone 1.4](https://github.com/irzix/nestjs-agentic/milestone/9)
+
+Goal: production-hardening primitives for the model-call boundary and quantitative retrieval evaluation.
+
+- [ ] Support structured output with JSON Schema validation and bounded repair retries ([#140](https://github.com/irzix/nestjs-agentic/issues/140)).
+- [ ] Add framework-level retry with backoff/jitter and a circuit breaker for model calls, independent of adapter-specific SDK retry behavior ([#141](https://github.com/irzix/nestjs-agentic/issues/141)).
+- [ ] Replace `RateLimitPolicy`'s in-process static state with a distributed (Redis-backed) implementation ([#142](https://github.com/irzix/nestjs-agentic/issues/142)).
+- [ ] Add retrieval-quality metrics (recall@k, precision@k, MRR, nDCG, faithfulness) to `@nestjs-agentic/evaluation` ([#143](https://github.com/irzix/nestjs-agentic/issues/143)).
+
+### 1.5 — Dynamic Agent Tooling & Multi-Modal Perception
 
 > **Status: In Progress**
 
@@ -145,7 +192,7 @@ Goal: empower agents with real-time multi-modal perception and zero-code runtime
 
 ---
 
-### 1.2 — Distributed Agent Swarms & Consensus Staking
+### 1.6 — Distributed Agent Swarms & Consensus Staking
 
 > **Status: Planned**
 

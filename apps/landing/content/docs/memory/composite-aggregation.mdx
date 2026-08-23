@@ -1,32 +1,42 @@
 ---
 title: Composite Memory Aggregation
-description: Unified multi-tier memory store federating queries across all cognitive memory tiers.
+description: Unified memory store federating save and recall calls across multiple underlying stores.
 ---
 
-## CompositeMemoryStore
+## CompositeMemory
 
-`CompositeMemoryStore` unifies Tier 1 through Tier 5 stores into a single interface for agent context assembly:
+`CompositeMemory` implements the same `AgentMemoryStore` interface as every other store, but fans out `save()` to every underlying store and unions the results of `recall()`, deduplicated by record id:
 
 ```typescript
 import {
-  CompositeMemoryStore,
+  CompositeMemory,
   ShortTermMemory,
   ScratchpadMemory,
   SemanticMemory,
   EpisodicMemory,
 } from '@nestjs-agentic/memory';
 
-const compositeStore = new CompositeMemoryStore({
-  shortTerm: new ShortTermMemory(),
-  scratchpad: new ScratchpadMemory(),
-  semantic: new SemanticMemory(),
-  episodic: new EpisodicMemory(),
+const compositeMemory = new CompositeMemory([
+  new ShortTermMemory(),
+  new ScratchpadMemory(),
+  new SemanticMemory(),
+  new EpisodicMemory(),
+]);
+
+// Saves to every store that accepts this record's `type`
+await compositeMemory.save({
+  id: 'obs_1',
+  sessionId: 'session_42',
+  type: 'semantic',
+  content: 'Audit finding: raw query string interpolation in OrdersController',
+  timestamp: new Date(),
 });
 
-// Single unified recall query
-const contextBundle = await compositeStore.recall('Audit pull request for SQL injections');
-
-console.log('Active turns:', contextBundle.shortTerm);
-console.log('Relevant facts:', contextBundle.semantic);
-console.log('Past lessons:', contextBundle.episodic);
+// Unified recall query across all stores, deduplicated by record id
+const results = await compositeMemory.recall('Audit pull request for SQL injections', {
+  sessionId: 'session_42',
+  limit: 20,
+});
 ```
+
+Because each store's `save()` filters by `record.type` (e.g. `ShortTermMemory` only persists `type: 'short_term'` records, `EpisodicMemory` only `type: 'episodic'`), a single `CompositeMemory.save()` call effectively routes the record to whichever store(s) declare that type — it isn't a fixed shortTerm/scratchpad/semantic/episodic field-by-field bundle.

@@ -5,30 +5,33 @@ description: Supervisor-worker feedback loops with acceptance predicates and tok
 
 ## RefinementLoopRunner
 
-`RefinementLoopRunner` pairs a **Worker Agent** (generating drafts/code) with a **Critic Agent** (evaluating against rules):
+`RefinementLoopRunner` re-runs a single sub-agent across iterations, feeding it either a custom `feedbackProviderFn` or evaluating each iteration's result against a `satisfactionFn`, stopping when satisfied, `maxIterations` is reached, or the configured token/duration budget is exhausted:
 
 ```mermaid
 flowchart LR
-    Worker[Worker Agent<br/>Generate Patch] --> Critic[Critic Agent<br/>Audit & Score]
-    Critic -- Score < Threshold --> Worker
-    Critic -- Score >= Threshold --> Done[Approved Output]
+    Worker[Sub-Agent<br/>Generate Draft] --> Check[satisfactionFn<br/>Evaluate Result]
+    Check -- Not Satisfied --> Worker
+    Check -- Satisfied --> Done[Loop Result]
 ```
 
 ```typescript
 import { RefinementLoopRunner } from '@nestjs-agentic/orchestration';
 
-const refinementLoop = new RefinementLoopRunner({
-  worker: codeGeneratorAgent,
-  critic: linterCriticAgent,
+const refinementLoop = new RefinementLoopRunner(agentRunner, {
   maxIterations: 3,
-  targetScore: 0.90,
+  qualityThreshold: 0.9,
+  satisfactionFn: (result) => ({ satisfied: (result.score ?? 0) >= 0.9, feedback: result.error }),
   budget: {
     maxTotalTokens: 25000,
     maxTotalTimeMs: 45000,
   },
+  stateStore: myStateStore, // optional, enables checkpointed resumption
 });
 
-const refinedCode = await refinementLoop.run({
-  prompt: 'Generate user registration service with bcrypt password hashing',
+const outcome = await refinementLoop.run(parentContext, {
+  agentName: 'codeGeneratorAgent',
+  message: 'Generate user registration service with bcrypt password hashing',
 });
 ```
+
+`RefinementLoopRunner.resume(parentContext, checkpoint, feedbackProviderFn?)` resumes an interrupted loop directly from a saved `RefinementLoopCheckpoint` when a `stateStore` was configured.

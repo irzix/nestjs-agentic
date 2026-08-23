@@ -1,28 +1,34 @@
 ---
-title: AST Hierarchical Code Chunking
-description: Semantic syntax-aware chunking preserving scopes, classes, methods, and interface definitions.
+title: AST-Aligned Code Chunking
+description: Syntax-boundary-aware chunking preserving scopes, classes, methods, and interface definitions.
 ---
 
-## Why AST Chunking?
+## Why AST-Aligned Chunking?
 
 Splitting code by line or token count cuts across functions, leaving the model with broken syntax and missing parameter context.
 
-`AstCodeChunker` parses source files into Abstract Syntax Trees using `ts-morph` and extracts semantically coherent chunks:
+`AstCodebaseSplitter` parses source files along syntactic boundaries and extracts semantically coherent chunks. It's deliberately regex-based rather than a full TypeScript compiler AST parse — this avoids a `ts-morph`/TypeScript-program dependency and is immune to catastrophic regex backtracking (ReDoS) by construction:
 
-- **Class Declarations**: Preserves class decorators, properties, constructor signatures, and method interfaces.
-- **Functions & Methods**: Self-contained chunks with enclosing module imports and parameter types.
-- **Enums & Interfaces**: Preserved in whole units.
+- **Class Declarations**: Preserves class decorators, properties, constructor signatures, and (optionally) sub-splits large classes into per-method chunks.
+- **Functions, Interfaces, Type Aliases, Enums**: Each preserved as a self-contained chunk with JSDoc and import metadata.
+- **Import Tracking**: Module specifiers are extracted into chunk metadata for downstream dependency-graph strategies.
 
 ```typescript
-import { AstCodeChunker } from '@nestjs-agentic/rag';
+import { AstCodebaseSplitter } from '@nestjs-agentic/rag';
 
-const chunker = new AstCodeChunker();
+const splitter = new AstCodebaseSplitter({ splitClassMethods: true });
 
-const chunks = chunker.chunkSourceFile('src/payment.service.ts', fileContent);
+const chunks = await splitter.splitDocument({
+  id: 'payment-service',
+  title: 'src/payment.service.ts',
+  rawContent: fileContent,
+  chunks: [],
+  metadata: {},
+  timestamp: new Date(),
+});
 
 for (const chunk of chunks) {
-  console.log(`Symbol: ${chunk.symbolName} (${chunk.kind})`);
-  console.log(`Lines: ${chunk.startLine}-${chunk.endLine}`);
-  console.log(`Context: ${chunk.enclosingScope}`);
+  console.log(chunk.metadata?.symbolName, chunk.metadata?.kind);
+  console.log(chunk.content);
 }
 ```
