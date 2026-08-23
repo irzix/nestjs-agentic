@@ -21,5 +21,6 @@ export * from './strategies/graph-dependency.strategy';
 export * from './strategies/u-shaped-context.strategy';
 export * from './graph/in-memory-graph.provider';
 export * from './stores/hybrid-vector.store';
+export * from './utils/rrf-fusion';
 export * from './engines/knowledge-base';
 export * from './engines/rag-pipeline';

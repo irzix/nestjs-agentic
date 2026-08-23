@@ -7,10 +7,18 @@ description: Fusing sparse keyword matching and dense semantic vector embeddings
 
 Pure vector search struggles with exact identifier names (e.g. `UserRepository.findByTenantId`), while pure lexical matching misses conceptual synonyms.
 
-`HybridVectorStore` blends both scores with a max-normalized weighted sum:
+`HybridVectorStore` supports two ways of combining the dense and sparse rankings, via `fusionMethod`:
+
+- `'weighted'` (default) — max-normalized weighted sum:
 
 ```text
 score(d) = (1 - vectorWeight) * normalize(bm25Score(d)) + vectorWeight * normalize(cosineScore(d))
+```
+
+- `'rrf'` — Reciprocal Rank Fusion, combining each ranker's *rank position* instead of its raw score, so dense and sparse scores never need to be normalized onto a common scale:
+
+```text
+RRF_score(d) = sum over each ranker m ranking d: weight_m / (k + rank_m(d))
 ```
 
 The sparse score is real BM25 (Robertson/Sparck-Jones), computed from corpus-level statistics maintained incrementally as chunks are added or removed:
@@ -19,7 +27,7 @@ The sparse score is real BM25 (Robertson/Sparck-Jones), computed from corpus-lev
 bm25(D, Q) = sum over query terms t: IDF(t) * (f(t,D) * (k1 + 1)) / (f(t,D) + k1 * (1 - b + b * |D| / avgdl))
 ```
 
-`k1` (term-frequency saturation, default `1.2`) and `b` (document-length normalization, default `0.75`) are configurable. Reciprocal Rank Fusion for combining the dense and sparse rankings (rather than this weighted-score blend) is tracked separately in [issue #130](https://github.com/irzix/nestjs-agentic/issues/130) and is not yet implemented.
+`k1` (term-frequency saturation, default `1.2`) and `b` (document-length normalization, default `0.75`) are configurable.
 
 ```typescript
 import { HybridVectorStore } from '@nestjs-agentic/rag';
@@ -29,6 +37,8 @@ const store = new HybridVectorStore({
   vectorWeight: 0.5, // sparse weight is derived as 1 - vectorWeight
   bm25K1: 1.2,
   bm25B: 0.75,
+  fusionMethod: 'rrf', // or 'weighted' (default)
+  rrfK: 60,
 });
 
 await store.addChunks([
@@ -40,4 +50,18 @@ await store.addChunks([
 ]);
 
 const results = await store.searchHybrid('How does token validation work?', 5);
+```
+
+`reciprocalRankFusion` is also exported standalone, for fusing any ranked id lists (e.g. RAG-Fusion-style multi-query variants) outside of `HybridVectorStore`:
+
+```typescript
+import { reciprocalRankFusion } from '@nestjs-agentic/rag';
+
+const fused = reciprocalRankFusion(
+  [
+    ['doc_a', 'doc_b'], // ranker 1's results, best first
+    ['doc_b', 'doc_c'], // ranker 2's results, best first
+  ],
+  { k: 60 },
+);
 ```

@@ -759,6 +759,50 @@ export class BenchmarkService${i} {
     assert(false, 'Test 12: Large Codebase Benchmark', err.message);
   }
 
+  // TEST 13: reciprocalRankFusion against a hand-computed example (#130)
+  try {
+    const { reciprocalRankFusion } = await import('../src');
+
+    // k=1 for simple hand-computable numbers.
+    // listA rank 1: 'a' -> 1/(1+1) = 0.5, rank 2: 'b' -> 1/(1+2) = 1/3
+    // listB rank 1: 'b' -> 1/(1+1) = 0.5, rank 2: 'c' -> 1/(1+2) = 1/3
+    // fused: a=0.5, b=1/3+0.5=5/6, c=1/3
+    const fused = reciprocalRankFusion([['a', 'b'], ['b', 'c']], { k: 1 });
+
+    assert(Math.abs(fused.get('a')! - 0.5) < 1e-9, 'Test 13a: RRF score for a-only-in-list-1 matches hand-computed 0.5');
+    assert(Math.abs(fused.get('b')! - 5 / 6) < 1e-9, 'Test 13b: RRF score for b-in-both-lists matches hand-computed 5/6');
+    assert(Math.abs(fused.get('c')! - 1 / 3) < 1e-9, 'Test 13c: RRF score for c-only-in-list-2 matches hand-computed 1/3');
+    assert(fused.size === 3, 'Test 13d: fused map contains exactly the union of ids across lists');
+
+    // Per-list weighting: doubling list 1's weight should double its contribution only.
+    const weighted = reciprocalRankFusion([['a'], ['a']], { k: 1, weights: [2, 1] });
+    assert(Math.abs(weighted.get('a')! - (2 * 0.5 + 1 * 0.5)) < 1e-9, 'Test 13e: per-list weights scale each list\'s contribution independently');
+  } catch (err: any) {
+    assert(false, 'Test 13: reciprocalRankFusion hand-computed example', err.message);
+  }
+
+  // TEST 14: HybridVectorStore fusionMethod: 'rrf' combines BM25 and cosine rankings by rank, not raw score
+  try {
+    const mockEmbed = new MockEmbeddingProvider();
+    const store = new HybridVectorStore({ embeddingProvider: mockEmbed, fusionMethod: 'rrf' });
+
+    await store.addChunks([
+      { id: 'rrf_1', parentId: 'd', content: 'quota limit exceeded for tenant', metadata: {} },
+      { id: 'rrf_2', parentId: 'd', content: 'unrelated billing notes', metadata: {} },
+      { id: 'rrf_3', parentId: 'd', content: 'quota policy overview', metadata: {} },
+    ]);
+
+    const results = await store.searchHybridScored('quota limit', 5);
+    assert(results.length > 0, 'Test 14a: RRF fusion mode returns results');
+    assert(
+      results.every((r) => r.score > 0 && r.score <= 2),
+      'Test 14b: RRF fusion scores are small rank-based values, not raw cosine/BM25 magnitudes',
+    );
+    assert(results[0].chunk.id === 'rrf_1', 'Test 14c: chunk ranked first by both BM25 and cosine wins under RRF');
+  } catch (err: any) {
+    assert(false, 'Test 14: HybridVectorStore RRF fusion integration', err.message);
+  }
+
   console.log(`\n  📊 Core RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');
