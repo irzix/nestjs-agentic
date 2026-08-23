@@ -1,6 +1,6 @@
 {
   "name": "nestjs-agentic",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "NestJS-native framework for building enterprise-grade, governance-backed AI agents.",
   "repository": {
     "type": "git",
@@ -20,7 +20,7 @@
     "test": "echo \"Meta package delegates testing to workspaces\""
   },
   "dependencies": {
-    "@nestjs-agentic/core": "^1.1.0"
+    "@nestjs-agentic/core": "^1.2.0"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",
