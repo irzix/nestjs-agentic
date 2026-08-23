@@ -10,10 +10,16 @@ Pure vector search struggles with exact identifier names (e.g. `UserRepository.f
 `HybridVectorStore` blends both scores with a max-normalized weighted sum:
 
 ```text
-score(d) = (1 - vectorWeight) * normalize(termScore(d)) + vectorWeight * normalize(cosineScore(d))
+score(d) = (1 - vectorWeight) * normalize(bm25Score(d)) + vectorWeight * normalize(cosineScore(d))
 ```
 
-The sparse `termScore` today is term-frequency based (matches divided by document length), not full BM25 with IDF weighting — see [issue #131](https://github.com/irzix/nestjs-agentic/issues/131) for tracked work to add real IDF/k1/b saturation. Reciprocal Rank Fusion is tracked separately in [issue #130](https://github.com/irzix/nestjs-agentic/issues/130) and is not yet implemented.
+The sparse score is real BM25 (Robertson/Sparck-Jones), computed from corpus-level statistics maintained incrementally as chunks are added or removed:
+
+```text
+bm25(D, Q) = sum over query terms t: IDF(t) * (f(t,D) * (k1 + 1)) / (f(t,D) + k1 * (1 - b + b * |D| / avgdl))
+```
+
+`k1` (term-frequency saturation, default `1.2`) and `b` (document-length normalization, default `0.75`) are configurable. Reciprocal Rank Fusion for combining the dense and sparse rankings (rather than this weighted-score blend) is tracked separately in [issue #130](https://github.com/irzix/nestjs-agentic/issues/130) and is not yet implemented.
 
 ```typescript
 import { HybridVectorStore } from '@nestjs-agentic/rag';
@@ -21,6 +27,8 @@ import { HybridVectorStore } from '@nestjs-agentic/rag';
 const store = new HybridVectorStore({
   embeddingProvider: myEmbeddingProvider,
   vectorWeight: 0.5, // sparse weight is derived as 1 - vectorWeight
+  bm25K1: 1.2,
+  bm25B: 0.75,
 });
 
 await store.addChunks([
