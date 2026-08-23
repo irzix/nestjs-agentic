@@ -595,7 +595,7 @@ interface SessionRecord {
 Behavior:
 
 - History is stored through `SessionStore`, defaulting to the process-local `InMemorySessionStore`. Provide `sessionStore` to `forRoot()` for anything durable.
-- The storage key is `tenantId:sessionId` when a tenant is present, so the same session identifier used by two tenants can never share a transcript.
+- The storage key is `scopeKey(tenantId, sessionId)` when a tenant is present (a JSON-encoded tuple, not plain `tenantId:sessionId` concatenation, so a `:` inside `tenantId` can't collide two different tenants onto the same key), so the same session identifier used by two tenants can never share a transcript.
 - System messages are not stored, because agent instructions are applied again on every turn.
 - Retention keeps the most recent `maxMessages`. Trimming never leaves a tool result without the assistant message that requested it, which providers reject.
 - History is written when a turn ends, including when it suspends for approval. A turn that throws does not persist a partial transcript.

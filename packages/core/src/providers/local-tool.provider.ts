@@ -11,6 +11,7 @@ import {
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
 import { auditEnvelope } from '../interfaces';
+import { scopeKey } from '../utils/scope-key';
 import type {
   AgentContext,
   ApprovalStore,
@@ -71,13 +72,9 @@ export class LocalToolProvider {
     }
   }
 
-  /**
-   * Scopes an idempotency key by tenant. Uses JSON encoding, not plain
-   * concatenation, so a `:` inside `tenantId` can't collide two different
-   * (tenant, key) pairs onto the same store key.
-   */
+  /** Scopes an idempotency key by tenant using the shared collision-free `scopeKey`. */
   private scopedIdempotencyKey(agentContext: AgentContext, idempotencyKey: string): string {
-    return JSON.stringify([agentContext.security.tenantId ?? null, idempotencyKey]);
+    return scopeKey(agentContext.security.tenantId, idempotencyKey);
   }
 
   /** Resolves and tenant-scopes the caller-supplied idempotency key, if any. */

@@ -8,6 +8,7 @@ import {
   Context,
   MockModelAdapter,
   Param,
+  scopeKey,
   SESSION_STORE,
   Tool,
   ToolSet,
@@ -172,9 +173,12 @@ export async function runConversationHistoryTests() {
       context: { tenantId: 'globex' },
     });
 
-    assert(Boolean(store.record('acme:shared')), 'Test 2a: Tenant included in the storage key');
     assert(
-      Boolean(store.record('globex:shared')),
+      Boolean(store.record(scopeKey('acme', 'shared'))),
+      'Test 2a: Tenant included in the storage key',
+    );
+    assert(
+      Boolean(store.record(scopeKey('globex', 'shared'))),
       'Test 2b: A second tenant gets an independent transcript',
     );
     assert(

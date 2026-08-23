@@ -1,4 +1,5 @@
 import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
+import { scopeKey } from '@nestjs-agentic/core';
 import {
   SopGuardFailedError,
   SopMaxTransitionsExceededError,
@@ -52,12 +53,9 @@ export class SopRunner {
     };
   }
 
-  /**
-   * Generates a unique checkpoint storage key scoped by tenant and session ID.
-   */
+  /** Checkpoint storage key scoped by tenant and session ID. */
   private getCheckpointKey(parentContext: AgentContext): string {
-    const tenantId = parentContext.security.tenantId ?? 'default';
-    return `agentic:${tenantId}:sop:${parentContext.sessionId}:checkpoint`;
+    return `agentic:sop:checkpoint:${scopeKey(parentContext.security.tenantId, parentContext.sessionId)}`;
   }
 
   /**
