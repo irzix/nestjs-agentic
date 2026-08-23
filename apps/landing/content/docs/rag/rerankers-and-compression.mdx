@@ -7,21 +7,29 @@ description: Re-scoring candidate passages and extractive compression to maximiz
 
 Bi-encoder vector search produces candidate matches quickly, but computes query and document embeddings independently, which caps precision.
 
-`RerankerStrategy` is a post-retrieval pipeline stage that delegates scoring to a `rerankFn` you supply — call a Cohere Rerank, HuggingFace cross-encoder, or any other endpoint from it:
+`RerankerStrategy` is a post-retrieval pipeline stage that delegates scoring to a `rerankFn` you supply. Built-in factories ship for Cohere Rerank and Voyage AI Rerank, or you can pass any other endpoint as a closure:
 
 ```typescript
-import { RerankerStrategy } from '@nestjs-agentic/rag';
+import { RerankerStrategy, createCohereRerankProvider } from '@nestjs-agentic/rag';
 
 const reranker = new RerankerStrategy({
-  rerankFn: async (query, chunks) => {
-    // Call your reranker endpoint; return one score per chunk, same order.
-    return chunks.map((c) => scoreFor(query, c));
-  },
+  rerankFn: createCohereRerankProvider({ apiKey: process.env.COHERE_API_KEY }),
   topK: 3,
+  minScore: 0.3, // drop chunks below this relevance score entirely, instead of just deprioritizing them
 });
 ```
 
-No reranker provider ships built-in today — if `rerankFn` is omitted, or throws, `RerankerStrategy` falls back to a term-overlap heuristic. Built-in Cohere/Voyage adapters and a `minScore` cutoff are tracked in [issue #132](https://github.com/irzix/nestjs-agentic/issues/132).
+`createVoyageRerankProvider` works the same way against the Voyage AI Rerank API.
+
+If `rerankFn` is omitted, `RerankerStrategy` uses a term-overlap heuristic. If `rerankFn` throws, it invokes `onRerankFailure` when configured, then either falls back to that same heuristic when `onRerankFailureMode` is `'fallback'` (default) or rethrows when it is `'throw'`:
+
+```typescript
+const reranker = new RerankerStrategy({
+  rerankFn: myRerankFn,
+  onRerankFailure: (err) => logger.warn('Reranker failed', err),
+  onRerankFailureMode: 'throw', // or 'fallback' (default) to continue with term-overlap scoring
+});
+```
 
 ---
 

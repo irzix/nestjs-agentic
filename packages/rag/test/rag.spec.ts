@@ -803,6 +803,240 @@ export class BenchmarkService${i} {
     assert(false, 'Test 14: HybridVectorStore RRF fusion integration', err.message);
   }
 
+  // TEST 15: RerankerStrategy minScore filtering and observable failure handling (#132)
+  try {
+    const chunks = [
+      { id: 'r1', parentId: 'p', content: 'high relevance chunk', metadata: {} },
+      { id: 'r2', parentId: 'p', content: 'low relevance chunk', metadata: {} },
+    ];
+
+    // 15a. minScore drops chunks below the threshold
+    const minScoreReranker = new RerankerStrategy({
+      rerankFn: async () => [0.9, 0.1],
+      minScore: 0.5,
+    });
+    const filtered = await minScoreReranker.process({ query: 'q', chunks });
+    assert(filtered.chunks?.length === 1 && filtered.chunks[0].id === 'r1', 'Test 15a: minScore drops chunks below the threshold post-rerank');
+
+    // 15b. onRerankFailure is invoked when rerankFn throws
+    let capturedError: unknown;
+    const observedReranker = new RerankerStrategy({
+      rerankFn: async () => {
+        throw new Error('provider down');
+      },
+      onRerankFailure: (err) => {
+        capturedError = err;
+      },
+    });
+    await observedReranker.process({ query: 'q', chunks });
+    assert(capturedError instanceof Error && capturedError.message === 'provider down', 'Test 15b: onRerankFailure receives the thrown error for observability');
+
+    // 15c. onRerankFailureMode: 'throw' propagates instead of silently falling back
+    const throwingReranker = new RerankerStrategy({
+      rerankFn: async () => {
+        throw new Error('provider down');
+      },
+      onRerankFailureMode: 'throw',
+    });
+    let threw = false;
+    try {
+      await throwingReranker.process({ query: 'q', chunks });
+    } catch {
+      threw = true;
+    }
+    assert(threw, "Test 15c: onRerankFailureMode: 'throw' propagates the rerankFn error instead of degrading silently");
+
+    // 15d. minScore rejects non-finite values (NaN/Infinity) at construction, per review feedback
+    let rejectedNaN = false;
+    try {
+      new RerankerStrategy({ minScore: NaN });
+    } catch {
+      rejectedNaN = true;
+    }
+    assert(rejectedNaN, 'Test 15d: RerankerStrategy rejects a non-finite minScore (NaN) at construction');
+
+    // 15e. A throwing onRerankFailure callback must not mask the original rerankFn error
+    // or bypass the configured fallback behavior, per review feedback
+    const maskingReranker = new RerankerStrategy({
+      rerankFn: async () => {
+        throw new Error('original rerank error');
+      },
+      onRerankFailure: () => {
+        throw new Error('callback blew up');
+      },
+    });
+    const maskingResult = await maskingReranker.process({ query: 'q', chunks });
+    assert(
+      maskingResult.chunks?.length === chunks.length,
+      'Test 15e: a throwing onRerankFailure callback does not prevent the fallback path from running',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 15: RerankerStrategy minScore and failure observability', err.message);
+  }
+
+  // TEST 16: Built-in Cohere and Voyage rerank provider adapters (#132)
+  try {
+    const { createCohereRerankProvider, createVoyageRerankProvider } = await import('../src');
+    const chunks = [
+      { id: 'a', parentId: 'p', content: 'alpha', metadata: {} },
+      { id: 'b', parentId: 'p', content: 'beta', metadata: {} },
+    ];
+
+    // 16a. Cohere provider maps `results[].index/relevance_score` back to a parallel scores array
+    const cohereFetch = (async (_url: any, _init: any) =>
+      new Response(
+        JSON.stringify({
+          results: [
+            { index: 1, relevance_score: 0.8 },
+            { index: 0, relevance_score: 0.3 },
+          ],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    const cohereFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: cohereFetch });
+    const cohereScores = await cohereFn('q', chunks);
+    assert(cohereScores[0] === 0.3 && cohereScores[1] === 0.8, 'Test 16a: Cohere rerank provider maps out-of-order results back to input order');
+
+    // 16b. Voyage provider maps `data[].index/relevance_score` back to a parallel scores array
+    const voyageFetch = (async (_url: any, _init: any) =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { index: 0, relevance_score: 0.6 },
+            { index: 1, relevance_score: 0.9 },
+          ],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    const voyageFn = createVoyageRerankProvider({ apiKey: 'k', fetchFn: voyageFetch });
+    const voyageScores = await voyageFn('q', chunks);
+    assert(voyageScores[0] === 0.6 && voyageScores[1] === 0.9, 'Test 16b: Voyage rerank provider maps results back to input order');
+
+    // 16c. Non-200 response throws with the status and body surfaced, rather than swallowed
+    const failingFetch = (async () => new Response('rate limited', { status: 429 })) as unknown as typeof fetch;
+    const failingFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: failingFetch });
+    let threwOnHttpError = false;
+    try {
+      await failingFn('q', chunks);
+    } catch (e: any) {
+      threwOnHttpError = e.message.includes('429') && e.message.includes('rate limited');
+    }
+    assert(threwOnHttpError, 'Test 16c: non-200 rerank API response throws with status and body surfaced');
+
+    // 16d. Malformed provider responses (out-of-range index) are rejected, not silently
+    // misapplied to the wrong chunk, per review feedback
+    const malformedFetch = (async () =>
+      new Response(JSON.stringify({ results: [{ index: 99, relevance_score: 0.5 }] }), { status: 200 })) as unknown as typeof fetch;
+    const malformedFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: malformedFetch });
+    let threwOnMalformed = false;
+    try {
+      await malformedFn('q', chunks);
+    } catch {
+      threwOnMalformed = true;
+    }
+    assert(threwOnMalformed, 'Test 16d: an out-of-range index in the provider response is rejected instead of silently applied');
+
+    // 16e. Voyage rejects input exceeding its documented 1,000-document limit before making a request
+    const shouldNotBeCalled = (async () => {
+      throw new Error('fetchFn must not be called when the document limit is exceeded');
+    }) as unknown as typeof fetch;
+    const cappedFn = createVoyageRerankProvider({ apiKey: 'k', fetchFn: shouldNotBeCalled });
+    const tooManyChunks = Array.from({ length: 1001 }, (_, i) => ({ id: `c${i}`, parentId: 'p', content: 'x', metadata: {} }));
+    let threwOnTooMany = false;
+    try {
+      await cappedFn('q', tooManyChunks);
+    } catch (e: any) {
+      threwOnTooMany = e.message.includes('1000');
+    }
+    assert(threwOnTooMany, "Test 16e: Voyage provider rejects >1000 documents without calling fetchFn");
+
+    // 16f. Request is aborted after timeoutMs, surfaced as a rejection rather than hanging forever
+    const hangingFetch = ((_url: any, init: any) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal.reason));
+      })) as unknown as typeof fetch;
+    const timeoutFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: hangingFetch, timeoutMs: 20 });
+    let threwOnTimeout = false;
+    try {
+      await timeoutFn('q', chunks);
+    } catch (e: any) {
+      threwOnTimeout = /timed out/i.test(e.message);
+    }
+    assert(threwOnTimeout, 'Test 16f: a hanging rerank request is aborted after timeoutMs instead of hanging indefinitely');
+
+    // 16g. Incomplete provider results (fewer entries than input chunks) are rejected,
+    // instead of silently zero-filling the missing chunks, per review feedback
+    const incompleteFetch = (async () =>
+      new Response(JSON.stringify({ results: [{ index: 0, relevance_score: 0.9 }] }), { status: 200 })) as unknown as typeof fetch;
+    const incompleteFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: incompleteFetch });
+    let threwOnIncomplete = false;
+    try {
+      await incompleteFn('q', chunks);
+    } catch {
+      threwOnIncomplete = true;
+    }
+    assert(threwOnIncomplete, 'Test 16g: a response with fewer results than input chunks is rejected instead of zero-filling the rest');
+
+    // 16h. The abort timer stays armed through body parsing, not just until headers
+    // arrive, so a stalled response body is still bounded by timeoutMs, per review feedback
+    const stallingBodyFetch = ((_url: any, init: any) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: async () => new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal.reason));
+        }),
+        json: async () => new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal.reason));
+        }),
+      })) as unknown as typeof fetch;
+    const stallingFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: stallingBodyFetch, timeoutMs: 20 });
+    let threwOnStallingBody = false;
+    try {
+      await stallingFn('q', chunks);
+    } catch (e: any) {
+      threwOnStallingBody = /timed out/i.test(e.message);
+    }
+    assert(threwOnStallingBody, 'Test 16h: a stalled response body (headers ok, body hangs) is still bounded by timeoutMs');
+
+    // 16i. Missing/empty API key is rejected at construction with a clear config
+    // error, instead of silently sending an empty Bearer credential (review feedback)
+    let rejectedEmptyKey = false;
+    try {
+      createCohereRerankProvider({ apiKey: '', fetchFn: cohereFetch });
+    } catch {
+      rejectedEmptyKey = true;
+    }
+    assert(rejectedEmptyKey, 'Test 16i: createCohereRerankProvider rejects a missing/empty API key at construction');
+
+    // 16j. Invalid timeoutMs (negative/NaN) is rejected at construction (review feedback)
+    let rejectedBadTimeout = false;
+    try {
+      createCohereRerankProvider({ apiKey: 'k', timeoutMs: -5 });
+    } catch {
+      rejectedBadTimeout = true;
+    }
+    assert(rejectedBadTimeout, 'Test 16j: createCohereRerankProvider rejects a non-positive timeoutMs at construction');
+
+    // 16k. Missing fetch implementation is rejected with a clear config error
+    // instead of failing later with an opaque TypeError (review feedback)
+    const { resolveFetchFn } = await import('../src');
+    const originalFetch = globalThis.fetch;
+    // @ts-expect-error - intentionally simulating a runtime without global fetch
+    globalThis.fetch = undefined;
+    let rejectedNoFetch = false;
+    try {
+      resolveFetchFn(undefined, 'test');
+    } catch {
+      rejectedNoFetch = true;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert(rejectedNoFetch, 'Test 16k: resolveFetchFn rejects when neither fetchFn nor a global fetch is available');
+  } catch (err: any) {
+    assert(false, 'Test 16: Built-in Cohere/Voyage rerank provider adapters', err.message);
+  }
+
   console.log(`\n  📊 Core RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');

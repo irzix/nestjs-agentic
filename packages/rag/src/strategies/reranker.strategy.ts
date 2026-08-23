@@ -16,6 +16,20 @@ export interface RerankerStrategyOptions {
 
   /** Custom Cross-Encoder or neural re-ranking model function (e.g. Cohere Rerank, BGE-Reranker). */
   rerankFn?: RerankFunction;
+
+  /** Chunks scoring below this relevance threshold are dropped entirely, post-rerank. Default: none (no filtering) */
+  minScore?: number;
+
+  /**
+   * What to do when `rerankFn` throws. `'fallback'` degrades to internal
+   * term-overlap scoring (previous default behavior). `'throw'` propagates
+   * the error instead of silently degrading quality. Either way, the failure
+   * is reported to `onRerankFailure` first. Default: `'fallback'`
+   */
+  onRerankFailureMode?: 'fallback' | 'throw';
+
+  /** Called whenever `rerankFn` throws, so failures are observable instead of silently swallowed. */
+  onRerankFailure?: (error: unknown) => void | Promise<void>;
 }
 
 /**
@@ -27,6 +41,9 @@ export class RerankerStrategy implements RAGStrategy {
   readonly phase = 'post-retrieval' as const;
   private readonly topK: number;
   private readonly rerankFn?: RerankFunction;
+  private readonly minScore?: number;
+  private readonly onRerankFailureMode: 'fallback' | 'throw';
+  private readonly onRerankFailure?: (error: unknown) => void | Promise<void>;
 
   /**
    * Creates a new instance of RerankerStrategy.
@@ -35,6 +52,14 @@ export class RerankerStrategy implements RAGStrategy {
   constructor(options?: RerankerStrategyOptions) {
     this.topK = options?.topK ?? 5;
     this.rerankFn = options?.rerankFn;
+
+    if (options?.minScore !== undefined && !Number.isFinite(options.minScore)) {
+      throw new RangeError(`RerankerStrategy: minScore must be a finite number, got ${options.minScore}`);
+    }
+    this.minScore = options?.minScore;
+
+    this.onRerankFailureMode = options?.onRerankFailureMode ?? 'fallback';
+    this.onRerankFailure = options?.onRerankFailure;
   }
 
   /**
@@ -61,8 +86,18 @@ export class RerankerStrategy implements RAGStrategy {
           scoresMap.set(chunk.id, score);
           return { chunk, relevanceScore: score };
         });
-      } catch {
-        // Fallback to internal scoring if rerankFn throws an error
+      } catch (err) {
+        // The callback failing must never mask the original rerankFn error
+        // or bypass the configured fallback/throw behavior.
+        try {
+          await this.onRerankFailure?.(err);
+        } catch {
+          // Reporting failure is not itself a rerank failure; ignore.
+        }
+        if (this.onRerankFailureMode === 'throw') {
+          throw err;
+        }
+        // Fallback to internal scoring below.
       }
     }
 
@@ -88,6 +123,11 @@ export class RerankerStrategy implements RAGStrategy {
     }
 
     scoredChunks.sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+    if (this.minScore !== undefined) {
+      scoredChunks = scoredChunks.filter((s) => s.relevanceScore >= this.minScore!);
+    }
+
     const rerankedChunks = scoredChunks.slice(0, this.topK).map((s) => s.chunk);
 
     return {
