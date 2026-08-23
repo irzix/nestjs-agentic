@@ -155,6 +155,118 @@ export async function runRAGTests() {
     assert(false, 'Test 4B: HybridVectorStore real BM25 scoring', err.message);
   }
 
+  // TEST 4C: HybridVectorStore.addChunks batches unembedded chunks via embedDocuments,
+  // instead of issuing one embedQuery call per chunk.
+  try {
+    let embedQueryCalls = 0;
+    let embedDocumentsCalls = 0;
+    let lastBatchSize = 0;
+
+    const spyProvider = {
+      async embedQuery(text: string) {
+        embedQueryCalls++;
+        return [text.length];
+      },
+      async embedDocuments(texts: string[]) {
+        embedDocumentsCalls++;
+        lastBatchSize = texts.length;
+        return texts.map((t) => [t.length]);
+      },
+    };
+
+    const store = new HybridVectorStore({ embeddingProvider: spyProvider, embeddingBatchSize: 10 });
+
+    const chunksToAdd: Array<{ id: string; parentId: string; content: string; metadata: {}; embedding?: number[] }> =
+      Array.from({ length: 7 }, (_, i) => ({
+        id: `batch_chunk_${i}`,
+        parentId: 'p_batch',
+        content: `content for chunk number ${i}`,
+        metadata: {},
+      }));
+
+    await store.addChunks(chunksToAdd);
+
+    assert(embedDocumentsCalls === 1, 'Test 4Ca: A single batched embedDocuments call handles 7 chunks under batch size 10');
+    assert(embedQueryCalls === 0, 'Test 4Cb: embedQuery is never called during ingestion');
+    assert(lastBatchSize === 7, 'Test 4Cc: The batch contained all 7 chunk texts');
+    assert(
+      chunksToAdd.every((c) => Array.isArray(c.embedding)),
+      'Test 4Cd: Every input chunk object received its embedding (mutated in place, as documented)',
+    );
+
+    // A batch larger than embeddingBatchSize must split into multiple calls.
+    embedDocumentsCalls = 0;
+    const largeStore = new HybridVectorStore({ embeddingProvider: spyProvider, embeddingBatchSize: 3 });
+    const manyChunks = Array.from({ length: 8 }, (_, i) => ({
+      id: `large_chunk_${i}`,
+      parentId: 'p_large',
+      content: `text ${i}`,
+      metadata: {},
+    }));
+    await largeStore.addChunks(manyChunks);
+    assert(
+      embedDocumentsCalls === 3,
+      'Test 4Ce: 8 chunks with embeddingBatchSize=3 split into 3 batched calls (3+3+2), not 8 individual ones',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 4C: HybridVectorStore batches embedding via embedDocuments', err.message);
+  }
+
+  // TEST 4D: embeddingBatchSize is validated to prevent an infinite ingestion loop.
+  // A value of 0 or a negative number as the loop increment in addChunks
+  // would otherwise leave the loop index unchanged forever.
+  try {
+    const invalidSizes = [0, -1, -100, 1.5, NaN, Infinity];
+    let allRejected = true;
+    for (const size of invalidSizes) {
+      try {
+        new HybridVectorStore({ embeddingBatchSize: size });
+        allRejected = false;
+      } catch {
+        // expected
+      }
+    }
+    assert(allRejected, 'Test 4Da: Zero, negative, fractional, NaN, and Infinity batch sizes are all rejected at construction');
+
+    let validAccepted = true;
+    try {
+      new HybridVectorStore({ embeddingBatchSize: 50 });
+    } catch {
+      validAccepted = false;
+    }
+    assert(validAccepted, 'Test 4Db: A valid positive integer batch size is still accepted');
+  } catch (err: any) {
+    assert(false, 'Test 4D: embeddingBatchSize validation', err.message);
+  }
+
+  // TEST 4E: A misaligned embedDocuments response (wrong vector count) is rejected
+  // rather than silently attaching undefined/mismatched embeddings.
+  try {
+    const misalignedProvider = {
+      async embedQuery(text: string) {
+        return [text.length];
+      },
+      async embedDocuments(texts: string[]) {
+        // Deliberately return one fewer embedding than requested.
+        return texts.slice(0, -1).map((t) => [t.length]);
+      },
+    };
+
+    const store = new HybridVectorStore({ embeddingProvider: misalignedProvider });
+    let threw = false;
+    try {
+      await store.addChunks([
+        { id: 'ma_1', parentId: 'p', content: 'alpha', metadata: {} },
+        { id: 'ma_2', parentId: 'p', content: 'beta', metadata: {} },
+      ]);
+    } catch {
+      threw = true;
+    }
+    assert(threw, 'Test 4E: A mismatched embedDocuments response length is rejected, not silently applied');
+  } catch (err: any) {
+    assert(false, 'Test 4E: Misaligned embedding response validation', err.message);
+  }
+
   // TEST 5: InMemoryKnowledgeGraphProvider Entity Traversal
   try {
     const graph = new InMemoryKnowledgeGraphProvider();

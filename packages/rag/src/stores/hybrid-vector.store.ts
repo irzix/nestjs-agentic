@@ -21,6 +21,14 @@ export interface HybridVectorStoreOptions {
 
   /** BM25 document-length normalization constant (0.0 to 1.0). Default: `0.75` */
   bm25B?: number;
+
+  /**
+   * Maximum number of chunks embedded per `embedDocuments` call. `addChunks`
+   * batches unembedded chunks into groups of this size rather than issuing
+   * one call per chunk or one unbounded call for the whole input, since most
+   * embedding providers cap request size. Default: `100`
+   */
+  embeddingBatchSize?: number;
 }
 
 /**
@@ -36,6 +44,7 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
   private readonly stopWordsSet?: Set<string>;
   private readonly bm25K1: number;
   private readonly bm25B: number;
+  private readonly embeddingBatchSize: number;
 
   /** Per-chunk term-frequency map, kept so `deleteChunk`/re-ingestion can decrement corpus stats without re-tokenizing. */
   private readonly chunkTermFreqs = new Map<string, Map<string, number>>();
@@ -53,6 +62,14 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     this.vectorWeight = options?.vectorWeight ?? 0.5;
     this.bm25K1 = options?.bm25K1 ?? 1.2;
     this.bm25B = options?.bm25B ?? 0.75;
+
+    const batchSize = options?.embeddingBatchSize ?? 100;
+    if (!Number.isSafeInteger(batchSize) || batchSize <= 0) {
+      throw new RangeError(
+        `HybridVectorStore: embeddingBatchSize must be a positive integer, got ${batchSize}`,
+      );
+    }
+    this.embeddingBatchSize = batchSize;
 
     if (options?.stopWords) {
       this.stopWordsSet = new Set(Array.from(options.stopWords).map((w) => w.toLowerCase()));
@@ -147,7 +164,18 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
   }
 
   /**
-   * Ingests or updates document chunks with parallel batch embedding generation.
+   * Ingests or updates document chunks, embedding any that don't already
+   * carry a vector.
+   *
+   * Unembedded chunks are embedded via `embedDocuments()` in batches of
+   * `embeddingBatchSize` rather than one `embedQuery()` call per chunk, so
+   * ingesting hundreds of chunks issues a handful of batched requests
+   * instead of hundreds of individual ones.
+   *
+   * Mutates the input `DocumentChunk` objects in place to attach the
+   * generated `embedding` — this is intentional, not an oversight: callers
+   * such as `KnowledgeBase.ingestDocument` pass the same array they keep a
+   * reference to, and rely on seeing the embedding on it afterward.
    *
    * @param chunks Array of DocumentChunk objects to ingest.
    * @returns Promise resolving when ingestion and embedding generation is complete.
@@ -158,12 +186,21 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     const chunksNeedingEmbed = chunks.filter((c) => !c.embedding);
 
     if (chunksNeedingEmbed.length > 0 && this.embeddingProvider) {
-      const embeddings = await Promise.all(
-        chunksNeedingEmbed.map((c) => this.embeddingProvider!.embedQuery(c.content)),
-      );
+      for (let i = 0; i < chunksNeedingEmbed.length; i += this.embeddingBatchSize) {
+        const batch = chunksNeedingEmbed.slice(i, i + this.embeddingBatchSize);
+        const embeddings = await this.embeddingProvider.embedDocuments(batch.map((c) => c.content));
 
-      for (let i = 0; i < chunksNeedingEmbed.length; i++) {
-        chunksNeedingEmbed[i].embedding = embeddings[i];
+        if (embeddings.length !== batch.length) {
+          throw new Error(
+            `HybridVectorStore: embedding provider "${this.embeddingProvider.constructor?.name ?? 'unknown'}" ` +
+              `returned ${embeddings.length} embedding(s) for a batch of ${batch.length} chunk(s). ` +
+              `A misaligned response would silently attach wrong or undefined embeddings.`,
+          );
+        }
+
+        for (let j = 0; j < batch.length; j++) {
+          batch[j].embedding = embeddings[j];
+        }
       }
     }
 
