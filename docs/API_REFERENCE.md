@@ -741,10 +741,12 @@ const recovered = await runner.recoverLatestCheckpoint(sessionId, {
 ### `RateLimitPolicy`
 
 ```typescript
-new RateLimitPolicy({ maxCallsPerMinute: 5 });
+new RateLimitPolicy({ maxCallsPerMinute: 5, sweepIntervalMs: 300_000 });
 ```
 
-The implementation uses a process-local sliding window keyed by tenant, user, and tool. Use distributed application infrastructure when limits must be shared across instances.
+The implementation uses a process-local sliding window keyed by tenant, user, and tool. Use distributed application infrastructure (e.g. a Redis-backed rate limiter) when limits must be shared across instances — the built-in policy enforces its limit independently per process, and a restart resets it.
+
+The shared history map is swept opportunistically: on the first `evaluate()` call after `sweepIntervalMs` (default 5 minutes) has elapsed, any entry whose entire window has expired is evicted rather than kept forever. This bounds the map to combinations active within the last window, instead of growing by one entry for every distinct (tenant, user, tool) combination ever seen. The sweep runs on a call, not a timer, so it never keeps the process alive on its own.
 
 ### `CostLimitPolicy`
 
