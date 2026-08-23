@@ -1307,6 +1307,34 @@ export class BenchmarkService${i} {
       rejectedTtl = true;
     }
     assert(rejectedTtl, 'Test 18m: CachedEmbeddingProvider rejects a negative ttlSeconds at construction');
+
+    // 18n. A store with a slow set() must not leave a gap where a concurrent embedDocuments
+    // call for the same text sees neither a cache hit nor an in-flight entry (review feedback)
+    let slowStoreProviderCalls = 0;
+    const slowSetStore = {
+      get: async () => undefined,
+      set: async (_key: string, _value: unknown) => {
+        await new Promise((r) => setTimeout(r, 20)); // slow persistence, e.g. network-backed Redis
+      },
+      delete: async () => {},
+    };
+    const slowStoreProvider = {
+      embedQuery: async (t: string) => [t.length, 0],
+      embedDocuments: async (texts: string[]) => {
+        slowStoreProviderCalls++;
+        await new Promise((r) => setTimeout(r, 5));
+        return texts.map((t) => [t.length, 0]);
+      },
+    };
+    const slowStoreCache = new CachedEmbeddingProvider({ provider: slowStoreProvider, store: slowSetStore as any });
+    const call1 = slowStoreCache.embedDocuments(['race text']);
+    await new Promise((r) => setTimeout(r, 10)); // provider resolved (5ms), but set() still pending (20ms)
+    const call2 = slowStoreCache.embedDocuments(['race text']);
+    await Promise.all([call1, call2]);
+    assert(
+      slowStoreProviderCalls === 1,
+      'Test 18n: a concurrent embedDocuments call arriving while a slow store.set() is still pending joins the in-flight request instead of re-embedding',
+    );
   } catch (err: any) {
     assert(false, 'Test 18: CachedEmbeddingProvider', err.message);
   }

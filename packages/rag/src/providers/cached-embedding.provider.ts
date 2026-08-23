@@ -137,9 +137,9 @@ export class CachedEmbeddingProvider implements EmbeddingProvider {
       }
     }
 
-    const uniqueKeys = Array.from(keyToPendingIndices.keys());
-    if (uniqueKeys.length > 0) {
-      const uniqueTexts = uniqueKeys.map((key) => texts[keyToPendingIndices.get(key)![0]]);
+    const pendingEntries = Array.from(keyToPendingIndices.entries());
+    if (pendingEntries.length > 0) {
+      const uniqueTexts = pendingEntries.map(([, indices]) => texts[indices[0]]);
 
       const request = this.provider.embedDocuments(uniqueTexts).then((embeddings) => {
         if (embeddings.length !== uniqueTexts.length) {
@@ -153,21 +153,30 @@ export class CachedEmbeddingProvider implements EmbeddingProvider {
 
       // Register each unique key as in-flight before awaiting, so a
       // concurrent call for the same text joins this request instead of
-      // starting a duplicate one. Each derived promise gets its own no-op
-      // catch registered immediately so an early throw below doesn't leave
-      // the other keys' promises as unhandled rejections.
-      const perKeyPromises = new Map<string, Promise<number[]>>();
-      for (let u = 0; u < uniqueKeys.length; u++) {
-        const key = uniqueKeys[u];
-        const perKey = request.then((embeddings) => embeddings[u]).finally(() => this.inFlight.delete(key));
-        perKeyPromises.set(key, perKey);
+      // starting a duplicate one. putInCache runs inside this same chain,
+      // before `finally` clears the in-flight entry — otherwise a concurrent
+      // call arriving between the provider resolving and the cache write
+      // completing would see neither a cache hit nor an in-flight entry, and
+      // start a duplicate provider request. Each derived promise gets its
+      // own no-op catch registered immediately so an early throw below
+      // doesn't leave the other keys' promises as unhandled rejections.
+      const perKeyResolutions: Array<{ indices: number[]; promise: Promise<number[]> }> = [];
+      for (let u = 0; u < pendingEntries.length; u++) {
+        const [key, indices] = pendingEntries[u];
+        const perKey = request
+          .then((embeddings) => embeddings[u])
+          .then(async (embedding) => {
+            await this.putInCache(key, embedding);
+            return embedding;
+          })
+          .finally(() => this.inFlight.delete(key));
         this.inFlight.set(key, perKey);
         perKey.catch(() => {});
+        perKeyResolutions.push({ indices, promise: perKey });
       }
 
-      for (const [key, indices] of keyToPendingIndices) {
-        const embedding = await perKeyPromises.get(key)!;
-        await this.putInCache(key, embedding);
+      for (const { indices, promise } of perKeyResolutions) {
+        const embedding = await promise;
         for (const i of indices) {
           results[i] = embedding.slice();
         }
