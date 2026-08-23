@@ -42,5 +42,11 @@ export function mapIndexedRerankScores(
     scores[index as number] = score;
   }
 
+  if (seenIndices.size !== chunkCount) {
+    throw new Error(
+      `${providerLabel}: response contains ${seenIndices.size} result(s), expected exactly ${chunkCount}`,
+    );
+  }
+
   return scores;
 }

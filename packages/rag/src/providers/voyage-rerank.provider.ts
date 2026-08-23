@@ -56,9 +56,8 @@ export function createVoyageRerankProvider(options?: VoyageRerankProviderOptions
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error(`Voyage Rerank API request timed out after ${timeoutMs}ms`)), timeoutMs);
 
-    let response: Response;
     try {
-      response = await fetchFn(`${baseUrl}/rerank`, {
+      const response = await fetchFn(`${baseUrl}/rerank`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -71,16 +70,18 @@ export function createVoyageRerankProvider(options?: VoyageRerankProviderOptions
         }),
         signal: controller.signal,
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Voyage Rerank API failed (${response.status}): ${errorText}`);
+      }
+
+      const data = (await response.json()) as unknown;
+      return mapIndexedRerankScores(data, 'data', chunks.length, 'Voyage Rerank API');
     } finally {
+      // Body reads (response.text()/json()) can stall independently of the
+      // headers response, so the timer must stay armed until they finish too.
       clearTimeout(timer);
     }
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Voyage Rerank API failed (${response.status}): ${errorText}`);
-    }
-
-    const data = (await response.json()) as unknown;
-    return mapIndexedRerankScores(data, 'data', chunks.length, 'Voyage Rerank API');
   };
 }

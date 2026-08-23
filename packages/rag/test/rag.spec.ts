@@ -963,6 +963,41 @@ export class BenchmarkService${i} {
       threwOnTimeout = /timed out/i.test(e.message);
     }
     assert(threwOnTimeout, 'Test 16f: a hanging rerank request is aborted after timeoutMs instead of hanging indefinitely');
+
+    // 16g. Incomplete provider results (fewer entries than input chunks) are rejected,
+    // instead of silently zero-filling the missing chunks, per review feedback
+    const incompleteFetch = (async () =>
+      new Response(JSON.stringify({ results: [{ index: 0, relevance_score: 0.9 }] }), { status: 200 })) as unknown as typeof fetch;
+    const incompleteFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: incompleteFetch });
+    let threwOnIncomplete = false;
+    try {
+      await incompleteFn('q', chunks);
+    } catch {
+      threwOnIncomplete = true;
+    }
+    assert(threwOnIncomplete, 'Test 16g: a response with fewer results than input chunks is rejected instead of zero-filling the rest');
+
+    // 16h. The abort timer stays armed through body parsing, not just until headers
+    // arrive, so a stalled response body is still bounded by timeoutMs, per review feedback
+    const stallingBodyFetch = ((_url: any, init: any) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: async () => new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal.reason));
+        }),
+        json: async () => new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal.reason));
+        }),
+      })) as unknown as typeof fetch;
+    const stallingFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: stallingBodyFetch, timeoutMs: 20 });
+    let threwOnStallingBody = false;
+    try {
+      await stallingFn('q', chunks);
+    } catch (e: any) {
+      threwOnStallingBody = /timed out/i.test(e.message);
+    }
+    assert(threwOnStallingBody, 'Test 16h: a stalled response body (headers ok, body hangs) is still bounded by timeoutMs');
   } catch (err: any) {
     assert(false, 'Test 16: Built-in Cohere/Voyage rerank provider adapters', err.message);
   }
