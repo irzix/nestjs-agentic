@@ -2,6 +2,7 @@ import type { MemoryRecord, SemanticMatch, SemanticStoreProvider } from '@nestjs
 import type { DocumentChunk } from '../interfaces/document.interface';
 import type { EmbeddingProvider } from '../interfaces/embedding.interface';
 import type { ScoredDocumentChunk, VectorStoreAdapter } from '../interfaces/vector-store.interface';
+import { reciprocalRankFusion } from '../utils/rrf-fusion';
 
 /**
  * Options for configuring HybridVectorStore.
@@ -12,6 +13,16 @@ export interface HybridVectorStoreOptions {
 
   /** Weight assigned to dense vector similarity vs sparse BM25 keyword match (0.0 to 1.0). Default: `0.5` */
   vectorWeight?: number;
+
+  /**
+   * How dense and sparse rankings are combined. `'weighted'` blends max-normalized
+   * raw scores; `'rrf'` uses Reciprocal Rank Fusion over the two rankers' rank
+   * positions instead, avoiding cross-scale score normalization. Default: `'weighted'`
+   */
+  fusionMethod?: 'weighted' | 'rrf';
+
+  /** RRF smoothing constant `k`, used only when `fusionMethod: 'rrf'`. Default: `60` */
+  rrfK?: number;
 
   /** Optional custom stop-words set to filter out during BM25 keyword matching. */
   stopWords?: Set<string> | string[];
@@ -45,6 +56,8 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
   private readonly bm25K1: number;
   private readonly bm25B: number;
   private readonly embeddingBatchSize: number;
+  private readonly fusionMethod: 'weighted' | 'rrf';
+  private readonly rrfK: number;
 
   /** Per-chunk term-frequency map, kept so `deleteChunk`/re-ingestion can decrement corpus stats without re-tokenizing. */
   private readonly chunkTermFreqs = new Map<string, Map<string, number>>();
@@ -62,6 +75,8 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     this.vectorWeight = options?.vectorWeight ?? 0.5;
     this.bm25K1 = options?.bm25K1 ?? 1.2;
     this.bm25B = options?.bm25B ?? 0.75;
+    this.fusionMethod = options?.fusionMethod ?? 'weighted';
+    this.rrfK = options?.rrfK ?? 60;
 
     const batchSize = options?.embeddingBatchSize ?? 100;
     if (!Number.isSafeInteger(batchSize) || batchSize <= 0) {
@@ -313,18 +328,52 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
       return { chunk, bm25Score, vectorScore };
     });
 
-    const maxBm = Math.max(...rawScores.map((s) => s.bm25Score), 0.0001);
-    const maxVec = Math.max(...rawScores.map((s) => s.vectorScore), 0.0001);
+    let scored: ScoredDocumentChunk[];
 
-    const scored = rawScores.map(({ chunk, bm25Score, vectorScore }) => {
-      const normBm = bm25Score / maxBm;
-      const normVec = vectorScore / maxVec;
-      const combinedScore = bmWeight * normBm + this.vectorWeight * normVec;
-      return { chunk, score: combinedScore };
-    });
+    if (this.fusionMethod === 'rrf') {
+      scored = this.fuseByRrf(rawScores, bmWeight);
+    } else {
+      const maxBm = Math.max(...rawScores.map((s) => s.bm25Score), 0.0001);
+      const maxVec = Math.max(...rawScores.map((s) => s.vectorScore), 0.0001);
+
+      scored = rawScores.map(({ chunk, bm25Score, vectorScore }) => {
+        const normBm = bm25Score / maxBm;
+        const normVec = vectorScore / maxVec;
+        const combinedScore = bmWeight * normBm + this.vectorWeight * normVec;
+        return { chunk, score: combinedScore };
+      });
+    }
 
     scored.sort((a, b) => b.score - a.score);
     return scored.filter((s) => s.score > 0).slice(0, limit);
+  }
+
+  /**
+   * Fuses the sparse (BM25) and dense (cosine) rankings by rank position via RRF,
+   * instead of blending their raw scores. Each ranker only ranks chunks it scored
+   * above zero, so a chunk absent from one ranking contributes nothing from it.
+   */
+  private fuseByRrf(
+    rawScores: Array<{ chunk: DocumentChunk; bm25Score: number; vectorScore: number }>,
+    bmWeight: number,
+  ): ScoredDocumentChunk[] {
+    const chunksById = new Map(rawScores.map((s) => [s.chunk.id, s.chunk]));
+
+    const bm25Ranked = rawScores
+      .filter((s) => s.bm25Score > 0)
+      .sort((a, b) => b.bm25Score - a.bm25Score)
+      .map((s) => s.chunk.id);
+    const vectorRanked = rawScores
+      .filter((s) => s.vectorScore > 0)
+      .sort((a, b) => b.vectorScore - a.vectorScore)
+      .map((s) => s.chunk.id);
+
+    const fused = reciprocalRankFusion([bm25Ranked, vectorRanked], {
+      k: this.rrfK,
+      weights: [bmWeight, this.vectorWeight],
+    });
+
+    return Array.from(fused.entries()).map(([id, score]) => ({ chunk: chunksById.get(id)!, score }));
   }
 
   /**
