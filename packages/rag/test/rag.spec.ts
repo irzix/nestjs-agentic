@@ -109,6 +109,52 @@ export async function runRAGTests() {
     assert(false, 'Test 4: KnowledgeBase Ingestion & Search', err.message);
   }
 
+  // TEST 4B: HybridVectorStore computes real BM25 (IDF-weighted), not plain term frequency
+  try {
+    const store = new HybridVectorStore({ vectorWeight: 0 }); // no embeddingProvider: isolates the sparse score
+
+    // "policy" appears in every chunk (high document frequency -> low IDF).
+    // "quota" appears only in chunkB (document frequency 1 -> high IDF).
+    await store.addChunks([
+      { id: 'chunkR', parentId: 'p1', content: 'policy policy policy policy policy', metadata: {} },
+      { id: 'chunkB', parentId: 'p1', content: 'policy quota shipment tracking system update', metadata: {} },
+      { id: 'filler1', parentId: 'p1', content: 'policy guidelines for account holders', metadata: {} },
+      { id: 'filler2', parentId: 'p1', content: 'policy applies to all users policy', metadata: {} },
+      { id: 'filler3', parentId: 'p1', content: 'policy update effective immediately', metadata: {} },
+      { id: 'filler4', parentId: 'p1', content: 'policy review scheduled next quarter policy', metadata: {} },
+    ]);
+
+    const results = await store.searchHybrid('policy quota', 2);
+
+    // Under the old TF-only formula (matchCount / tokens.length), chunkR
+    // scores 5/5 = 1.0 (every token matches) while chunkB scores 2/6 = 0.33
+    // (four of its six tokens are filler) -- chunkR would incorrectly rank
+    // first despite not containing "quota" at all. Real BM25's IDF term
+    // down-weights "policy" (present in all 6 chunks) and up-weights the
+    // rare, distinctive "quota" (present in only 1), so chunkB must rank
+    // above chunkR.
+    assert(
+      results[0]?.id === 'chunkB',
+      'Test 4Ba: Chunk containing the rare/distinctive term "quota" ranks first under real BM25',
+    );
+    assert(
+      results.findIndex((c) => c.id === 'chunkB') < results.findIndex((c) => c.id === 'chunkR'),
+      'Test 4Bb: Rare-term chunk outranks the common-term-repetition chunk',
+    );
+
+    // Deleting a chunk must decrement corpus document-frequency/token-count
+    // stats, not just remove it from the results -- otherwise IDF for terms
+    // that appeared only in the deleted chunk would stay stale.
+    store.deleteChunk('chunkB');
+    const afterDelete = await store.searchHybrid('quota', 5);
+    assert(
+      afterDelete.length === 0,
+      'Test 4Bc: Deleting the only chunk containing a term removes it from corpus stats (no stale matches)',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 4B: HybridVectorStore real BM25 scoring', err.message);
+  }
+
   // TEST 5: InMemoryKnowledgeGraphProvider Entity Traversal
   try {
     const graph = new InMemoryKnowledgeGraphProvider();

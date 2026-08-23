@@ -151,7 +151,7 @@ Goal: close governance-boundary gaps found in a post-GA audit of the v1.0.0 code
 Goal: bring `@nestjs-agentic/rag`'s retrieval and reranking up to what its own documentation has claimed since GA.
 
 - [ ] Implement real Reciprocal Rank Fusion (RRF) for combining dense and sparse result lists ([#130](https://github.com/irzix/nestjs-agentic/issues/130)).
-- [ ] Replace `HybridVectorStore`'s term-frequency-only sparse score with real BM25 (IDF, k1/b saturation) ([#131](https://github.com/irzix/nestjs-agentic/issues/131)).
+- [x] Replace `HybridVectorStore`'s term-frequency-only sparse score with real BM25 (IDF, k1/b saturation) ([#131](https://github.com/irzix/nestjs-agentic/issues/131)).
 - [ ] Ship built-in reranker provider adapters (Cohere, Voyage) and a `minScore` cutoff ([#132](https://github.com/irzix/nestjs-agentic/issues/132)).
 - [ ] Add an MMR (Maximal Marginal Relevance) diversity strategy to reduce near-duplicate chunks in context ([#133](https://github.com/irzix/nestjs-agentic/issues/133)).
 - [ ] Add an embedding cache and fix `HybridVectorStore.addChunks` to use batched `embedDocuments` ([#134](https://github.com/irzix/nestjs-agentic/issues/134)).
