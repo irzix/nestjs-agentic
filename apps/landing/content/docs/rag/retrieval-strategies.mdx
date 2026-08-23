@@ -16,6 +16,20 @@ Blends a document-level global embedding into each chunk vector to preserve full
 ### 3. `ParentChildHydrationStrategy`
 Works with chunks produced by `ParentChildSplitter`: indexes small sub-chunks (methods, paragraphs) for high vector search precision, but hydrates the full parent text (carried in `chunk.metadata.parentText`) when constructing the final context prompt.
 
+### 4. `MmrStrategy`
+A post-retrieval diversity strategy implementing Maximal Marginal Relevance: greedily selects chunks that are relevant to the query but dissimilar to chunks already selected, so near-duplicate results (e.g. overlapping parent/child chunks) don't crowd out distinct context.
+
+```typescript
+import { MmrStrategy } from '@nestjs-agentic/rag';
+
+const mmr = new MmrStrategy({
+  topK: 5,
+  lambda: 0.5, // 1 = pure relevance, 0 = pure diversity
+});
+```
+
+Relevance comes from `context.scores` (populated by `RAGPipeline` during retrieval). Chunks without an `embedding` still participate in MMR selection using their relevance score, they just skip the diversity comparison against other chunks. If no chunk in the set has an embedding at all, MMR has no diversity signal to work with and passes the incoming order through, capped at `topK`.
+
 Strategies aren't passed to `KnowledgeBase` directly — they're registered on a `RAGPipeline`, which runs pre-retrieval strategies, retrieves via the `KnowledgeBase`, then runs post-retrieval strategies:
 
 ```typescript

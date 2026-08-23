@@ -3,6 +3,7 @@ import type { DocumentChunk } from '../interfaces/document.interface';
 import type { EmbeddingProvider } from '../interfaces/embedding.interface';
 import type { ScoredDocumentChunk, VectorStoreAdapter } from '../interfaces/vector-store.interface';
 import { reciprocalRankFusion } from '../utils/rrf-fusion';
+import { cosineSimilarity } from '../utils/cosine-similarity';
 
 /**
  * Options for configuring HybridVectorStore.
@@ -311,19 +312,7 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     const rawScores = chunksToSearch.map((chunk) => {
       const bm25Score = this.bm25Score(chunk.id, queryTermCounts);
 
-      let vectorScore = 0;
-      if (queryVector && chunk.embedding && queryVector.length === chunk.embedding.length) {
-        let dotProduct = 0;
-        let normA = 0;
-        let normB = 0;
-        for (let i = 0; i < queryVector.length; i++) {
-          dotProduct += queryVector[i] * chunk.embedding[i];
-          normA += queryVector[i] * queryVector[i];
-          normB += chunk.embedding[i] * chunk.embedding[i];
-        }
-        const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-        vectorScore = denominator > 0 ? dotProduct / denominator : 0;
-      }
+      const vectorScore = queryVector && chunk.embedding ? cosineSimilarity(queryVector, chunk.embedding) : 0;
 
       return { chunk, bm25Score, vectorScore };
     });
