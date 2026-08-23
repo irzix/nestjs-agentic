@@ -7,6 +7,7 @@ export * from './factories/vector-store.factory';
 export * from './providers/mock-embedding.provider';
 export * from './providers/openai-embedding.adapter';
 export * from './providers/custom-embedding.adapter';
+export * from './providers/cached-embedding.provider';
 export * from './providers/cohere-rerank.provider';
 export * from './providers/voyage-rerank.provider';
 export * from './providers/rerank-response.util';

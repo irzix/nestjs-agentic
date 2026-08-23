@@ -1145,6 +1145,200 @@ export class BenchmarkService${i} {
     assert(false, 'Test 17: MmrStrategy diversity selection', err.message);
   }
 
+  // TEST 18: CachedEmbeddingProvider (#134)
+  try {
+    const { CachedEmbeddingProvider } = await import('../src');
+    const { InMemoryStateStore } = await import('@nestjs-agentic/core');
+
+    let callCount = 0;
+    const countingProvider = {
+      embedQuery: async (text: string) => {
+        callCount++;
+        return [text.length, 0];
+      },
+      embedDocuments: async (texts: string[]) => {
+        callCount++;
+        return texts.map((t) => [t.length, 0]);
+      },
+    };
+
+    // 18a. embedQuery: a cache hit skips the underlying provider call entirely
+    const cached = new CachedEmbeddingProvider({ provider: countingProvider });
+    const first = await cached.embedQuery('hello world');
+    assert(callCount === 1, 'Test 18a: embedQuery cache miss calls the underlying provider once');
+    const second = await cached.embedQuery('hello world');
+    assert(callCount === 1, 'Test 18a2: a repeated embedQuery for identical text is a cache hit, skipping the underlying provider');
+    assert(JSON.stringify(first) === JSON.stringify(second), 'Test 18a3: cached embedQuery returns the same embedding as the original call');
+
+    // 18b. embedDocuments: only uncached texts are batched to the underlying provider
+    callCount = 0;
+    const cached2 = new CachedEmbeddingProvider({ provider: countingProvider });
+    await cached2.embedDocuments(['aaa', 'bb']);
+    assert(callCount === 1, 'Test 18b: embedDocuments issues one batched call for all-uncached texts');
+    await cached2.embedDocuments(['aaa', 'bb', 'cccc']);
+    assert(callCount === 2, 'Test 18b2: a second call reuses cached entries and batches only the new uncached text');
+    const partialResult = await cached2.embedDocuments(['aaa', 'zzzzz']);
+    assert(
+      partialResult[0][0] === 3 && partialResult[1][0] === 5,
+      'Test 18b3: embedDocuments returns cached and freshly-embedded results in the correct input order',
+    );
+
+    // 18c. Distinct cacheNamespace values (e.g. different models/dimensions) never collide, even sharing one store
+    const store = new InMemoryStateStore();
+    const providerModelA = { embedQuery: async () => [1, 1], embedDocuments: async (t: string[]) => t.map(() => [1, 1]) };
+    const providerModelB = { embedQuery: async () => [2, 2], embedDocuments: async (t: string[]) => t.map(() => [2, 2]) };
+    const cachedA = new CachedEmbeddingProvider({ provider: providerModelA, store, cacheNamespace: 'model-a' });
+    const cachedB = new CachedEmbeddingProvider({ provider: providerModelB, store, cacheNamespace: 'model-b' });
+    const resultA = await cachedA.embedQuery('same text');
+    const resultB = await cachedB.embedQuery('same text');
+    assert(resultA[0] === 1 && resultB[0] === 2, 'Test 18c: distinct cacheNamespace values on a shared store do not collide for identical text');
+
+    // 18d. A pluggable StateStore backend (e.g. Redis-backed) is used instead of the in-memory LRU when provided
+    let storeGetCalls = 0;
+    let storeSetCalls = 0;
+    const spyStore = {
+      get: async (key: string) => { storeGetCalls++; return store.get(key); },
+      set: async (key: string, value: unknown, ttl?: number) => { storeSetCalls++; return store.set(key, value, ttl); },
+      delete: async (key: string) => store.delete(key),
+    };
+    const cachedWithStore = new CachedEmbeddingProvider({ provider: providerModelA, store: spyStore as any, cacheNamespace: 'spy-test' });
+    await cachedWithStore.embedQuery('store-backed text');
+    assert(storeGetCalls > 0 && storeSetCalls > 0, 'Test 18d: a provided StateStore backend is actually used for cache reads/writes');
+
+    // 18e. In-memory LRU eviction: the oldest entry is evicted once maxSize is exceeded
+    let lruCallCount = 0;
+    const lruProvider = { embedQuery: async (t: string) => { lruCallCount++; return [t.length, 0]; }, embedDocuments: async (t: string[]) => t.map((x) => [x.length, 0]) };
+    const lruCache = new CachedEmbeddingProvider({ provider: lruProvider, maxSize: 2 });
+    await lruCache.embedQuery('one');
+    await lruCache.embedQuery('two');
+    await lruCache.embedQuery('three'); // evicts 'one' (oldest)
+    const callsBeforeReCheck = lruCallCount;
+    await lruCache.embedQuery('one'); // should be a miss again, since it was evicted
+    assert(lruCallCount === callsBeforeReCheck + 1, 'Test 18e: the LRU cache evicts the oldest entry once maxSize is exceeded');
+
+    // 18f. maxSize is validated at construction
+    let rejectedMaxSize = false;
+    try {
+      new CachedEmbeddingProvider({ provider: countingProvider, maxSize: 0 });
+    } catch {
+      rejectedMaxSize = true;
+    }
+    assert(rejectedMaxSize, 'Test 18f: CachedEmbeddingProvider rejects a non-positive maxSize at construction');
+
+    // 18g. A mismatched embedDocuments response length from the underlying provider is rejected, not silently misapplied
+    const misalignedProvider = {
+      embedQuery: async () => [0],
+      embedDocuments: async () => [[1, 1]], // returns 1, regardless of input length
+    };
+    const misalignedCache = new CachedEmbeddingProvider({ provider: misalignedProvider });
+    let threwOnMisaligned = false;
+    try {
+      await misalignedCache.embedDocuments(['a', 'b']);
+    } catch {
+      threwOnMisaligned = true;
+    }
+    assert(threwOnMisaligned, 'Test 18g: a misaligned embedDocuments response length from the underlying provider throws instead of silently misapplying');
+
+    // 18h. maxSize is NOT validated when a store is provided, since it's documented as ignored in that case (review feedback)
+    let rejectedZeroWithStore = false;
+    try {
+      new CachedEmbeddingProvider({ provider: countingProvider, store: new InMemoryStateStore(), maxSize: 0 });
+    } catch {
+      rejectedZeroWithStore = true;
+    }
+    assert(!rejectedZeroWithStore, "Test 18h: maxSize: 0 is accepted when a store is provided, matching the documented 'ignored' behavior");
+
+    // 18i. Duplicate texts within one embedDocuments call are deduplicated, not re-embedded (review feedback)
+    let dedupCallCount = 0;
+    const dedupProvider = {
+      embedQuery: async (t: string) => [t.length, 0],
+      embedDocuments: async (texts: string[]) => { dedupCallCount += texts.length; return texts.map((t) => [t.length, 0]); },
+    };
+    const dedupCache = new CachedEmbeddingProvider({ provider: dedupProvider });
+    const dedupResult = await dedupCache.embedDocuments(['same', 'same', 'different']);
+    assert(dedupCallCount === 2, 'Test 18i: duplicate texts within one embedDocuments call are sent to the provider only once');
+    assert(
+      dedupResult[0][0] === 4 && dedupResult[1][0] === 4 && dedupResult[2][0] === 9,
+      'Test 18i2: deduplicated results are still correctly assigned back to every original index',
+    );
+
+    // 18j. embedQuery and embedDocuments use separate cache entries for identical text (review feedback)
+    const modeProvider = {
+      embedQuery: async () => [111],
+      embedDocuments: async (texts: string[]) => texts.map(() => [222]),
+    };
+    const modeCache = new CachedEmbeddingProvider({ provider: modeProvider });
+    const queryResult = await modeCache.embedQuery('shared text');
+    const docResult = (await modeCache.embedDocuments(['shared text']))[0];
+    assert(
+      queryResult[0] === 111 && docResult[0] === 222,
+      'Test 18j: embedQuery and embedDocuments do not share a cache entry for identical text',
+    );
+
+    // 18k. Concurrent embedQuery calls for the same uncached text coalesce into one provider call (review feedback)
+    let concurrentCallCount = 0;
+    const concurrentProvider = {
+      embedQuery: async (t: string) => {
+        concurrentCallCount++;
+        await new Promise((r) => setTimeout(r, 5));
+        return [t.length, 0];
+      },
+      embedDocuments: async (t: string[]) => t.map((x) => [x.length, 0]),
+    };
+    const concurrentCache = new CachedEmbeddingProvider({ provider: concurrentProvider });
+    const [concA, concB] = await Promise.all([concurrentCache.embedQuery('concurrent'), concurrentCache.embedQuery('concurrent')]);
+    assert(concurrentCallCount === 1, 'Test 18k: two concurrent embedQuery calls for the same uncached text coalesce into a single provider call');
+    assert(JSON.stringify(concA) === JSON.stringify(concB), 'Test 18k2: coalesced concurrent calls return equivalent results');
+
+    // 18l. Returned/cached embeddings are copies: mutating a returned array does not corrupt the cache (review feedback)
+    const mutTestCache = new CachedEmbeddingProvider({ provider: countingProvider });
+    const originalCallCount = callCount;
+    const returned1 = await mutTestCache.embedQuery('mutation test');
+    returned1[0] = -99999; // mutate the caller's copy
+    const returned2 = await mutTestCache.embedQuery('mutation test');
+    assert(returned2[0] !== -99999, 'Test 18l: mutating a returned embedding does not corrupt the cached value for subsequent calls');
+    assert(callCount === originalCallCount + 1, 'Test 18l2: the second call was still a cache hit (mutation did not force a re-embed)');
+
+    // 18m. ttlSeconds is validated at construction (review feedback)
+    let rejectedTtl = false;
+    try {
+      new CachedEmbeddingProvider({ provider: countingProvider, store: new InMemoryStateStore(), ttlSeconds: -5 });
+    } catch {
+      rejectedTtl = true;
+    }
+    assert(rejectedTtl, 'Test 18m: CachedEmbeddingProvider rejects a negative ttlSeconds at construction');
+
+    // 18n. A store with a slow set() must not leave a gap where a concurrent embedDocuments
+    // call for the same text sees neither a cache hit nor an in-flight entry (review feedback)
+    let slowStoreProviderCalls = 0;
+    const slowSetStore = {
+      get: async () => undefined,
+      set: async (_key: string, _value: unknown) => {
+        await new Promise((r) => setTimeout(r, 20)); // slow persistence, e.g. network-backed Redis
+      },
+      delete: async () => {},
+    };
+    const slowStoreProvider = {
+      embedQuery: async (t: string) => [t.length, 0],
+      embedDocuments: async (texts: string[]) => {
+        slowStoreProviderCalls++;
+        await new Promise((r) => setTimeout(r, 5));
+        return texts.map((t) => [t.length, 0]);
+      },
+    };
+    const slowStoreCache = new CachedEmbeddingProvider({ provider: slowStoreProvider, store: slowSetStore as any });
+    const call1 = slowStoreCache.embedDocuments(['race text']);
+    await new Promise((r) => setTimeout(r, 10)); // provider resolved (5ms), but set() still pending (20ms)
+    const call2 = slowStoreCache.embedDocuments(['race text']);
+    await Promise.all([call1, call2]);
+    assert(
+      slowStoreProviderCalls === 1,
+      'Test 18n: a concurrent embedDocuments call arriving while a slow store.set() is still pending joins the in-flight request instead of re-embedding',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 18: CachedEmbeddingProvider', err.message);
+  }
+
   console.log(`\n  📊 Core RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');
