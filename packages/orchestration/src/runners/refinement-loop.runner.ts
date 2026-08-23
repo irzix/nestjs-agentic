@@ -1,4 +1,5 @@
 import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
+import { scopeKey } from '@nestjs-agentic/core';
 import {
   MissingFeedbackProviderError,
   RefinementBudgetExceededError,
@@ -40,20 +41,14 @@ export class RefinementLoopRunner {
     };
   }
 
-  /**
-   * Generates a unique checkpoint storage key scoped by tenant, session, and agent name.
-   */
+  /** Checkpoint storage key scoped by tenant, session, and agent name. */
   private getCheckpointKey(parentContext: AgentContext, agentName: string): string {
-    const tenantId = parentContext.security.tenantId ?? 'default';
-    return `agentic:${tenantId}:refinement:${parentContext.sessionId}:${agentName}:checkpoint`;
+    return `agentic:refinement:checkpoint:${scopeKey(parentContext.security.tenantId, parentContext.sessionId, agentName)}`;
   }
 
-  /**
-   * Generates a unique concurrency lock key scoped by tenant, session, and agent name.
-   */
+  /** Concurrency lock key scoped by tenant, session, and agent name. */
   private getLockKey(parentContext: AgentContext, agentName: string): string {
-    const tenantId = parentContext.security.tenantId ?? 'default';
-    return `agentic:${tenantId}:refinement:${parentContext.sessionId}:${agentName}:lock`;
+    return `agentic:refinement:lock:${scopeKey(parentContext.security.tenantId, parentContext.sessionId, agentName)}`;
   }
 
   /**

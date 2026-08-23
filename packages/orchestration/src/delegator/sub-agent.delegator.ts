@@ -1,4 +1,5 @@
 import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
+import { scopeKey } from '@nestjs-agentic/core';
 import { CapabilityEscalationError, MaxDelegationDepthExceededError } from '../errors';
 import type {
   AgenticInternalContext,
@@ -112,8 +113,7 @@ export class SubAgentDelegator {
         : undefined;
 
     // 4. Versioned Session Memory Namespacing
-    const iterSuffix = iteration !== undefined ? `:iter_${iteration}` : '';
-    const subSessionId = `${parentContext.sessionId}:${task.agentName}${iterSuffix}`;
+    const subSessionId = scopeKey(parentContext.sessionId, task.agentName, iteration);
 
     // 5. Clean Structured Namespaced Metadata
     const childData: Record<string, unknown> = {

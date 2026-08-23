@@ -11,6 +11,7 @@ import {
 import { ToolDiscoveryService } from '../discovery/tool-discovery.service';
 import type { DiscoveredTool } from '../discovery/tool-discovery.service';
 import { auditEnvelope } from '../interfaces';
+import { scopeKey } from '../utils/scope-key';
 import type {
   AgentContext,
   ApprovalStore,
@@ -71,6 +72,27 @@ export class LocalToolProvider {
     }
   }
 
+  /** Scopes an idempotency key by tenant using the shared collision-free `scopeKey`. */
+  private scopedIdempotencyKey(agentContext: AgentContext, idempotencyKey: string): string {
+    return scopeKey(agentContext.security.tenantId, idempotencyKey);
+  }
+
+  /** Resolves and tenant-scopes the caller-supplied idempotency key, if any. */
+  private resolveIdempotencyKey(
+    args: Record<string, unknown> | undefined,
+    agentContext: AgentContext,
+  ): string | undefined {
+    const fromArgs = args?.idempotencyKey;
+    const fromContext = agentContext.data?.idempotencyKey;
+    const raw = typeof fromArgs === 'string' && fromArgs ? fromArgs : fromContext;
+
+    if (typeof raw !== 'string' || !raw) {
+      return undefined;
+    }
+
+    return this.scopedIdempotencyKey(agentContext, raw);
+  }
+
   /**
    * Builds policy-guarded tool closures for one agent turn.
    * `agentName` is stored on any `PendingApproval` created while executing
@@ -103,19 +125,8 @@ export class LocalToolProvider {
   }
 
   /**
-   * Invokes a tool method directly, bypassing *pre-execution* policy evaluation.
-   *
-   * Used to resolve an already-approved `PendingApproval`: the policy that
-   * required approval already ran once, and a human decision now stands in
-   * for it. Any policies declared after it in the pre-execution chain were
-   * never evaluated originally and are not evaluated here either, matching
-   * prior behavior.
-   *
-   * Output Rails (`evaluateOutput`) are **not** skipped: an approved call is
-   * often the most sensitive one a tool makes, and its result still passes
-   * through the same `evaluateOutput` chain that a normal `allow`-decision
-   * call would, so `SecretRedactionPolicy`/`CanaryDetectionPolicy`/custom
-   * output rails still see and can sanitize or deny the result.
+   * Invokes an already-approved tool, skipping pre-execution policy checks
+   * (already satisfied by the approval) but still running Output Rails.
    */
   async invokeApprovedTool(
     toolSetTokensOrInstances: (object | Function)[],
@@ -138,8 +149,7 @@ export class LocalToolProvider {
     }
     const { tool, allPolicyConstructors } = discovered;
 
-    const idempotencyKey =
-      (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
+    const idempotencyKey = this.resolveIdempotencyKey(args, agentContext);
     if (idempotencyKey && this.idempotencyStore) {
       const cached = await this.idempotencyStore.get(idempotencyKey);
       if (cached) return cached.result;
@@ -188,13 +198,7 @@ export class LocalToolProvider {
     return undefined;
   }
 
-  /**
-   * Runs the post-execution Output Rail chain (`evaluateOutput`) against a
-   * tool's execution result, applying `sanitize`/`deny`/`allow` decisions and
-   * recording the corresponding audit events. Shared by the normal
-   * policy-guarded closure and `invokeApprovedTool`, so an approved call's
-   * result is never exempt from output sanitization.
-   */
+  /** Runs `evaluateOutput` for each policy, applying sanitize/deny and recording audit events. */
   private async runOutputRails(
     executionResult: ToolExecutionResult,
     allPolicyConstructors: PolicyConstructor[],
@@ -317,8 +321,7 @@ export class LocalToolProvider {
           throw new ExecutionLimitExceededError('timeout', 0);
         }
 
-        const idempotencyKey =
-          (args?.idempotencyKey as string) || (agentContext.data?.idempotencyKey as string);
+        const idempotencyKey = this.resolveIdempotencyKey(args, agentContext);
         if (idempotencyKey && this.idempotencyStore) {
           const cached = await this.idempotencyStore.get(idempotencyKey);
           if (cached) return cached.result;

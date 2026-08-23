@@ -55,6 +55,7 @@ import {
   type SessionStore,
 } from '../interfaces/session.interface';
 import { trimHistory, withoutSystemMessages } from '../utils/session-history';
+import { scopeKey } from '../utils/scope-key';
 import type { ModelAdapter, ModelMessage, ModelUsage } from '../interfaces/model.interface';
 import { ObserverNotifier } from '../observers/observer-notifier';
 
@@ -208,10 +209,13 @@ export class AgentRunner {
   /**
    * Conversation history is scoped by tenant as well as session, so the same
    * session identifier used by two tenants can never share a transcript.
+   * Uses `scopeKey` rather than plain concatenation, since a `:` inside
+   * `tenantId` could otherwise collide two different (tenant, session) pairs
+   * onto the same storage key.
    */
   private sessionKey(context: AgentContext): string {
     const tenantId = context.security.tenantId;
-    return tenantId ? `${tenantId}:${context.sessionId}` : context.sessionId;
+    return tenantId ? scopeKey(tenantId, context.sessionId) : context.sessionId;
   }
 
   private resolveSessionStore(): SessionStore | undefined {

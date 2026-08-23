@@ -12,6 +12,7 @@ import {
   ModelRequest,
   ModelResponse,
   Param,
+  scopeKey,
   Tool,
   ToolDiscoveryService,
   ToolSet,
@@ -244,7 +245,10 @@ export async function runOrchestrationTests() {
 
     // Verify context received by sub-agent
     const subContext = capturedContexts[capturedContexts.length - 1];
-    assert(subContext.sessionId === 'sess_p1:sub_agent_a:iter_2', 'SessionId namespaced correctly');
+    assert(
+      subContext.sessionId === scopeKey('sess_p1', 'sub_agent_a', 2),
+      'SessionId namespaced correctly',
+    );
     assert(subContext.security.tenantId === 'tenant_acme', 'TenantId strictly preserved from parent');
     assert(subContext.security.userId === 'usr_owner', 'UserId preserved');
     assert(subContext.parentTraceId === 'trace_parent_001', 'ParentTraceId propagated');
@@ -1211,7 +1215,7 @@ export async function runOrchestrationTests() {
     };
 
     // Simulate process A holding lock
-    const lockKey = `agentic:tenant_rel:refinement:sess_safe_release:writer_agent:lock`;
+    const lockKey = `agentic:refinement:lock:${scopeKey('tenant_rel', 'sess_safe_release', 'writer_agent')}`;
     await stateStore.set(lockKey, 'owner_lock_A', 60);
 
     // Simulate process B attempting to release process A's lock with wrong lockId
@@ -1243,7 +1247,7 @@ export async function runOrchestrationTests() {
       security: { tenantId: 'tenant_occ' },
     };
 
-    const checkpointKey = `agentic:tenant_occ:refinement:sess_occ_test:writer_agent:checkpoint`;
+    const checkpointKey = `agentic:refinement:checkpoint:${scopeKey('tenant_occ', 'sess_occ_test', 'writer_agent')}`;
 
     // Save checkpoint sequence 5
     await stateStore.set(checkpointKey, {
@@ -1882,7 +1886,7 @@ export async function runOrchestrationTests() {
     };
 
     // Pre-populate checkpoint simulating crash after phase 1 and phase 2
-    await stateStore.set(`agentic:tenant_resume:sop:sess_sop_resume_test:checkpoint`, {
+    await stateStore.set(`agentic:sop:checkpoint:${scopeKey('tenant_resume', 'sess_sop_resume_test')}`, {
       version: 1,
       sessionId: 'sess_sop_resume_test',
       tenantId: 'tenant_resume',

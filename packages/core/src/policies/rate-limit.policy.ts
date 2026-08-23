@@ -1,4 +1,5 @@
 import type { AgentContext, PolicyResult, ToolPolicy } from '../interfaces';
+import { scopeKey } from '../utils/scope-key';
 
 /**
  * Options for configuring sliding-window rate limit policy.
@@ -36,7 +37,7 @@ export class RateLimitPolicy implements ToolPolicy {
     toolName: string,
     _args?: Record<string, unknown>,
   ): Promise<PolicyResult> {
-    const key = `${ctx.security.tenantId || 'global'}:${ctx.security.userId || 'anon'}:${toolName}`;
+    const key = scopeKey(ctx.security.tenantId, ctx.security.userId, toolName);
     const now = Date.now();
     const windowMs = 60 * 1000;
 
