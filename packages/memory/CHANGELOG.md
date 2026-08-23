@@ -1,5 +1,7 @@
 # @nestjs-agentic/memory
 
+## 1.0.1
+
 ## 0.7.0
 
 ### Minor Changes

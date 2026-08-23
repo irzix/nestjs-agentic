@@ -1,5 +1,15 @@
 # @nestjs-agentic/evaluation
 
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [5fc21d7]
+- Updated dependencies [ff8982e]
+- Updated dependencies [816fa8f]
+- Updated dependencies [ebc408b]
+  - @nestjs-agentic/core@1.0.1
+
 ## 0.7.0
 
 ### Minor Changes

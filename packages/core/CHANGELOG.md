@@ -1,5 +1,38 @@
 # @nestjs-agentic/core
 
+## 1.0.1
+
+### Patch Changes
+
+- 5fc21d7: Fix `LocalToolProvider.invokeApprovedTool()` executing an approved tool and returning its raw result without ever running the post-execution Output Rail chain (`evaluateOutput`). An approved call is often the most sensitive one a tool makes, and its result now passes through the same `evaluateOutput` chain as a normal `allow`-decision call, so `SecretRedactionPolicy`, `CanaryDetectionPolicy`, and custom output rails can no longer be bypassed by requiring human approval.
+
+  - `invokeApprovedTool` now accepts an optional `agentName` parameter, threaded through from `AgentRunner.settleApproval()` so approval-resume audit events (`tool_output_policy_decision`) carry the correct agent name.
+  - Extracted the shared output-rail loop into a private `runOutputRails()` method used by both the normal policy-guarded tool closure and `invokeApprovedTool`, so the two paths cannot drift again.
+  - Pre-execution policy evaluation on the approval-resume path is unchanged: policies before the one that required approval already ran once, and are not re-evaluated on resume, matching prior behavior.
+
+- ff8982e: Fix `IdempotencyStore` lookups and saves in `LocalToolProvider` being keyed on the raw caller-supplied `idempotencyKey` alone, unlike `SessionStore` which already scopes by tenant. Two tenants supplying the same literal `idempotencyKey` (accidentally or deliberately) could read and cache each other's `ToolExecutionResult`, including its `data` payload — a cross-tenant data leak through a governance primitive.
+
+  - `LocalToolProvider` now namespaces every idempotency key by tenant before it reaches the `IdempotencyStore`, on both the normal policy-guarded tool path and the approval-resume path (`invokeApprovedTool`).
+  - Added a new exported `scopeKey(...parts)` utility that builds a collision-free composite key by JSON-encoding the segment tuple, rather than plain `:`-delimited concatenation — a `:` inside a tenant id or session id could otherwise let two different segment combinations collide onto the same store key. Also applied it to `AgentRunner.sessionKey()` and `RateLimitPolicy`, which had the same delimiter-collision exposure.
+  - Added a tenant-isolation assertion group to `runIdempotencyStoreContract`, mirroring the existing tenant-isolation check in `runSessionStoreContract`: two records saved under distinct tenant-scoped keys must not collide.
+  - Added regression tests proving two tenants using the same literal `idempotencyKey` (or session id) execute and cache independently.
+
+- 816fa8f: Fix Output Rails (`ToolPolicy.evaluateOutput`) never running when a tool throws, so a thrown error's message (connection strings, upstream response bodies, API keys — exactly what `SecretRedactionPolicy`/`CanaryDetectionPolicy` are designed to catch) was reported to the model completely unsanitized.
+
+  - Added an optional `ResolvedTool.sanitizeErrorMessage(rawMessage, args)` hook. `LocalToolProvider` implements it by running the tool's attached policies' `evaluateOutput` against the error message (wrapped as `{ error: message }`), applying `sanitize`/`deny` the same way it does for a successful result's `data`.
+  - `AgentExecutor.toFailurePayload()` now calls this hook (when the tool provides one) before truncating the message to 500 characters. This is a fail-closed path: if the sanitizer itself throws (a broken or misconfigured policy), the raw message is replaced with a generic, non-sensitive placeholder rather than forwarded unsanitized — a broken policy must never be worse than no policy at all.
+  - Only applies to `toolErrorHandling: 'report'` (the default). In `'throw'` mode the original exception propagates unmodified, since the run ends before anything would be reported to the model.
+  - Providers without Output Rails (e.g. `McpToolProvider`) simply omit the hook; their error messages are unaffected.
+  - Added regression tests proving (1) a tool that throws an error containing a Postgres connection string with a password has that string redacted before it reaches the model, and (2) when the sanitizer itself throws, a generic fail-closed message is reported instead of the raw error.
+
+- ebc408b: Fix `RateLimitPolicy`'s shared history `Map` growing unboundedly. A key (`scopeKey(tenantId, userId, toolName)`) was created on first call and never removed, even once every timestamp in its window had expired — every distinct (tenant, user, tool) combination ever seen stayed in memory for the life of the process.
+
+  - Added an opportunistic sweep, run at most once per `sweepIntervalMs` (default 5 minutes, configurable, `0` to sweep on every call), that evicts any history entry whose entire window has fully expired rather than just filtering its (now-empty) timestamp array.
+  - The sweep runs lazily on the next `evaluate()` call after the interval elapses — not on a `setInterval` timer — so it never keeps the process alive and needs no explicit shutdown/cleanup.
+  - Added regression tests proving a new combination adds exactly one history entry, and that a manually-expired entry is fully evicted (not just emptied) on the next sweep.
+
+  Distributed (Redis-backed) rate limiting across multiple instances remains tracked separately as forward work in issue #142 — this only fixes the in-process memory growth, which was a real bug independent of the distributed-vs-local question.
+
 ## 0.7.0
 
 ### Minor Changes
