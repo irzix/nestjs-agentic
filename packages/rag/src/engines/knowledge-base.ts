@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { Document, DocumentChunk, DocumentSplitter } from '../interfaces/document.interface';
-import type { VectorStoreAdapter } from '../interfaces/vector-store.interface';
+import type { ScoredDocumentChunk, VectorStoreAdapter } from '../interfaces/vector-store.interface';
 import { SemanticDocumentSplitter } from '../splitters/semantic-document.splitter';
 import { HybridVectorStore } from '../stores/hybrid-vector.store';
 
@@ -80,6 +80,32 @@ export class KnowledgeBase {
    */
   async queryChunks(query: string, limit = 5, filter?: Record<string, unknown>): Promise<DocumentChunk[]> {
     return this.vectorStore.searchChunks(query, limit, filter);
+  }
+
+  /**
+   * Same as `queryChunks`, but also returns each chunk's relevance score.
+   *
+   * Uses the adapter's `searchChunksScored` when available. Otherwise falls
+   * back to a synthetic descending rank-based score (`1 / (rank + 1)`), so
+   * callers always get a usable score even from an adapter that can't
+   * produce a real one.
+   *
+   * @param query Search query prompt string.
+   * @param limit Maximum number of matching chunks to return. Default: `5`
+   * @param filter Key-value filter metadata object for multi-tenant isolation or tags.
+   * @returns Promise resolving to an array of chunks paired with their relevance score.
+   */
+  async queryChunksScored(
+    query: string,
+    limit = 5,
+    filter?: Record<string, unknown>,
+  ): Promise<ScoredDocumentChunk[]> {
+    if (this.vectorStore.searchChunksScored) {
+      return this.vectorStore.searchChunksScored(query, limit, filter);
+    }
+
+    const chunks = await this.vectorStore.searchChunks(query, limit, filter);
+    return chunks.map((chunk, rank) => ({ chunk, score: 1 / (rank + 1) }));
   }
 
   /**

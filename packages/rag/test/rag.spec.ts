@@ -320,6 +320,46 @@ export async function runRAGTests() {
     assert(false, 'Test 6: RAGPipeline Execution', err.message);
   }
 
+  // TEST 6C: RAGPipeline populates ctx.scores from real retrieval scores (#129)
+  try {
+    const mockEmbed = new MockEmbeddingProvider();
+    const store = new HybridVectorStore({ embeddingProvider: mockEmbed });
+    const kb = new KnowledgeBase({ vectorStore: store });
+
+    await kb.ingestDocument({
+      title: 'Refund Policy',
+      rawContent: 'Refund approval requires manager sign-off for high value orders.',
+    });
+    await kb.ingestDocument({
+      title: 'Unrelated Notes',
+      rawContent: 'Company holiday schedule for next year.',
+    });
+
+    const pipeline = new RAGPipeline({ knowledgeBase: kb });
+    const context = await pipeline.executePipeline('refund approval');
+
+    assert(context.scores instanceof Map, 'Test 6Ca: scores is a Map after executePipeline');
+    assert((context.scores?.size ?? 0) > 0, 'Test 6Cb: scores is non-empty for a matching query');
+    assert(
+      context.chunks!.every((c) => context.scores!.has(c.id)),
+      'Test 6Cc: every retrieved chunk has a corresponding score entry',
+    );
+
+    // Real scores now drive UShapedContextStrategy's ordering, instead of it
+    // trusting whatever order the chunks arrived in.
+    const uShaped = new (await import('../src')).UShapedContextStrategy();
+    const uContext = uShaped.process(context);
+    const scoreOf = (id: string) => context.scores!.get(id) ?? 0;
+    if (uContext.chunks!.length > 1) {
+      assert(
+        scoreOf(uContext.chunks![0].id) >= scoreOf(uContext.chunks![uContext.chunks!.length - 1].id),
+        'Test 6Cd: UShapedContextStrategy places the highest-scored chunk ahead of the lowest',
+      );
+    }
+  } catch (err: any) {
+    assert(false, 'Test 6C: RAGPipeline populates ctx.scores', err.message);
+  }
+
   // TEST 7: SemanticStoreProvider Integration with @nestjs-agentic/memory
   try {
     const mockEmbed = new MockEmbeddingProvider();

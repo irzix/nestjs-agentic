@@ -75,16 +75,23 @@ export class RAGPipeline {
     // Stage 2: Document Chunk Retrieval across original query and expanded sub-queries
     const queryList = [ctx.query, ...(ctx.expandedQueries || [])];
     const retrievedChunksMap = new Map<string, DocumentChunk>();
+    const scoresMap = new Map<string, number>();
 
     for (const q of queryList) {
       if (!q || typeof q !== 'string' || !q.trim()) continue;
-      const chunks = await this.knowledgeBase.queryChunks(q, topK, ctx.filter);
-      for (const c of chunks) {
-        retrievedChunksMap.set(c.id, c);
+      const scoredChunks = await this.knowledgeBase.queryChunksScored(q, topK, ctx.filter);
+      for (const { chunk, score } of scoredChunks) {
+        retrievedChunksMap.set(chunk.id, chunk);
+        // A chunk matched by more than one query variant keeps its best score.
+        const existing = scoresMap.get(chunk.id);
+        if (existing === undefined || score > existing) {
+          scoresMap.set(chunk.id, score);
+        }
       }
     }
 
     ctx.chunks = Array.from(retrievedChunksMap.values());
+    ctx.scores = scoresMap;
 
     // Stage 3: Post-retrieval strategies (Reranking, Hydration, Contextual Compression, Graph Facts)
     for (const strat of this.postRetrievalStrategies) {
