@@ -1,5 +1,5 @@
 import type { RerankFunction } from '../strategies/reranker.strategy';
-import { mapIndexedRerankScores } from './rerank-response.util';
+import { mapIndexedRerankScores, resolveFetchFn, validateTimeoutMs } from './rerank-response.util';
 
 /** Options for configuring the Cohere Rerank provider. */
 export interface CohereRerankProviderOptions {
@@ -33,10 +33,15 @@ export interface CohereRerankProviderOptions {
  */
 export function createCohereRerankProvider(options?: CohereRerankProviderOptions): RerankFunction {
   const apiKey = options?.apiKey || (typeof process !== 'undefined' ? process.env?.COHERE_API_KEY || '' : '');
+  if (!apiKey) {
+    throw new Error(
+      'createCohereRerankProvider: no API key configured. Pass { apiKey } or set COHERE_API_KEY.',
+    );
+  }
   const model = options?.model || 'rerank-v3.5';
   const baseUrl = (options?.baseUrl || 'https://api.cohere.com/v2').replace(/\/+$/, '');
-  const fetchFn = options?.fetchFn || globalThis.fetch;
-  const timeoutMs = options?.timeoutMs ?? 30000;
+  const fetchFn = resolveFetchFn(options?.fetchFn, 'createCohereRerankProvider');
+  const timeoutMs = validateTimeoutMs(options?.timeoutMs, 'createCohereRerankProvider');
 
   return async (query, chunks) => {
     if (chunks.length === 0) return [];

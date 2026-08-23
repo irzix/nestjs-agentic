@@ -50,3 +50,23 @@ export function mapIndexedRerankScores(
 
   return scores;
 }
+
+/** Resolves the fetch implementation to use, failing fast with a clear config error instead of a later opaque TypeError. */
+export function resolveFetchFn(fetchFn: typeof fetch | undefined, providerLabel: string): typeof fetch {
+  const resolved = fetchFn || globalThis.fetch;
+  if (typeof resolved !== 'function') {
+    throw new Error(
+      `${providerLabel}: no fetch implementation available. Pass { fetchFn } or use a runtime with a global fetch.`,
+    );
+  }
+  return resolved;
+}
+
+/** Validates a request timeout option: must be a finite, positive number. */
+export function validateTimeoutMs(timeoutMs: number | undefined, providerLabel: string): number {
+  const resolved = timeoutMs ?? 30000;
+  if (!Number.isFinite(resolved) || resolved <= 0) {
+    throw new RangeError(`${providerLabel}: timeoutMs must be a finite positive number, got ${resolved}`);
+  }
+  return resolved;
+}

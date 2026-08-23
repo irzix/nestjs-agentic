@@ -998,6 +998,41 @@ export class BenchmarkService${i} {
       threwOnStallingBody = /timed out/i.test(e.message);
     }
     assert(threwOnStallingBody, 'Test 16h: a stalled response body (headers ok, body hangs) is still bounded by timeoutMs');
+
+    // 16i. Missing/empty API key is rejected at construction with a clear config
+    // error, instead of silently sending an empty Bearer credential (review feedback)
+    let rejectedEmptyKey = false;
+    try {
+      createCohereRerankProvider({ apiKey: '', fetchFn: cohereFetch });
+    } catch {
+      rejectedEmptyKey = true;
+    }
+    assert(rejectedEmptyKey, 'Test 16i: createCohereRerankProvider rejects a missing/empty API key at construction');
+
+    // 16j. Invalid timeoutMs (negative/NaN) is rejected at construction (review feedback)
+    let rejectedBadTimeout = false;
+    try {
+      createCohereRerankProvider({ apiKey: 'k', timeoutMs: -5 });
+    } catch {
+      rejectedBadTimeout = true;
+    }
+    assert(rejectedBadTimeout, 'Test 16j: createCohereRerankProvider rejects a non-positive timeoutMs at construction');
+
+    // 16k. Missing fetch implementation is rejected with a clear config error
+    // instead of failing later with an opaque TypeError (review feedback)
+    const { resolveFetchFn } = await import('../src');
+    const originalFetch = globalThis.fetch;
+    // @ts-expect-error - intentionally simulating a runtime without global fetch
+    globalThis.fetch = undefined;
+    let rejectedNoFetch = false;
+    try {
+      resolveFetchFn(undefined, 'test');
+    } catch {
+      rejectedNoFetch = true;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert(rejectedNoFetch, 'Test 16k: resolveFetchFn rejects when neither fetchFn nor a global fetch is available');
   } catch (err: any) {
     assert(false, 'Test 16: Built-in Cohere/Voyage rerank provider adapters', err.message);
   }

@@ -9,6 +9,7 @@ export * from './providers/openai-embedding.adapter';
 export * from './providers/custom-embedding.adapter';
 export * from './providers/cohere-rerank.provider';
 export * from './providers/voyage-rerank.provider';
+export * from './providers/rerank-response.util';
 export * from './splitters/semantic-document.splitter';
 export * from './splitters/parent-child.splitter';
 export * from './splitters/ast-codebase.splitter';

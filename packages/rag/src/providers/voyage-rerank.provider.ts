@@ -1,5 +1,5 @@
 import type { RerankFunction } from '../strategies/reranker.strategy';
-import { mapIndexedRerankScores } from './rerank-response.util';
+import { mapIndexedRerankScores, resolveFetchFn, validateTimeoutMs } from './rerank-response.util';
 
 /** Voyage's documented hard limit on the number of documents per rerank request. */
 const VOYAGE_MAX_DOCUMENTS = 1000;
@@ -40,10 +40,15 @@ export interface VoyageRerankProviderOptions {
  */
 export function createVoyageRerankProvider(options?: VoyageRerankProviderOptions): RerankFunction {
   const apiKey = options?.apiKey || (typeof process !== 'undefined' ? process.env?.VOYAGE_API_KEY || '' : '');
+  if (!apiKey) {
+    throw new Error(
+      'createVoyageRerankProvider: no API key configured. Pass { apiKey } or set VOYAGE_API_KEY.',
+    );
+  }
   const model = options?.model || 'rerank-2';
   const baseUrl = (options?.baseUrl || 'https://api.voyageai.com/v1').replace(/\/+$/, '');
-  const fetchFn = options?.fetchFn || globalThis.fetch;
-  const timeoutMs = options?.timeoutMs ?? 30000;
+  const fetchFn = resolveFetchFn(options?.fetchFn, 'createVoyageRerankProvider');
+  const timeoutMs = validateTimeoutMs(options?.timeoutMs, 'createVoyageRerankProvider');
 
   return async (query, chunks) => {
     if (chunks.length === 0) return [];
