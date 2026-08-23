@@ -7,9 +7,23 @@ description: Dialectic cross-examination where specialist agents challenge each 
 
 Single models suffer from confirmation bias. When multiple agents review a complex artifact independently, disagreements often emerge (e.g. Security says "BLOCK", Performance says "OPTIMAL").
 
-`DebateRoundRunner` conducts structured debate rounds:
+`DebateRunner` conducts structured, multi-round debates:
 
-1. **Round 1 (Independent Assessment)**: Specialists produce baseline scores and findings.
-2. **Variance Check**: If assessment scores diverge significantly (variance exceeding configured threshold), Round 2 is triggered.
-3. **Round 2 (Cross-Examination)**: Each agent receives the peer reviews of the other specialists and must either defend, modify, or concede their score.
-4. **Synthesis**: The lead synthesizer reconciles the final consensus.
+1. **Round 1 (Independent Assessment)**: All debaters respond to the initial message in parallel via `ParallelSubAgentRunner`.
+2. **Consensus Check**: A normalized-variance consensus score is computed over the round's confidence scores. If it meets `consensusThreshold`, the debate ends and the highest-scoring debater's response is returned.
+3. **Cross-Critique**: If consensus wasn't reached and rounds remain, the full transcript of the round (each debater's response and confidence, XML-tagged and delimiter-sanitized) is prepended to the next round's prompt, so every debater sees and can respond to the others' positions.
+4. **Termination**: Ends on early consensus, or after `maxRounds` — in which case `requiresHumanReview: true` is set on the result so the caller can route it to a human.
+
+```typescript
+import { DebateRunner } from '@nestjs-agentic/orchestration';
+
+const debate = new DebateRunner(agentRunner, { maxRounds: 3, consensusThreshold: 0.7 });
+
+const result = await debate.run(
+  parentContext,
+  [{ agentName: 'securityReviewer' }, { agentName: 'performanceReviewer' }],
+  'Should this PR be merged?',
+);
+
+console.log(result.winner, result.consensusScore, result.requiresHumanReview);
+```

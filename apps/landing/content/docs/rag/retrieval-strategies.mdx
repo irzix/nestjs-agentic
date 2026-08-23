@@ -8,28 +8,33 @@ description: Query expansion, late chunking, parent-child hydration, and context
 `@nestjs-agentic/rag` supports pluggable retrieval strategies:
 
 ### 1. `QueryExpansionStrategy`
-Expands the raw user query into multi-perspective variants and domain-specific synonyms before querying the vector store.
+A pre-retrieval strategy that expands the raw query via a synonym dictionary (`synonymsMap`), a custom function (`expandQueryFn`), or an LLM-driven paraphraser (`useLLM` + `llmProvider`).
 
 ### 2. `LateChunkingStrategy`
-Passes the entire document through the transformer embedding model first to capture full-document contextual embeddings before pooling chunk vectors.
+Blends a document-level global embedding into each chunk vector to preserve full-document context in chunk-level similarity.
 
 ### 3. `ParentChildHydrationStrategy`
-Indexes small sub-chunks (methods, paragraphs) for high vector search precision, but hydrates the entire parent class/document when constructing the final context prompt.
+Works with chunks produced by `ParentChildSplitter`: indexes small sub-chunks (methods, paragraphs) for high vector search precision, but hydrates the full parent text (carried in `chunk.metadata.parentText`) when constructing the final context prompt.
+
+Strategies aren't passed to `KnowledgeBase` directly — they're registered on a `RAGPipeline`, which runs pre-retrieval strategies, retrieves via the `KnowledgeBase`, then runs post-retrieval strategies:
 
 ```typescript
 import {
   KnowledgeBase,
+  RAGPipeline,
   QueryExpansionStrategy,
   ParentChildHydrationStrategy,
 } from '@nestjs-agentic/rag';
 
-const kb = new KnowledgeBase({
-  vectorStore: hybridStore,
+const kb = new KnowledgeBase({ vectorStore: hybridStore });
+
+const pipeline = new RAGPipeline({
+  knowledgeBase: kb,
   strategies: [
-    new QueryExpansionStrategy({ maxExpansions: 3 }),
+    new QueryExpansionStrategy({ synonymsMap: { checkout: ['payment', 'order'] } }),
     new ParentChildHydrationStrategy(),
   ],
 });
 
-const context = await kb.retrieve('Find order checkout verification methods');
+const context = await pipeline.executePipeline('Find order checkout verification methods');
 ```

@@ -11,15 +11,15 @@ Human intelligence relies on distinct memory systems: immediate working memory, 
 
 ```mermaid
 graph TD
-    subgraph Cognitive Memory Hierarchy
-        L1[Tier 1: ShortTermMemory<br/>Sliding Turn Window]
-        L2[Tier 2: ScratchpadMemory<br/>Working State & Checkpoints]
-        L3[Tier 3: LongTermMemory<br/>User Profiles & Preferences]
-        L4[Tier 4: SemanticMemory<br/>Vector Embeddings & Factual Docs]
-        L5[Tier 5: EpisodicMemory<br/>Stanford Tri-Factor Experiential Recall]
+    subgraph Memory Stores
+        L1[ShortTermMemory<br/>Sliding Turn Window]
+        L2[ScratchpadMemory<br/>Per-Task Working State]
+        L3[SemanticMemory<br/>Vector / Term-Overlap Recall]
+        L4[EpisodicMemory<br/>Timeline & Substring Recall]
+        L5[GenerativeMemoryStore<br/>Stanford Tri-Factor Recall]
     end
 
-    L1 --> Comp[CompositeMemoryStore<br/>Unified Federated Recall]
+    L1 --> Comp[CompositeMemory<br/>Unified Federated Recall]
     L2 --> Comp
     L3 --> Comp
     L4 --> Comp
@@ -29,12 +29,16 @@ graph TD
 
 ---
 
-## 5-Tier Memory Taxonomy
+## Memory Store Taxonomy
 
-| Tier | Memory Store | Persistence | Purpose | Retrieval Method |
-| :--- | :--- | :--- | :--- | :--- |
-| **Tier 1** | `ShortTermMemory` | Session (In-Memory / Redis) | Immediate multi-turn dialogue history | FIFO / Sliding Window |
-| **Tier 2** | `ScratchpadMemory` | In-Flight Turn | Temporary reasoning notes, sub-goals, and checklists | Key-Value Lookups |
-| **Tier 3** | `LongTermMemory` | Durable (Postgres / Redis) | User profiles, persistent facts, tenant constraints | Entity-Attribute Query |
-| **Tier 4** | `SemanticMemory` | Vector Database (PgVector / Qdrant) | Factual domain documentation and guidelines | Cosine Similarity |
-| **Tier 5** | `EpisodicMemory` | Durable Graph / Vector | Past trajectory successes, failure critiques, lessons | Stanford Tri-Factor Scoring |
+| Store | Persistence | Purpose | Retrieval Method |
+| :--- | :--- | :--- | :--- |
+| `ShortTermMemory` | Optional `StateStore` (in-memory or Redis) | Immediate multi-turn dialogue history | FIFO / Sliding Window |
+| `ScratchpadMemory` | In-process, per session/task | Temporary reasoning notes, sub-goals, and checklists | Task-keyed lookup |
+| `SemanticMemory` | Pluggable `SemanticStoreProvider` (in-memory by default; `HybridVectorStore` for real vectors) | Factual domain documentation and guidelines | Cosine similarity or term overlap |
+| `EpisodicMemory` | In-process, per session | Past interaction episodes for substring/timeline recall | Substring filter, `getTimeline()` |
+| `GenerativeMemoryStore` | In-process, optional `embedFn` | Full Stanford Tri-Factor experiential recall (recency, importance, relevance) | `StanfordMemoryScorer.rankCandidates` |
+| `ProceduralMemoryStore` | In-process | SOP-style playbooks matched to a task/trigger | Tiered trigger/name/description match |
+| `CompositeMemory` | Fans out across any of the above | Unified recall across multiple stores | Union, deduplicated by record id |
+
+Every store implements the shared `AgentMemoryStore` interface: `save(record)` and `recall(query, options?)`, with an optional `clear(sessionId?)`. `EpisodicMemory` provides Stanford Tri-Factor-style recency/importance/relevance scoring through `GenerativeMemoryStore` specifically — plain `EpisodicMemory` does substring matching, not scored ranking.

@@ -5,31 +5,36 @@ description: Eliminating order and position bias in automated model-based evalua
 
 ## Position Bias in LLM Judges
 
-LLMs tend to favor whichever candidate answer is placed first (`Candidate A`).
+LLMs tend to favor whichever candidate answer is placed first.
 
-`DebiasedPairwiseJudge` runs two mirrored evaluations with swapped positions (`[A, B]` and `[B, A]`):
+`PairwiseDebiasedJudge` wraps a `judgeFn` you supply (the actual LLM call) and runs it twice concurrently with swapped positions (forward: `[A, B]`, reverse: `[B, A]`), then averages each candidate's score across both passes:
 
 ```mermaid
 graph TD
-    A[Candidate A] & B[Candidate B] --> J1[Judge Run 1: Prompt [A, B]]
-    A & B --> J2[Judge Run 2: Prompt [B, A]]
-    J1 & J2 --> Reconcile[Debias Reconciler]
-    Reconcile --> Score[Final Debiased Score & Win Rate]
+    A[Candidate A] & B[Candidate B] --> J1[judgeFn Forward Pass: A, B]
+    A & B --> J2[judgeFn Reverse Pass: B, A]
+    J1 & J2 --> Reconcile[Average Scores Per Candidate]
+    Reconcile --> Score[Debiased Score & Winner]
 ```
 
 ```typescript
-import { DebiasedPairwiseJudge } from '@nestjs-agentic/evaluation';
+import { PairwiseDebiasedJudge } from '@nestjs-agentic/evaluation';
 
-const judge = new DebiasedPairwiseJudge({ modelAdapter });
-
-const result = await judge.evaluatePairwise({
-  prompt: 'Summarize pull request security risks',
-  candidateA: outputModelV1,
-  candidateB: outputModelV2,
-  rubric: 'Security depth, actionable remediation, no false positives',
+const judge = new PairwiseDebiasedJudge({
+  judgeFn: async (query, first, second, criteria) => {
+    // Call your LLM here; `first`/`second` are presented in this order in the prompt.
+    return { winner: 'first', scoreFirst: 0.8, scoreSecond: 0.6, reasoning: '...' };
+  },
+  tieThreshold: 0.05,
 });
 
-console.log('Winner:', result.winner); // 'A' | 'B' | 'tie'
-console.log('Confidence:', result.confidence);
-console.log('Reasoning:', result.critique);
+const result = await judge.evaluate({
+  query: 'Summarize pull request security risks',
+  candidateA: { id: 'v1', output: outputModelV1 },
+  candidateB: { id: 'v2', output: outputModelV2 },
+  criteria: 'Security depth, actionable remediation, no false positives',
+});
+
+console.log(result.winner); // 'candidate_a' | 'candidate_b' | 'tie'
+console.log(result.positionBiasDetected, result.confidence, result.reasoning);
 ```

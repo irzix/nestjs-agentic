@@ -5,40 +5,58 @@ description: Experiential trajectory recall using Stanford tri-factor scoring (R
 
 ## EpisodicMemory Store
 
-`EpisodicMemory` stores past interaction episodes (user requests, model actions, tool executions, outcomes) to enable experience-based learning.
+`EpisodicMemory` stores past interaction episodes per session and recalls them via substring match on `content`, with a `getTimeline(sessionId)` helper for chronological playback. It does not itself apply Stanford Tri-Factor scoring — for scored experiential recall, use `GenerativeMemoryStore`.
+
+```typescript
+import { EpisodicMemory } from '@nestjs-agentic/memory';
+
+const episodic = new EpisodicMemory();
+
+await episodic.save({
+  id: 'ep_1',
+  sessionId: 'session_42',
+  type: 'episodic',
+  content: 'Attempted database migration without transaction rollback guard; failed.',
+  timestamp: new Date(),
+});
+
+const matches = await episodic.recall('migration', { sessionId: 'session_42' });
+const timeline = await episodic.getTimeline('session_42');
+```
 
 ---
 
-## Stanford Tri-Factor Retrieval Formula
+## Stanford Tri-Factor Retrieval Formula (`GenerativeMemoryStore`)
 
 ```text
 Score = (w_recency * S_recency) + (w_importance * S_importance) + (w_relevance * S_relevance)
 ```
 
 Where:
-- `S_recency = exp(-lambda * delta_time)`: Exponential decay over elapsed time.
-- `S_importance (0.0 to 1.0)`: Intrinsic significance score assigned during lesson extraction.
-- `S_relevance (0.0 to 1.0)`: Cosine similarity between the recall query and the episode embedding.
+- `S_recency`: `decayRate^(deltaTime / decayUnit)` (default `0.995`/hour) or exponential half-life decay, computed by `StanfordMemoryScorer.computeRecency`.
+- `S_importance` (0.0–1.0): auto-normalized from a 1–10 scale, or supplied via `metadata.importance` / a custom `importanceExtractor`.
+- `S_relevance` (0.0–1.0): cosine similarity when embeddings are available, falling back to substring/token-overlap heuristics.
+
+`GenerativeMemoryStore` computes and applies this scoring automatically:
 
 ```typescript
-import { EpisodicMemory } from '@nestjs-agentic/memory';
+import { GenerativeMemoryStore } from '@nestjs-agentic/memory';
 
-const episodic = new EpisodicMemory({
-  weights: {
-    recency: 0.2,
-    importance: 0.3,
-    relevance: 0.5,
-  },
-  decayFactorLambda: 0.005,
+const generative = new GenerativeMemoryStore({
+  defaultWeights: { recency: 0.2, importance: 0.3, relevance: 0.5 },
+  embedFn: async (text) => myEmbeddingProvider.embedQuery(text),
 });
 
-await episodic.recordEpisode({
-  summary: 'Attempted database migration without transaction rollback guard',
-  lesson: 'Always wrap multi-table DDL migrations in BEGIN/COMMIT blocks',
-  importance: 0.95,
-  outcome: 'failed',
+await generative.save({
+  id: 'lesson_1',
+  sessionId: 'session_42',
+  type: 'generative',
+  content: 'Always wrap multi-table DDL migrations in BEGIN/COMMIT blocks',
+  metadata: { importance: 9.5 },
+  timestamp: new Date(),
 });
 
-// Recall past lessons when generating a new migration
-const lessons = await episodic.recall('Create schema migration for orders table');
+// recall() returns plain MemoryRecord[]; recallScored() returns per-factor breakdowns
+const lessons = await generative.recall('Create schema migration for orders table');
+const scored = await generative.recallScored('Create schema migration for orders table');
 ```

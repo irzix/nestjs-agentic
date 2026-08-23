@@ -5,23 +5,28 @@ description: Long-term factual indexing and dense semantic similarity search.
 
 ## SemanticMemory Store
 
-`SemanticMemory` indexes unstructured facts, developer documentation, and organizational knowledge into vector embeddings for semantic recall:
+`SemanticMemory` indexes unstructured facts, developer documentation, and organizational knowledge for semantic recall. It delegates storage and search to a pluggable `SemanticStoreProvider` — by default an in-memory term-overlap store (`BasicSemanticStore`); supply `@nestjs-agentic/rag`'s `HybridVectorStore` as the provider for real vector search:
 
 ```typescript
 import { SemanticMemory } from '@nestjs-agentic/memory';
+import { HybridVectorStore } from '@nestjs-agentic/rag';
 
 const semantic = new SemanticMemory({
-  embeddingProvider: myEmbeddingService,
-  similarityThreshold: 0.78,
-  topK: 5,
+  provider: new HybridVectorStore({ embeddingProvider: myEmbeddingProvider }),
 });
 
 // Store factual knowledge
-await semantic.store(
-  'Corporate travel policy requires manager sign-off for flights exceeding $1,200.',
-  { category: 'travel_policy', department: 'finance' },
-);
+await semantic.save({
+  id: 'fact_1',
+  sessionId: 'global',
+  type: 'semantic',
+  content: 'Corporate travel policy requires manager sign-off for flights exceeding $1,200.',
+  metadata: { category: 'travel_policy', department: 'finance' },
+  timestamp: new Date(),
+});
 
 // Recall relevant facts
-const results = await semantic.recall('Can I book a $1,500 flight to London?');
+const results = await semantic.recall('Can I book a $1,500 flight to London?', { limit: 5 });
 ```
+
+There is no `similarityThreshold` cutoff option today — filtering by a minimum score requires filtering the returned records yourself, or supplying a provider that supports it directly.
