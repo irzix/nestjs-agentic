@@ -1,5 +1,18 @@
 # @nestjs-agentic/rag
 
+## 1.2.0
+
+### Minor Changes
+
+- 360d862: Add `CachedEmbeddingProvider`, an `EmbeddingProvider` decorator that caches embeddings by a content hash (namespaced by `cacheNamespace`), using an in-memory LRU cache by default or a pluggable `StateStore` (e.g. Redis) backend. Closes #134.
+- 48b3acf: Add `MmrStrategy`, a post-retrieval Maximal Marginal Relevance diversity strategy that reduces near-duplicate chunks in retrieved context. Extract `cosineSimilarity` as a shared utility, used by both `MmrStrategy` and `HybridVectorStore`. Closes #133.
+- 76abfe5: Add `createCohereRerankProvider` and `createVoyageRerankProvider` built-in `RerankFunction` factories for `RerankerStrategy`. Add `RerankerStrategyOptions.minScore` to drop low-relevance chunks post-rerank, and `onRerankFailure`/`onRerankFailureMode` ('fallback' | 'throw') to make `rerankFn` failures observable instead of silently degrading to term-overlap scoring. Closes #132.
+- d1e6079: Add real Reciprocal Rank Fusion (RRF) support to `HybridVectorStore` via a new `fusionMethod: 'weighted' | 'rrf'` option (default `'weighted'`, preserving existing behavior), plus a standalone `reciprocalRankFusion` utility for fusing any ranked id lists (e.g. RAG-Fusion-style multi-query variants). Closes #130.
+
+### Patch Changes
+
+- @nestjs-agentic/memory@1.2.0
+
 ## 1.1.0
 
 ### Minor Changes
