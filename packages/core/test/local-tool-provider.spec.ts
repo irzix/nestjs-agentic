@@ -361,6 +361,97 @@ export async function runLocalToolProviderTests() {
     assert(false, 'Test 6: Tool Cancellation and Deadline Propagation', err.message);
   }
 
+  // TEST 7: Output Rails run on the approval-resume path (invokeApprovedTool)
+  //
+  // Regression test for the bug where `invokeApprovedTool` executed the
+  // approved method and returned its raw result without ever running
+  // `evaluateOutput`, so a sensitive approved call's output skipped
+  // sanitization entirely. Both the pre-execution `require_approval` chain
+  // and the post-execution `evaluateOutput` chain must be exercised here.
+  try {
+    class ApprovalGatePolicy implements ToolPolicy {
+      async evaluate(): Promise<PolicyResult> {
+        return { decision: 'require_approval', reason: 'Sensitive credential fetch requires sign-off' };
+      }
+    }
+
+    class RedactingOutputPolicy implements ToolPolicy {
+      async evaluate(): Promise<PolicyResult> {
+        return { decision: 'allow' };
+      }
+
+      async evaluateOutput(_ctx: AgentContext, _toolName: string, result: any) {
+        if (result && typeof result === 'object' && result.apiKey) {
+          return {
+            decision: 'sanitize' as const,
+            sanitizedResult: { ...result, apiKey: '[REDACTED_SECRET]' },
+          };
+        }
+        return { decision: 'allow' as const };
+      }
+    }
+
+    @ToolSet({ name: 'approved-output-rail-tools' })
+    class ApprovedOutputRailTools {
+      @Tool({ description: 'Fetches credentials, gated by approval, output redacted' })
+      @UsePolicies(ApprovalGatePolicy, RedactingOutputPolicy)
+      async fetchCredentials(@Param('service') service: string) {
+        return { service, apiKey: 'sk-live-abcdef123456789' };
+      }
+    }
+
+    class ApprovalOutputModuleRef {
+      get(token: any): any {
+        if (token === ApprovalGatePolicy) return new ApprovalGatePolicy();
+        if (token === RedactingOutputPolicy) return new RedactingOutputPolicy();
+        return undefined;
+      }
+    }
+
+    const gatedProvider = new LocalToolProvider(
+      [new ApprovalGatePolicy(), new RedactingOutputPolicy()],
+      approvalStore,
+      discovery,
+      new ApprovalOutputModuleRef() as unknown as ModuleRef,
+    );
+
+    const gatedInstance = new ApprovedOutputRailTools();
+    const gatedTools = gatedProvider.buildTools([gatedInstance], agentContext, 'TestAgent');
+    const fetchTool = gatedTools.find((t) => t.name === 'fetchCredentials');
+
+    const gateResult = (await fetchTool?.execute({
+      args: { service: 'billing-api' },
+    })) as ToolExecutionResult;
+
+    assert(
+      !gateResult.success && gateResult.status === 'pending_approval',
+      'Test 7a: fetchCredentials suspends with pending_approval',
+    );
+
+    if (!gateResult.success && (gateResult as any).approvalId) {
+      const pending = await approvalStore.get((gateResult as any).approvalId);
+      assert(pending !== undefined, 'Test 7b: Pending approval persisted');
+
+      const resumedResult = (await gatedProvider.invokeApprovedTool(
+        [gatedInstance],
+        pending!.toolName,
+        pending!.args,
+        pending!.context,
+        pending!.agentName,
+      )) as ToolExecutionResult;
+
+      assert(resumedResult?.success === true, 'Test 7c: Approved call executes successfully');
+      const resumedData = (resumedResult as any)?.data;
+      assert(resumedData?.service === 'billing-api', 'Test 7d: Non-secret field preserved on resume');
+      assert(
+        resumedData?.apiKey === '[REDACTED_SECRET]',
+        'Test 7e: Output Rail sanitizes the approved call result (previously bypassed)',
+      );
+    }
+  } catch (err: any) {
+    assert(false, 'Test 7: Output Rails run on approval-resume path', err.message);
+  }
+
   console.log(`\n  📊 Step 2 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 2 Unit Tests Failed');
