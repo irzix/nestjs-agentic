@@ -29,7 +29,7 @@ export interface RerankerStrategyOptions {
   onRerankFailureMode?: 'fallback' | 'throw';
 
   /** Called whenever `rerankFn` throws, so failures are observable instead of silently swallowed. */
-  onRerankFailure?: (error: unknown) => void;
+  onRerankFailure?: (error: unknown) => void | Promise<void>;
 }
 
 /**
@@ -43,7 +43,7 @@ export class RerankerStrategy implements RAGStrategy {
   private readonly rerankFn?: RerankFunction;
   private readonly minScore?: number;
   private readonly onRerankFailureMode: 'fallback' | 'throw';
-  private readonly onRerankFailure?: (error: unknown) => void;
+  private readonly onRerankFailure?: (error: unknown) => void | Promise<void>;
 
   /**
    * Creates a new instance of RerankerStrategy.
@@ -52,7 +52,12 @@ export class RerankerStrategy implements RAGStrategy {
   constructor(options?: RerankerStrategyOptions) {
     this.topK = options?.topK ?? 5;
     this.rerankFn = options?.rerankFn;
+
+    if (options?.minScore !== undefined && !Number.isFinite(options.minScore)) {
+      throw new RangeError(`RerankerStrategy: minScore must be a finite number, got ${options.minScore}`);
+    }
     this.minScore = options?.minScore;
+
     this.onRerankFailureMode = options?.onRerankFailureMode ?? 'fallback';
     this.onRerankFailure = options?.onRerankFailure;
   }
@@ -82,7 +87,13 @@ export class RerankerStrategy implements RAGStrategy {
           return { chunk, relevanceScore: score };
         });
       } catch (err) {
-        this.onRerankFailure?.(err);
+        // The callback failing must never mask the original rerankFn error
+        // or bypass the configured fallback/throw behavior.
+        try {
+          await this.onRerankFailure?.(err);
+        } catch {
+          // Reporting failure is not itself a rerank failure; ignore.
+        }
         if (this.onRerankFailureMode === 'throw') {
           throw err;
         }

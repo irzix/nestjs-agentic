@@ -21,13 +21,13 @@ const reranker = new RerankerStrategy({
 
 `createVoyageRerankProvider` works the same way against the Voyage AI Rerank API.
 
-If `rerankFn` is omitted, or throws, `RerankerStrategy` falls back to a term-overlap heuristic. That fallback is now observable and configurable:
+If `rerankFn` is omitted, `RerankerStrategy` uses a term-overlap heuristic. If `rerankFn` throws, it invokes `onRerankFailure` when configured, then either falls back to that same heuristic when `onRerankFailureMode` is `'fallback'` (default) or rethrows when it is `'throw'`:
 
 ```typescript
 const reranker = new RerankerStrategy({
   rerankFn: myRerankFn,
-  onRerankFailure: (err) => logger.warn('Reranker failed, degrading to term-overlap scoring', err),
-  onRerankFailureMode: 'throw', // or 'fallback' (default) to keep degrading silently
+  onRerankFailure: (err) => logger.warn('Reranker failed', err),
+  onRerankFailureMode: 'throw', // or 'fallback' (default) to continue with term-overlap scoring
 });
 ```
 

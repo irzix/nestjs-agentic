@@ -1,4 +1,5 @@
 import type { RerankFunction } from '../strategies/reranker.strategy';
+import { mapIndexedRerankScores } from './rerank-response.util';
 
 /** Options for configuring the Cohere Rerank provider. */
 export interface CohereRerankProviderOptions {
@@ -13,12 +14,16 @@ export interface CohereRerankProviderOptions {
 
   /** Custom fetch function implementation (useful for mocking in tests). Default: `globalThis.fetch` */
   fetchFn?: typeof fetch;
+
+  /** Request timeout in milliseconds, after which the request is aborted. Default: `30000` */
+  timeoutMs?: number;
 }
 
 /**
  * Creates a `RerankFunction` backed by the Cohere Rerank v2 API
  * (`POST /v2/rerank`), for use as `RerankerStrategyOptions.rerankFn`.
  *
+ * @param options API key, model, base URL, fetch override, and timeout configuration.
  * @example
  * ```typescript
  * const strategy = new RerankerStrategy({
@@ -31,33 +36,39 @@ export function createCohereRerankProvider(options?: CohereRerankProviderOptions
   const model = options?.model || 'rerank-v3.5';
   const baseUrl = (options?.baseUrl || 'https://api.cohere.com/v2').replace(/\/+$/, '');
   const fetchFn = options?.fetchFn || globalThis.fetch;
+  const timeoutMs = options?.timeoutMs ?? 30000;
 
   return async (query, chunks) => {
     if (chunks.length === 0) return [];
 
-    const response = await fetchFn(`${baseUrl}/rerank`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        query,
-        documents: chunks.map((c) => c.content),
-      }),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error(`Cohere Rerank API request timed out after ${timeoutMs}ms`)), timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetchFn(`${baseUrl}/rerank`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          query,
+          documents: chunks.map((c) => c.content),
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`Cohere Rerank API failed (${response.status}): ${errorText}`);
     }
 
-    const data = (await response.json()) as { results: Array<{ index: number; relevance_score: number }> };
-    const scores = new Array<number>(chunks.length).fill(0);
-    for (const r of data.results) {
-      scores[r.index] = r.relevance_score;
-    }
-    return scores;
+    const data = (await response.json()) as unknown;
+    return mapIndexedRerankScores(data, 'results', chunks.length, 'Cohere Rerank API');
   };
 }
