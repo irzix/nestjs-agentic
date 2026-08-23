@@ -1,5 +1,22 @@
 # @nestjs-agentic/core
 
+## 1.0.1
+
+### Patch Changes
+
+- 5fc21d7: Fix `LocalToolProvider.invokeApprovedTool()` executing an approved tool and returning its raw result without ever running the post-execution Output Rail chain (`evaluateOutput`). An approved call is often the most sensitive one a tool makes, and its result now passes through the same `evaluateOutput` chain as a normal `allow`-decision call, so `SecretRedactionPolicy`, `CanaryDetectionPolicy`, and custom output rails can no longer be bypassed by requiring human approval.
+
+  - `invokeApprovedTool` now accepts an optional `agentName` parameter, threaded through from `AgentRunner.settleApproval()` so approval-resume audit events (`tool_output_policy_decision`) carry the correct agent name.
+  - Extracted the shared output-rail loop into a private `runOutputRails()` method used by both the normal policy-guarded tool closure and `invokeApprovedTool`, so the two paths cannot drift again.
+  - Pre-execution policy evaluation on the approval-resume path is unchanged: policies before the one that required approval already ran once, and are not re-evaluated on resume, matching prior behavior.
+
+- ff8982e: Fix `IdempotencyStore` lookups and saves in `LocalToolProvider` being keyed on the raw caller-supplied `idempotencyKey` alone, unlike `SessionStore` which already scopes by tenant. Two tenants supplying the same literal `idempotencyKey` (accidentally or deliberately) could read and cache each other's `ToolExecutionResult`, including its `data` payload — a cross-tenant data leak through a governance primitive.
+
+  - `LocalToolProvider` now namespaces every idempotency key by tenant before it reaches the `IdempotencyStore`, on both the normal policy-guarded tool path and the approval-resume path (`invokeApprovedTool`).
+  - Added a new exported `scopeKey(...parts)` utility that builds a collision-free composite key by JSON-encoding the segment tuple, rather than plain `:`-delimited concatenation — a `:` inside a tenant id or session id could otherwise let two different segment combinations collide onto the same store key. Also applied it to `AgentRunner.sessionKey()` and `RateLimitPolicy`, which had the same delimiter-collision exposure.
+  - Added a tenant-isolation assertion group to `runIdempotencyStoreContract`, mirroring the existing tenant-isolation check in `runSessionStoreContract`: two records saved under distinct tenant-scoped keys must not collide.
+  - Added regression tests proving two tenants using the same literal `idempotencyKey` (or session id) execute and cache independently.
+
 ## 0.7.0
 
 ### Minor Changes
