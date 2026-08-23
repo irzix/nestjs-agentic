@@ -314,10 +314,7 @@ export class LocalToolProvider {
 
       if (outputResult.decision === 'sanitize') {
         const sanitized = outputResult.sanitizedResult;
-        message =
-          sanitized && typeof sanitized === 'object' && 'error' in sanitized
-            ? String((sanitized as { error: unknown }).error)
-            : String(sanitized);
+        message = isErrorWrapper(sanitized) ? String(sanitized.error) : String(sanitized);
 
         await this.audit?.record({
           ...auditEnvelope(agentContext),
@@ -541,6 +538,15 @@ export class LocalToolProvider {
 
     return { success: true, data };
   }
+}
+
+/**
+ * Narrows a policy's `sanitizedResult` to the `{ error: unknown }` shape
+ * `sanitizeErrorMessage` wraps error messages in, without an unchecked type
+ * assertion.
+ */
+function isErrorWrapper(value: unknown): value is { error: unknown } {
+  return typeof value === 'object' && value !== null && 'error' in value;
 }
 
 /**

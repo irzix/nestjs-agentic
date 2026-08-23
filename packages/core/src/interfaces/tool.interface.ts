@@ -48,6 +48,13 @@ export interface ResolvedTool {
    * original exception is never altered by it. Providers without output
    * rails (e.g. MCP tool providers) can omit this; the raw, truncated
    * message is used as-is.
+   *
+   * @param rawMessage The tool's thrown error message, before truncation.
+   * @param args The arguments the tool was called with, for policies that
+   * key their audit records or decisions off them.
+   * @returns The sanitized (or unmodified) message to report to the model.
+   * A rejected promise is treated as a sanitization failure by the caller,
+   * which fails closed rather than forwarding `rawMessage` unsanitized.
    */
   sanitizeErrorMessage?(rawMessage: string, args: Record<string, unknown>): Promise<string>;
 }

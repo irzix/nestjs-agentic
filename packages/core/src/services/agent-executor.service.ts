@@ -144,6 +144,14 @@ interface ToolFailurePayload {
 /** Upper bound on a reported tool error message, which reaches the model. */
 const MAX_TOOL_ERROR_LENGTH = 500;
 
+/**
+ * Reported in place of a tool's raw error message when `sanitizeErrorMessage`
+ * itself throws. Fails closed: a broken or misconfigured Output Rail must
+ * never result in an unsanitized message reaching the model.
+ */
+const TOOL_ERROR_SANITIZATION_FAILED_MESSAGE =
+  'Tool execution failed and the error could not be safely sanitized.';
+
 interface ExecutionState {
   executionId: string;
   messages: ModelMessage[];
@@ -883,9 +891,11 @@ export class AgentExecutor {
    * policies, e.g. `LocalToolProvider`, always do), the message runs through
    * the tool's attached policies first — the same `SecretRedactionPolicy`/
    * `CanaryDetectionPolicy` treatment a successful result's `data` gets —
-   * before truncation. A sanitizer that itself throws is swallowed and the
-   * raw message is used, so a broken policy can't turn a reportable tool
-   * failure into an unreportable one.
+   * before truncation. This is a fail-closed path: if the sanitizer itself
+   * throws (a policy bug, an unexpected input shape), the raw message is
+   * replaced by a generic, non-sensitive placeholder rather than forwarded
+   * unsanitized. A policy that is present but broken must never be worse
+   * than no policy at all.
    */
   private async toFailurePayload(
     err: unknown,
@@ -899,7 +909,7 @@ export class AgentExecutor {
       try {
         sanitized = await tool.sanitizeErrorMessage(raw, args);
       } catch {
-        sanitized = raw;
+        sanitized = TOOL_ERROR_SANITIZATION_FAILED_MESSAGE;
       }
     }
 

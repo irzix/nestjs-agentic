@@ -317,6 +317,8 @@ Only the error message is forwarded, truncated to 500 characters. Stack traces a
 
 Before truncation, the message passes through the tool's attached Output Rail policies (`ToolPolicy.evaluateOutput`) the same way a successful result's `data` does — so `SecretRedactionPolicy`, `CanaryDetectionPolicy`, or a custom policy can sanitize a thrown error's message just as they would a normal result. This applies only to `toolErrorHandling: 'report'`; in `'throw'` mode the original exception propagates unmodified, since the run ends before it would be reported to the model.
 
+This sanitization step fails closed: if a policy itself throws while sanitizing the message, the raw error is replaced with a generic placeholder (`"Tool execution failed and the error could not be safely sanitized."`) rather than forwarded as-is. A broken or misconfigured Output Rail must never result in worse exposure than having no rail at all.
+
 Set `toolErrorHandling: 'throw'` to end the run instead, resolved per run with the precedence: `RunInput`, then `AgentConfig`, then `AgenticModuleOptions`, then the default.
 
 Framework errors are always fatal regardless of this setting, because they signal misconfiguration rather than a recoverable tool failure. Cancellation observed during a tool invocation is reported as `ExecutionCancelledError`.

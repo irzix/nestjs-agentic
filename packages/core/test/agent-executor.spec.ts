@@ -67,6 +67,17 @@ class DefaultSecretRedactionPolicy extends SecretRedactionPolicy {
   }
 }
 
+/** An Output Rail whose evaluateOutput always throws, to exercise the fail-closed path. */
+class ThrowingOutputPolicy implements ToolPolicy {
+  async evaluate(): Promise<PolicyResult> {
+    return { decision: 'allow' };
+  }
+
+  async evaluateOutput(): Promise<never> {
+    throw new Error('Policy misconfigured: cannot connect to redaction rules service.');
+  }
+}
+
 @ToolSet({ name: 'orders' })
 class OrderTools {
   readonly refunded: Array<{ orderId: string; amount: number; userId?: string }> = [];
@@ -114,6 +125,12 @@ class OrderTools {
     );
   }
 
+  @Tool({ name: 'brokenPolicyLookup', description: 'A tool whose only output policy is broken' })
+  @UsePolicies(ThrowingOutputPolicy)
+  async brokenPolicyLookup() {
+    throw new Error('Upstream leaked token: ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  }
+
   @Tool({ name: 'misconfigured', description: 'Tool with an unregistered policy' })
   @UsePolicies(UnregisteredPolicy)
   async misconfigured() {
@@ -158,7 +175,12 @@ export async function runAgentExecutorTests() {
     const tools = new OrderTools();
     const approvalStore = new InMemoryApprovalStore();
     const localToolProvider = new LocalToolProvider(
-      [new RefundLimitPolicy(), new BlockExportPolicy(), new DefaultSecretRedactionPolicy()],
+      [
+        new RefundLimitPolicy(),
+        new BlockExportPolicy(),
+        new DefaultSecretRedactionPolicy(),
+        new ThrowingOutputPolicy(),
+      ],
       approvalStore,
       new ToolDiscoveryService(),
       moduleRef,
@@ -771,6 +793,34 @@ export async function runAgentExecutorTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 19: Output Rails sanitize thrown errors', err.message);
+  }
+
+  // TEST 20: A broken sanitizer fails closed instead of leaking the raw error
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Look up the broken policy tool')
+      .callTool('brokenPolicyLookup', {})
+      .reply('Something went wrong.');
+
+    const { runner } = createHarness(model);
+    const result = await runner.run('support', {
+      sessionId: 'sess_20_broken_policy',
+      message: 'Look up the broken policy tool',
+    });
+
+    const failure = result.toolCalls[0]?.result as any;
+    assert(failure?.status === 'error', 'Test 20a: Failure recorded on the tool call');
+    assert(
+      !String(failure?.error).includes('ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      'Test 20b: Raw secret never reaches the model when the sanitizer itself throws (fail-closed)',
+    );
+    assert(
+      String(failure?.error).includes('could not be safely sanitized'),
+      'Test 20c: A generic fail-closed message is reported instead',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 20: Sanitizer failure fails closed', err.message);
   }
 
   console.log(`\n  📊 Step 7 Results: ${passed} passed, ${failed} failed.\n`);
