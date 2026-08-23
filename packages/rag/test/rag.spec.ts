@@ -155,6 +155,63 @@ export async function runRAGTests() {
     assert(false, 'Test 4B: HybridVectorStore real BM25 scoring', err.message);
   }
 
+  // TEST 4C: HybridVectorStore.addChunks batches unembedded chunks via embedDocuments,
+  // instead of issuing one embedQuery call per chunk.
+  try {
+    let embedQueryCalls = 0;
+    let embedDocumentsCalls = 0;
+    let lastBatchSize = 0;
+
+    const spyProvider = {
+      async embedQuery(text: string) {
+        embedQueryCalls++;
+        return [text.length];
+      },
+      async embedDocuments(texts: string[]) {
+        embedDocumentsCalls++;
+        lastBatchSize = texts.length;
+        return texts.map((t) => [t.length]);
+      },
+    };
+
+    const store = new HybridVectorStore({ embeddingProvider: spyProvider, embeddingBatchSize: 10 });
+
+    const chunksToAdd: Array<{ id: string; parentId: string; content: string; metadata: {}; embedding?: number[] }> =
+      Array.from({ length: 7 }, (_, i) => ({
+        id: `batch_chunk_${i}`,
+        parentId: 'p_batch',
+        content: `content for chunk number ${i}`,
+        metadata: {},
+      }));
+
+    await store.addChunks(chunksToAdd);
+
+    assert(embedDocumentsCalls === 1, 'Test 4Ca: A single batched embedDocuments call handles 7 chunks under batch size 10');
+    assert(embedQueryCalls === 0, 'Test 4Cb: embedQuery is never called during ingestion');
+    assert(lastBatchSize === 7, 'Test 4Cc: The batch contained all 7 chunk texts');
+    assert(
+      chunksToAdd.every((c) => Array.isArray(c.embedding)),
+      'Test 4Cd: Every input chunk object received its embedding (mutated in place, as documented)',
+    );
+
+    // A batch larger than embeddingBatchSize must split into multiple calls.
+    embedDocumentsCalls = 0;
+    const largeStore = new HybridVectorStore({ embeddingProvider: spyProvider, embeddingBatchSize: 3 });
+    const manyChunks = Array.from({ length: 8 }, (_, i) => ({
+      id: `large_chunk_${i}`,
+      parentId: 'p_large',
+      content: `text ${i}`,
+      metadata: {},
+    }));
+    await largeStore.addChunks(manyChunks);
+    assert(
+      embedDocumentsCalls === 3,
+      'Test 4Ce: 8 chunks with embeddingBatchSize=3 split into 3 batched calls (3+3+2), not 8 individual ones',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 4C: HybridVectorStore batches embedding via embedDocuments', err.message);
+  }
+
   // TEST 5: InMemoryKnowledgeGraphProvider Entity Traversal
   try {
     const graph = new InMemoryKnowledgeGraphProvider();
