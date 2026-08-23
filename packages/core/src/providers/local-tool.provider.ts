@@ -72,14 +72,12 @@ export class LocalToolProvider {
   }
 
   /**
-   * Scopes an idempotency key by tenant. Length-prefixed, not plain
+   * Scopes an idempotency key by tenant. Uses JSON encoding, not plain
    * concatenation, so a `:` inside `tenantId` can't collide two different
    * (tenant, key) pairs onto the same store key.
    */
   private scopedIdempotencyKey(agentContext: AgentContext, idempotencyKey: string): string {
-    const tenantId = agentContext.security.tenantId;
-    const scopeTag = tenantId !== undefined ? `tenant:${tenantId}` : 'no-tenant';
-    return `${scopeTag.length}:${scopeTag}:${idempotencyKey}`;
+    return JSON.stringify([agentContext.security.tenantId ?? null, idempotencyKey]);
   }
 
   /** Resolves and tenant-scopes the caller-supplied idempotency key, if any. */
