@@ -144,6 +144,14 @@ interface ToolFailurePayload {
 /** Upper bound on a reported tool error message, which reaches the model. */
 const MAX_TOOL_ERROR_LENGTH = 500;
 
+/**
+ * Reported in place of a tool's raw error message when `sanitizeErrorMessage`
+ * itself throws. Fails closed: a broken or misconfigured Output Rail must
+ * never result in an unsanitized message reaching the model.
+ */
+const TOOL_ERROR_SANITIZATION_FAILED_MESSAGE =
+  'Tool execution failed and the error could not be safely sanitized.';
+
 interface ExecutionState {
   executionId: string;
   messages: ModelMessage[];
@@ -796,7 +804,7 @@ export class AgentExecutor {
 
         if (toolErrorHandling === 'throw') throw err;
 
-        const failure = this.toFailurePayload(err);
+        const failure = await this.toFailurePayload(err, tool, validation.args);
         state.toolCalls.push({ toolName: tool.name, args: validation.args, result: failure });
         this.pushToolMessage(state, call, failure);
         events?.push({
@@ -878,12 +886,36 @@ export class AgentExecutor {
    * Normalizes a thrown value into a compact payload.
    * Only the message is forwarded, never a stack trace, so internal details do
    * not reach the model or the transcript.
+   *
+   * If the tool exposes `sanitizeErrorMessage` (providers with Output Rail
+   * policies, e.g. `LocalToolProvider`, always do), the message runs through
+   * the tool's attached policies first — the same `SecretRedactionPolicy`/
+   * `CanaryDetectionPolicy` treatment a successful result's `data` gets —
+   * before truncation. This is a fail-closed path: if the sanitizer itself
+   * throws (a policy bug, an unexpected input shape), the raw message is
+   * replaced by a generic, non-sensitive placeholder rather than forwarded
+   * unsanitized. A policy that is present but broken must never be worse
+   * than no policy at all.
    */
-  private toFailurePayload(err: unknown): ToolFailurePayload {
+  private async toFailurePayload(
+    err: unknown,
+    tool: ResolvedTool,
+    args: Record<string, unknown>,
+  ): Promise<ToolFailurePayload> {
     const raw = err instanceof Error ? err.message : String(err);
-    const message = raw.length > MAX_TOOL_ERROR_LENGTH
-      ? `${raw.slice(0, MAX_TOOL_ERROR_LENGTH)}...`
-      : raw;
+
+    let sanitized = raw;
+    if (tool.sanitizeErrorMessage) {
+      try {
+        sanitized = await tool.sanitizeErrorMessage(raw, args);
+      } catch {
+        sanitized = TOOL_ERROR_SANITIZATION_FAILED_MESSAGE;
+      }
+    }
+
+    const message = sanitized.length > MAX_TOOL_ERROR_LENGTH
+      ? `${sanitized.slice(0, MAX_TOOL_ERROR_LENGTH)}...`
+      : sanitized;
 
     return { success: false, status: 'error', error: message || 'Tool execution failed.' };
   }

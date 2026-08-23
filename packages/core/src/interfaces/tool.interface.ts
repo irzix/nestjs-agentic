@@ -39,6 +39,24 @@ export interface ResolvedTool {
   description: string;
   parameters: ToolParamSchema[];
   execute(input: ToolExecutionInput): Promise<ToolExecutionResult>;
+
+  /**
+   * Optional hook letting a provider run its Output Rail policies
+   * (`ToolPolicy.evaluateOutput`) against a tool's error message before it's
+   * reported to the model. Only called on the `toolErrorHandling: 'report'`
+   * path — `'throw'` mode ends the run before this would ever run, so the
+   * original exception is never altered by it. Providers without output
+   * rails (e.g. MCP tool providers) can omit this; the raw, truncated
+   * message is used as-is.
+   *
+   * @param rawMessage The tool's thrown error message, before truncation.
+   * @param args The arguments the tool was called with, for policies that
+   * key their audit records or decisions off them.
+   * @returns The sanitized (or unmodified) message to report to the model.
+   * A rejected promise is treated as a sanitization failure by the caller,
+   * which fails closed rather than forwarding `rawMessage` unsanitized.
+   */
+  sanitizeErrorMessage?(rawMessage: string, args: Record<string, unknown>): Promise<string>;
 }
 
 /**
