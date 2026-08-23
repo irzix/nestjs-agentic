@@ -1,5 +1,12 @@
 # @nestjs-agentic/mcp
 
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [5fc21d7]
+  - @nestjs-agentic/core@1.0.1
+
 ## 0.7.0
 
 ### Minor Changes
