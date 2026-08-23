@@ -255,7 +255,15 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     return scored.map((s) => s.chunk);
   }
 
-  /** Same as `searchHybrid`, but returns each chunk's fused BM25+cosine score alongside it. */
+  /**
+   * Same as `searchHybrid`, but returns each chunk's fused BM25+cosine score alongside it.
+   *
+   * @param query Search query string.
+   * @param limit Maximum number of matching chunks to return. Default: `5`
+   * @param filter Key-value metadata object for filtering chunks (e.g. multi-tenant isolation).
+   * @returns Promise resolving to chunks paired with their normalized, weighted BM25+cosine
+   *   score, sorted descending.
+   */
   async searchHybridScored(
     query: string,
     limit = 5,
@@ -383,15 +391,19 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
    */
   async search(query: string, limit = 5, filter?: Record<string, unknown>): Promise<SemanticMatch[]> {
     const scored = await this.searchHybridScored(query, limit, filter);
-    return scored.map(({ chunk, score }) => ({
-      record: {
-        id: chunk.id,
-        sessionId: (chunk.metadata?.sessionId as string) ?? chunk.parentId,
-        type: (chunk.metadata?.type as string) ?? 'semantic',
-        content: chunk.content,
-        metadata: chunk.metadata,
-      },
-      score,
-    }));
+    return scored.map(({ chunk, score }) => {
+      const sessionId = chunk.metadata?.sessionId;
+      const type = chunk.metadata?.type;
+      return {
+        record: {
+          id: chunk.id,
+          sessionId: typeof sessionId === 'string' ? sessionId : chunk.parentId,
+          type: typeof type === 'string' ? type : 'semantic',
+          content: chunk.content,
+          metadata: chunk.metadata,
+        },
+        score,
+      };
+    });
   }
 }

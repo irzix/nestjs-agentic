@@ -360,6 +360,72 @@ export async function runRAGTests() {
     assert(false, 'Test 6C: RAGPipeline populates ctx.scores', err.message);
   }
 
+  // TEST 6D: KnowledgeBase.queryChunksScored falls back to rank-based scores
+  // for adapters without searchChunksScored, and passes through real scores otherwise.
+  try {
+    const { KnowledgeBase: KB } = await import('../src');
+    const rankOnlyChunks = [
+      { id: 'c1', parentId: 'd1', content: 'alpha', metadata: {} },
+      { id: 'c2', parentId: 'd1', content: 'beta', metadata: {} },
+    ];
+    const rankOnlyAdapter: any = {
+      addChunks: async () => {},
+      searchChunks: async () => rankOnlyChunks,
+    };
+    const kbRankOnly = new KB({ vectorStore: rankOnlyAdapter });
+    const rankOnlyScored = await kbRankOnly.queryChunksScored('q', 5);
+    assert(
+      rankOnlyScored[0].score === 1 && rankOnlyScored[1].score === 1 / 2,
+      'Test 6Da: fallback rank-based scores are 1, 1/2, ... for adapters without searchChunksScored',
+    );
+
+    const realScoredAdapter: any = {
+      addChunks: async () => {},
+      searchChunks: async () => rankOnlyChunks,
+      searchChunksScored: async () => [
+        { chunk: rankOnlyChunks[0], score: 0.42 },
+        { chunk: rankOnlyChunks[1], score: 0.17 },
+      ],
+    };
+    const kbRealScored = new KB({ vectorStore: realScoredAdapter });
+    const realScored = await kbRealScored.queryChunksScored('q', 5);
+    assert(
+      realScored[0].score === 0.42 && realScored[1].score === 0.17,
+      'Test 6Db: real adapter scores propagate through queryChunksScored unchanged',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 6D: queryChunksScored fallback and pass-through', err.message);
+  }
+
+  // TEST 6E: RAGPipeline keeps the maximum score when the same chunk matches multiple query variants
+  try {
+    const sharedChunk = { id: 'shared', parentId: 'd1', content: 'shared chunk', metadata: {} };
+    const variantAdapter: any = {
+      addChunks: async () => {},
+      searchChunks: async (q: string) => (q === 'low variant' ? [sharedChunk] : []),
+      searchChunksScored: async (q: string) => {
+        if (q === 'low variant') return [{ chunk: sharedChunk, score: 0.2 }];
+        if (q === 'high variant') return [{ chunk: sharedChunk, score: 0.9 }];
+        return [];
+      },
+    };
+    const kb = new KnowledgeBase({ vectorStore: variantAdapter });
+    const pipeline = new RAGPipeline({
+      knowledgeBase: kb,
+      strategies: [
+        {
+          name: 'add-high-variant',
+          phase: 'pre-retrieval',
+          process: async (ctx: any) => ({ ...ctx, expandedQueries: ['high variant'] }),
+        },
+      ],
+    });
+    const context = await pipeline.executePipeline('low variant');
+    assert(context.scores!.get('shared') === 0.9, 'Test 6Ea: duplicate chunk across query variants keeps the maximum score');
+  } catch (err: any) {
+    assert(false, 'Test 6E: RAGPipeline max-score-across-variants', err.message);
+  }
+
   // TEST 7: SemanticStoreProvider Integration with @nestjs-agentic/memory
   try {
     const mockEmbed = new MockEmbeddingProvider();
