@@ -803,6 +803,104 @@ export class BenchmarkService${i} {
     assert(false, 'Test 14: HybridVectorStore RRF fusion integration', err.message);
   }
 
+  // TEST 15: RerankerStrategy minScore filtering and observable failure handling (#132)
+  try {
+    const chunks = [
+      { id: 'r1', parentId: 'p', content: 'high relevance chunk', metadata: {} },
+      { id: 'r2', parentId: 'p', content: 'low relevance chunk', metadata: {} },
+    ];
+
+    // 15a. minScore drops chunks below the threshold
+    const minScoreReranker = new RerankerStrategy({
+      rerankFn: async () => [0.9, 0.1],
+      minScore: 0.5,
+    });
+    const filtered = await minScoreReranker.process({ query: 'q', chunks });
+    assert(filtered.chunks?.length === 1 && filtered.chunks[0].id === 'r1', 'Test 15a: minScore drops chunks below the threshold post-rerank');
+
+    // 15b. onRerankFailure is invoked when rerankFn throws
+    let capturedError: unknown;
+    const observedReranker = new RerankerStrategy({
+      rerankFn: async () => {
+        throw new Error('provider down');
+      },
+      onRerankFailure: (err) => {
+        capturedError = err;
+      },
+    });
+    await observedReranker.process({ query: 'q', chunks });
+    assert(capturedError instanceof Error && capturedError.message === 'provider down', 'Test 15b: onRerankFailure receives the thrown error for observability');
+
+    // 15c. onRerankFailureMode: 'throw' propagates instead of silently falling back
+    const throwingReranker = new RerankerStrategy({
+      rerankFn: async () => {
+        throw new Error('provider down');
+      },
+      onRerankFailureMode: 'throw',
+    });
+    let threw = false;
+    try {
+      await throwingReranker.process({ query: 'q', chunks });
+    } catch {
+      threw = true;
+    }
+    assert(threw, "Test 15c: onRerankFailureMode: 'throw' propagates the rerankFn error instead of degrading silently");
+  } catch (err: any) {
+    assert(false, 'Test 15: RerankerStrategy minScore and failure observability', err.message);
+  }
+
+  // TEST 16: Built-in Cohere and Voyage rerank provider adapters (#132)
+  try {
+    const { createCohereRerankProvider, createVoyageRerankProvider } = await import('../src');
+    const chunks = [
+      { id: 'a', parentId: 'p', content: 'alpha', metadata: {} },
+      { id: 'b', parentId: 'p', content: 'beta', metadata: {} },
+    ];
+
+    // 16a. Cohere provider maps `results[].index/relevance_score` back to a parallel scores array
+    const cohereFetch = (async (_url: any, _init: any) =>
+      new Response(
+        JSON.stringify({
+          results: [
+            { index: 1, relevance_score: 0.8 },
+            { index: 0, relevance_score: 0.3 },
+          ],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    const cohereFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: cohereFetch });
+    const cohereScores = await cohereFn('q', chunks);
+    assert(cohereScores[0] === 0.3 && cohereScores[1] === 0.8, 'Test 16a: Cohere rerank provider maps out-of-order results back to input order');
+
+    // 16b. Voyage provider maps `data[].index/relevance_score` back to a parallel scores array
+    const voyageFetch = (async (_url: any, _init: any) =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { index: 0, relevance_score: 0.6 },
+            { index: 1, relevance_score: 0.9 },
+          ],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    const voyageFn = createVoyageRerankProvider({ apiKey: 'k', fetchFn: voyageFetch });
+    const voyageScores = await voyageFn('q', chunks);
+    assert(voyageScores[0] === 0.6 && voyageScores[1] === 0.9, 'Test 16b: Voyage rerank provider maps results back to input order');
+
+    // 16c. Non-200 response throws with the status and body surfaced, rather than swallowed
+    const failingFetch = (async () => new Response('rate limited', { status: 429 })) as unknown as typeof fetch;
+    const failingFn = createCohereRerankProvider({ apiKey: 'k', fetchFn: failingFetch });
+    let threwOnHttpError = false;
+    try {
+      await failingFn('q', chunks);
+    } catch (e: any) {
+      threwOnHttpError = e.message.includes('429') && e.message.includes('rate limited');
+    }
+    assert(threwOnHttpError, 'Test 16c: non-200 rerank API response throws with status and body surfaced');
+  } catch (err: any) {
+    assert(false, 'Test 16: Built-in Cohere/Voyage rerank provider adapters', err.message);
+  }
+
   console.log(`\n  📊 Core RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');
