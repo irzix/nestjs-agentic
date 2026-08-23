@@ -138,11 +138,11 @@ Goal: frozen public APIs, zero breaking changes guarantee, multi-tenant enterpri
 
 Goal: close governance-boundary gaps found in a post-GA audit of the v1.0.0 codebase against its own documented guarantees, and bring documentation back in line with what actually ships.
 
-- [ ] Run Output Rails (`SecretRedactionPolicy`, `CanaryDetectionPolicy`, custom policies) on the approved-tool resume path, which bypasses them today ([#125](https://github.com/irzix/nestjs-agentic/issues/125)).
-- [ ] Scope `IdempotencyStore` keys by tenant, matching `SessionStore`'s existing tenant isolation ([#126](https://github.com/irzix/nestjs-agentic/issues/126)).
-- [ ] Run Output Rails against tool error messages, not just successful results, so failure payloads aren't exempt from secret/PII scrubbing ([#127](https://github.com/irzix/nestjs-agentic/issues/127)).
-- [ ] Correct fabricated class names and unimplemented RRF/BM25/Fleiss'-Kappa claims across `docs/ARCHITECTURE.md` and the documentation site ([#128](https://github.com/irzix/nestjs-agentic/issues/128)).
-- [ ] Populate `RAGContext.scores` during retrieval, unblocking rank-aware fusion strategies ([#129](https://github.com/irzix/nestjs-agentic/issues/129)).
+- [x] Run Output Rails (`SecretRedactionPolicy`, `CanaryDetectionPolicy`, custom policies) on the approved-tool resume path, which bypasses them today ([#125](https://github.com/irzix/nestjs-agentic/issues/125)).
+- [x] Scope `IdempotencyStore` keys by tenant, matching `SessionStore`'s existing tenant isolation ([#126](https://github.com/irzix/nestjs-agentic/issues/126)).
+- [x] Run Output Rails against tool error messages, not just successful results, so failure payloads aren't exempt from secret/PII scrubbing ([#127](https://github.com/irzix/nestjs-agentic/issues/127)).
+- [x] Correct fabricated class names and unimplemented RRF/BM25/Fleiss'-Kappa claims across `docs/ARCHITECTURE.md` and the documentation site ([#128](https://github.com/irzix/nestjs-agentic/issues/128)).
+- [x] Populate `RAGContext.scores` during retrieval, unblocking rank-aware fusion strategies ([#129](https://github.com/irzix/nestjs-agentic/issues/129)).
 
 ### 1.2 — Retrieval Quality
 

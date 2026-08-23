@@ -1,7 +1,7 @@
 import type { MemoryRecord, SemanticMatch, SemanticStoreProvider } from '@nestjs-agentic/memory';
 import type { DocumentChunk } from '../interfaces/document.interface';
 import type { EmbeddingProvider } from '../interfaces/embedding.interface';
-import type { VectorStoreAdapter } from '../interfaces/vector-store.interface';
+import type { ScoredDocumentChunk, VectorStoreAdapter } from '../interfaces/vector-store.interface';
 
 /**
  * Options for configuring HybridVectorStore.
@@ -251,6 +251,24 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     limit = 5,
     filter?: Record<string, unknown>,
   ): Promise<DocumentChunk[]> {
+    const scored = await this.searchHybridScored(query, limit, filter);
+    return scored.map((s) => s.chunk);
+  }
+
+  /**
+   * Same as `searchHybrid`, but returns each chunk's fused BM25+cosine score alongside it.
+   *
+   * @param query Search query string.
+   * @param limit Maximum number of matching chunks to return. Default: `5`
+   * @param filter Key-value metadata object for filtering chunks (e.g. multi-tenant isolation).
+   * @returns Promise resolving to chunks paired with their normalized, weighted BM25+cosine
+   *   score, sorted descending.
+   */
+  async searchHybridScored(
+    query: string,
+    limit = 5,
+    filter?: Record<string, unknown>,
+  ): Promise<ScoredDocumentChunk[]> {
     if (this.chunksMap.size === 0) return [];
 
     const queryTokens = this.tokenize(query);
@@ -302,14 +320,11 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
       const normBm = bm25Score / maxBm;
       const normVec = vectorScore / maxVec;
       const combinedScore = bmWeight * normBm + this.vectorWeight * normVec;
-      return { chunk, combinedScore };
+      return { chunk, score: combinedScore };
     });
 
-    scored.sort((a, b) => b.combinedScore - a.combinedScore);
-    return scored
-      .filter((s) => s.combinedScore > 0)
-      .slice(0, limit)
-      .map((s) => s.chunk);
+    scored.sort((a, b) => b.score - a.score);
+    return scored.filter((s) => s.score > 0).slice(0, limit);
   }
 
   /**
@@ -326,6 +341,22 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
     filter?: Record<string, unknown>,
   ): Promise<DocumentChunk[]> {
     return await this.searchHybrid(query, limit, filter);
+  }
+
+  /**
+   * Alias method fulfilling `VectorStoreAdapter.searchChunksScored`.
+   *
+   * @param query Search query string.
+   * @param limit Maximum number of matching chunks to return. Default: `5`
+   * @param filter Key-value metadata object for filtering chunks.
+   * @returns Promise resolving to chunks paired with their fused BM25+cosine score.
+   */
+  async searchChunksScored(
+    query: string,
+    limit = 5,
+    filter?: Record<string, unknown>,
+  ): Promise<ScoredDocumentChunk[]> {
+    return await this.searchHybridScored(query, limit, filter);
   }
 
   /**
@@ -359,16 +390,20 @@ export class HybridVectorStore implements SemanticStoreProvider, VectorStoreAdap
    * @returns Promise resolving to array of SemanticMatch items.
    */
   async search(query: string, limit = 5, filter?: Record<string, unknown>): Promise<SemanticMatch[]> {
-    const chunks = await this.searchHybrid(query, limit, filter);
-    return chunks.map((c) => ({
-      record: {
-        id: c.id,
-        sessionId: (c.metadata?.sessionId as string) ?? c.parentId,
-        type: (c.metadata?.type as string) ?? 'semantic',
-        content: c.content,
-        metadata: c.metadata,
-      },
-      score: 1.0,
-    }));
+    const scored = await this.searchHybridScored(query, limit, filter);
+    return scored.map(({ chunk, score }) => {
+      const sessionId = chunk.metadata?.sessionId;
+      const type = chunk.metadata?.type;
+      return {
+        record: {
+          id: chunk.id,
+          sessionId: typeof sessionId === 'string' ? sessionId : chunk.parentId,
+          type: typeof type === 'string' ? type : 'semantic',
+          content: chunk.content,
+          metadata: chunk.metadata,
+        },
+        score,
+      };
+    });
   }
 }

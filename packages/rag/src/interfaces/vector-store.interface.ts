@@ -38,4 +38,22 @@ export interface VectorStoreAdapter {
     filter?: Record<string, unknown>,
     queryVector?: number[],
   ): Promise<DocumentChunk[]>;
+
+  /**
+   * Same as `searchChunks`, but returns each chunk's relevance score alongside it,
+   * in the same order. Adapters that can't produce a real score should omit this;
+   * callers fall back to a synthetic rank-based score.
+   */
+  searchChunksScored?(
+    query: string,
+    limit?: number,
+    filter?: Record<string, unknown>,
+    queryVector?: number[],
+  ): Promise<ScoredDocumentChunk[]>;
+}
+
+/** A chunk paired with its relevance score from a similarity search. */
+export interface ScoredDocumentChunk {
+  chunk: DocumentChunk;
+  score: number;
 }
