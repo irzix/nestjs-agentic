@@ -173,4 +173,16 @@ new PiiRedactionPolicy({
 
 PII detection here is pattern-based, not exhaustive — it complements, and does not replace, structured data classification for regulated workloads (HIPAA, PCI-DSS, GDPR).
 
-The shared traversal fails closed: output nested deeper than `maxDepth` is **denied**, not silently allowed through unexamined, since PII could be hiding in the unchecked subtree. It is also type-aware — `Map`, `Set`, and class instances keep their type while their contents are still inspected and redacted, `Date`/`RegExp` are preserved as-is, and prototype-polluting keys (`__proto__`, `prototype`, `constructor`) are dropped (which itself counts as a redaction, so the sanitized clone is always the value returned).
+The shared traversal has an explicit supported boundary rather than best-effort deep cloning, and fails closed outside it:
+
+| Value | Behavior |
+|---|---|
+| strings, arrays, plain objects | rebuilt with matches redacted |
+| `Map`, `Set` | rebuilt with keys and values redacted; if redaction collapses two distinct keys/members into one, the output is **denied** instead of silently losing an entry |
+| `Date`, `RegExp` | preserved as-is (no redactable string content) |
+| class instances, built-ins (`URL`, `Error`, `Buffer`, typed arrays) | **inspected but never rewritten** — copying their enumerable properties onto a fresh prototype cannot restore internal slots and could trigger inherited setters. If sensitive content is found in one, the output is **denied**; if clean, the value is passed through untouched so `instanceof` and methods survive |
+| anything nested deeper than `maxDepth` | **denied**, since PII could be hiding in the unexamined subtree |
+
+Detection inside unrewritable values covers symbol-keyed properties (via `Reflect.ownKeys`) and `toJSON()` output, so data held in internal slots — a `URL`'s query string, for example — can't bypass inspection. Getters are not invoked during inspection. Prototype-polluting keys (`__proto__`, `prototype`, `constructor`) are dropped, which itself counts as a redaction so the sanitized clone is always what's returned.
+
+If a tool needs its output redacted rather than denied, return plain JSON-compatible data from it.

@@ -97,7 +97,8 @@ export async function runRedactionTraversalTests() {
     assert(false, 'Test 6: handleKey override', err.message);
   }
 
-  // TEST 7: type-aware handling — Date/RegExp preserved, Map/Set/class inspected + type-preserved
+  // TEST 7: explicit boundary — Date/RegExp preserved, Map/Set rebuilt+redacted,
+  // class instances detected but never rewritten
   try {
     class Money {
       constructor(public label: string) {}
@@ -108,7 +109,6 @@ export async function runRedactionTraversalTests() {
       pattern: /abc/gi,
       lookup: new Map([['k', 'secret']]),
       tags: new Set(['secret']),
-      money: new Money('secret'),
     };
 
     const { value, modified } = traverseAndRedact(input, { maxDepth: 20, transformString: upper });
@@ -117,12 +117,58 @@ export async function runRedactionTraversalTests() {
     assert(out.ts instanceof Date && out.ts.getTime() === now.getTime(), 'Test 7a: Date preserved unchanged');
     assert(out.pattern instanceof RegExp && out.pattern.source === 'abc', 'Test 7b: RegExp preserved unchanged');
     // 'upper' transforms both key ('k' -> 'K') and value ('secret' -> 'SECRET').
-    assert(out.lookup instanceof Map && out.lookup.get('K') === 'SECRET', 'Test 7c: Map type preserved AND both keys and values inspected/transformed');
-    assert(out.tags instanceof Set && out.tags.has('SECRET'), 'Test 7d: Set type preserved AND its members inspected/transformed');
-    assert(out.money instanceof Money && out.money.label === 'SECRET', 'Test 7e: class instance keeps its prototype AND its string fields are inspected');
-    assert(modified === true, 'Test 7f: inspecting inside Map/Set/class counts as a modification');
+    assert(out.lookup instanceof Map && out.lookup.get('K') === 'SECRET', 'Test 7c: Map rebuilt with both keys and values redacted');
+    assert(out.tags instanceof Set && out.tags.has('SECRET'), 'Test 7d: Set rebuilt with members redacted');
+    assert(modified === true, 'Test 7e: rebuilding Map/Set contents counts as a modification');
+
+    // A class instance is never rewritten (its internal state can't be rebuilt);
+    // instead, sensitive content in it is reported via `unredactable`.
+    const instanceInput = { money: new Money('secret') };
+    const instanceResult = traverseAndRedact(instanceInput, { maxDepth: 20, transformString: upper });
+    const instanceOut = instanceResult.value as any;
+    assert(instanceOut.money instanceof Money, 'Test 7f: class instance preserved by reference, not rebuilt');
+    assert(instanceOut.money.label === 'secret', 'Test 7g: its fields are left untouched rather than partially rewritten');
+    assert(instanceResult.unredactable === true, 'Test 7h: sensitive content inside a class instance is reported as unredactable');
+
+    // A clean instance raises no flag.
+    const cleanResult = traverseAndRedact({ money: new Money('ALREADY_UPPER') }, { maxDepth: 20, transformString: upper });
+    assert(cleanResult.unredactable === false, 'Test 7i: a class instance with no sensitive content raises no flag');
   } catch (err: any) {
-    assert(false, 'Test 7: type-aware container handling', err.message);
+    assert(false, 'Test 7: explicit type boundary', err.message);
+  }
+
+  // TEST 8: collision reporting for Map keys (both orders) and Set members
+  try {
+    const mask = () => '[MASK]';
+
+    const forward = traverseAndRedact(
+      new Map([
+        ['secret', 'first'],
+        ['[MASK]', 'second'],
+      ]),
+      { maxDepth: 10, transformString: mask },
+    );
+    assert(forward.keyCollision === true, 'Test 8a: a redacted key colliding with a later literal key is reported');
+
+    const reverse = traverseAndRedact(
+      new Map([
+        ['[MASK]', 'first'],
+        ['secret', 'second'],
+      ]),
+      { maxDepth: 10, transformString: mask },
+    );
+    assert(reverse.keyCollision === true, 'Test 8b: the reverse insertion order is also reported');
+
+    const setResult = traverseAndRedact(new Set(['a', 'b']), { maxDepth: 10, transformString: mask });
+    assert(setResult.keyCollision === true, 'Test 8c: two Set members collapsing to one value is reported');
+
+    const noCollision = traverseAndRedact(new Map([['a', '1'], ['b', '2']]), {
+      maxDepth: 10,
+      transformString: (s) => s,
+    });
+    assert(noCollision.keyCollision === false, 'Test 8d: distinct keys that stay distinct raise no collision');
+  } catch (err: any) {
+    assert(false, 'Test 8: collision reporting', err.message);
   }
 
   console.log(`\n  📊 traverseAndRedact Test Results: ${passed} passed, ${failed} failed.\n`);

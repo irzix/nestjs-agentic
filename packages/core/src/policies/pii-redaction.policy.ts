@@ -122,7 +122,14 @@ export class PiiRedactionPolicy implements ToolPolicy {
     this.redactPhone = options?.redactPhone ?? true;
     this.redactCreditCard = options?.redactCreditCard ?? true;
     this.redactSsn = options?.redactSsn ?? true;
-    this.customPatterns = options?.customPatterns ?? [];
+    // Normalized once here rather than rebuilt for every string leaf during traversal.
+    // The sticky ('y') flag is stripped: combined with 'g' it anchors every match
+    // attempt to the current lastIndex, silently skipping matches not at offset 0.
+    this.customPatterns = (options?.customPatterns ?? []).map((pattern) => {
+      const withoutSticky = pattern.flags.replace('y', '');
+      const flags = withoutSticky.includes('g') ? withoutSticky : `${withoutSticky}g`;
+      return new RegExp(pattern.source, flags);
+    });
     this.sensitiveKeys = new Set(options?.sensitiveKeys ?? []);
     this.maskPlaceholder = options?.maskPlaceholder;
 
@@ -170,7 +177,7 @@ export class PiiRedactionPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    const { value, modified, depthExceeded, keyCollision } = traverseAndRedact(result, {
+    const { value, modified, depthExceeded, keyCollision, unredactable } = traverseAndRedact(result, {
       maxDepth: this.maxDepth,
       onDepthExceeded: 'deny',
       transformString: (text) => this.redactString(text),
@@ -195,12 +202,22 @@ export class PiiRedactionPolicy implements ToolPolicy {
       };
     }
 
-    // Redacting Map keys collapsed two distinct keys into one, which would silently
-    // drop an entry — fail closed rather than return a Map that lost data.
+    // Redaction collapsed two distinct Map keys / Set members into one, which would
+    // silently drop an entry — fail closed rather than return a container that lost data.
     if (keyCollision) {
       return {
         decision: 'deny',
-        reason: 'Redacting PII in Map keys produced a key collision; refusing to return output that would silently drop an entry.',
+        reason: 'Redacting PII produced a Map key / Set member collision; refusing to return output that would silently drop an entry.',
+      };
+    }
+
+    // PII sits inside a value that cannot be safely rewritten (a class instance or
+    // platform built-in). Rebuilding it would break its internal state, so the output
+    // is refused rather than forwarded with the PII intact.
+    if (unredactable) {
+      return {
+        decision: 'deny',
+        reason: 'Personal data was found inside a class instance or built-in object that cannot be safely redacted; refusing to return it. Return plain JSON-compatible data from this tool to allow redaction.',
       };
     }
 
@@ -239,13 +256,10 @@ export class PiiRedactionPolicy implements ToolPolicy {
       sanitized = sanitized.replace(NANP_PHONE_PATTERN, this.maskPlaceholder ?? DEFAULT_PLACEHOLDERS.phone);
     }
 
-    for (const pattern of this.customPatterns) {
-      // Strip 'y' (sticky): combined with 'g', it anchors every match attempt to the
-      // current lastIndex instead of searching forward, so a match not immediately
-      // at offset 0 would be silently skipped. Then ensure 'g' is present exactly once.
-      const withoutSticky = pattern.flags.replace('y', '');
-      const flags = withoutSticky.includes('g') ? withoutSticky : `${withoutSticky}g`;
-      const regex = new RegExp(pattern.source, flags);
+    for (const regex of this.customPatterns) {
+      // Normalized to global + non-sticky at construction, so no per-leaf RegExp
+      // allocation here. `String.replace` with a global regex resets lastIndex itself,
+      // making the shared instance safe to reuse across leaves.
       sanitized = sanitized.replace(regex, this.maskPlaceholder ?? DEFAULT_PLACEHOLDERS.custom);
     }
 

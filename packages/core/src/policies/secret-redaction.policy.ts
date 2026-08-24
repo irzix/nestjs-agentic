@@ -103,7 +103,7 @@ export class SecretRedactionPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    const { value, modified, keyCollision } = traverseAndRedact(result, {
+    const { value, modified, keyCollision, unredactable } = traverseAndRedact(result, {
       maxDepth: this.maxDepth,
       transformString: (text) => this.redactString(text),
       handleKey: (key, keyValue) => {
@@ -114,12 +114,22 @@ export class SecretRedactionPolicy implements ToolPolicy {
       },
     });
 
-    // Redacting Map keys collapsed two distinct keys into one, which would silently
-    // drop an entry — fail closed rather than return a Map that lost data.
+    // Redaction collapsed two distinct Map keys / Set members into one, which would
+    // silently drop an entry — fail closed rather than return a container that lost data.
     if (keyCollision) {
       return {
         decision: 'deny',
-        reason: 'Redacting secrets in Map keys produced a key collision; refusing to return output that would silently drop an entry.',
+        reason: 'Redacting secrets produced a Map key / Set member collision; refusing to return output that would silently drop an entry.',
+      };
+    }
+
+    // A secret sits inside a value that cannot be safely rewritten (a class instance or
+    // platform built-in). Rebuilding it would break its internal state, so the output
+    // is refused rather than forwarded with the secret intact.
+    if (unredactable) {
+      return {
+        decision: 'deny',
+        reason: 'A secret was found inside a class instance or built-in object that cannot be safely redacted; refusing to return it. Return plain JSON-compatible data from this tool to allow redaction.',
       };
     }
 

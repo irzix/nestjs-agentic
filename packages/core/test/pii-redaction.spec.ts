@@ -273,38 +273,152 @@ export async function runPiiRedactionTests() {
     assert(false, 'Test 13: prototype-pollution safety', err.message);
   }
 
-  // TEST 14: Non-plain objects keep their type, and their contents are still inspected for PII
+  // TEST 14: Rebuildable containers (Map/Set) are redacted; Date is preserved
   try {
     const policy = new PiiRedactionPolicy();
-    class Contact {
-      constructor(public email: string, public id: number) {}
-    }
     const now = new Date();
     const output = {
       createdAt: now, // opaque value type: preserved, carries no PII
       tags: new Set(['vip', 'jane@example.com']),
       lookup: new Map([['primary', 'reach me at bob@example.com']]),
-      contact: new Contact('carol@example.com', 7),
     };
 
     const result = await policy.evaluateOutput(dummyCtx, 'fetchRecord', output);
-    assert(result.decision === 'sanitize', 'Test 14a: object with PII inside non-plain containers is sanitized');
+    assert(result.decision === 'sanitize', 'Test 14a: object with PII inside Map/Set is sanitized');
     if (result.decision === 'sanitize') {
       const sanitized = result.sanitizedResult as typeof output;
       assert(sanitized.createdAt instanceof Date && sanitized.createdAt.getTime() === now.getTime(), 'Test 14b: Date value preserved, not corrupted');
-      // Type preserved AND contents inspected — PII inside must not slip through.
       assert(sanitized.tags instanceof Set, 'Test 14c: Set type preserved');
       assert(!sanitized.tags.has('jane@example.com') && sanitized.tags.has('vip'), 'Test 14d: PII inside a Set is redacted, non-PII member kept');
       assert(sanitized.lookup instanceof Map, 'Test 14e: Map type preserved');
       assert(!String(sanitized.lookup.get('primary')).includes('bob@example.com'), 'Test 14f: PII inside a Map value is redacted');
-      // A non-PII key ('primary') is preserved so the entry is still addressable.
-      assert(sanitized.lookup.has('primary'), 'Test 14g2: a non-PII Map key is left intact so lookups still work');
-      assert(sanitized.contact instanceof Contact, 'Test 14g: class instance keeps its prototype (instanceof still holds)');
-      assert(!sanitized.contact.email.includes('carol@example.com'), 'Test 14h: PII in a class-instance field is redacted');
-      assert(sanitized.contact.id === 7, 'Test 14i: non-PII class-instance field preserved');
+      assert(sanitized.lookup.has('primary'), 'Test 14g: a non-PII Map key is left intact so lookups still work');
     }
   } catch (err: any) {
-    assert(false, 'Test 14: non-plain container inspection', err.message);
+    assert(false, 'Test 14: rebuildable container redaction', err.message);
+  }
+
+  // TEST 22: PII inside a class instance is detected and denied (never silently
+  // forwarded, and never rewritten into a structurally broken clone)
+  try {
+    const policy = new PiiRedactionPolicy();
+    class Contact {
+      constructor(public email: string) {}
+      greet() {
+        return `hi ${this.email}`;
+      }
+    }
+
+    const withPii = await policy.evaluateOutput(dummyCtx, 'fetchRecord', {
+      contact: new Contact('carol@example.com'),
+    });
+    assert(withPii.decision === 'deny', 'Test 22a: PII inside a class instance fails closed (deny)');
+    if (withPii.decision === 'deny') {
+      assert(
+        withPii.reason.toLowerCase().includes('cannot be safely redacted'),
+        'Test 22b: the denial explains that the value cannot be safely redacted',
+      );
+    }
+
+    // A clean class instance is preserved untouched — instanceof and methods survive.
+    const clean = await policy.evaluateOutput(dummyCtx, 'fetchRecord', {
+      contact: new Contact('not-an-email'),
+      note: 'reach me at dave@example.com',
+    });
+    assert(clean.decision === 'sanitize', 'Test 22c: a clean class instance alongside redactable PII still sanitizes');
+    if (clean.decision === 'sanitize') {
+      const sanitized = clean.sanitizedResult as { contact: Contact; note: string };
+      assert(sanitized.contact instanceof Contact, 'Test 22d: a clean class instance keeps its prototype');
+      assert(typeof sanitized.contact.greet === 'function', 'Test 22e: its methods still work');
+      assert(!sanitized.note.includes('dave@example.com'), 'Test 22f: sibling PII is still redacted');
+    }
+
+    // A built-in (URL) holding PII is likewise denied rather than broken.
+    const builtIn = await policy.evaluateOutput(dummyCtx, 'fetchRecord', {
+      link: new URL('https://example.com/?contact=erin@example.com'),
+    });
+    assert(builtIn.decision === 'deny', 'Test 22g: PII inside a platform built-in (URL) also fails closed');
+  } catch (err: any) {
+    assert(false, 'Test 22: class-instance / built-in detect-and-deny', err.message);
+  }
+
+  // TEST 23: cloning never triggers an inherited prototype setter
+  try {
+    let setterCalls = 0;
+    class Trap {
+      private _v = 'clean';
+      set label(v: string) {
+        setterCalls++;
+        this._v = v;
+      }
+      get label() {
+        return this._v;
+      }
+    }
+
+    const policy = new PiiRedactionPolicy();
+    const instance = new Trap();
+    await policy.evaluateOutput(dummyCtx, 'fetchRecord', { trap: instance, note: 'a@b.com' });
+    assert(setterCalls === 0, 'Test 23: sanitization never invokes an inherited prototype setter');
+  } catch (err: any) {
+    assert(false, 'Test 23: prototype setter safety', err.message);
+  }
+
+  // TEST 24: collision detection works in BOTH insertion orders, and for Sets
+  try {
+    const policy = new PiiRedactionPolicy();
+
+    // Transformed key first, then a literal key equal to the placeholder.
+    const forwardOrder = {
+      m: new Map([
+        ['alice@example.com', 'first'],
+        ['[REDACTED_EMAIL]', 'second'],
+      ]),
+    };
+    const forward = await policy.evaluateOutput(dummyCtx, 'fetchRecords', forwardOrder);
+    assert(forward.decision === 'deny', 'Test 24a: transformed key colliding with a later literal placeholder key is detected');
+
+    // Literal placeholder key first, then a key that redacts onto it.
+    const reverseOrder = {
+      m: new Map([
+        ['[REDACTED_EMAIL]', 'first'],
+        ['bob@example.com', 'second'],
+      ]),
+    };
+    const reverse = await policy.evaluateOutput(dummyCtx, 'fetchRecords', reverseOrder);
+    assert(reverse.decision === 'deny', 'Test 24b: literal placeholder key followed by a redacting key is also detected (reverse order)');
+
+    // Two distinct Set members collapsing to one placeholder.
+    const setCollision = { s: new Set(['alice@example.com', 'bob@example.com']) };
+    const setResult = await policy.evaluateOutput(dummyCtx, 'fetchRecords', setCollision);
+    assert(setResult.decision === 'deny', 'Test 24c: two Set members redacting to the same placeholder fails closed');
+  } catch (err: any) {
+    assert(false, 'Test 24: collision detection in both orders and for Sets', err.message);
+  }
+
+  // TEST 25: PII in a non-string (object) Map key is detected, not silently passed
+  try {
+    const policy = new PiiRedactionPolicy();
+    const input = { records: new Map([[{ email: 'frank@example.com' }, 'value']]) };
+
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchRecords', input);
+    assert(result.decision === 'deny', 'Test 25: PII inside an object-valued Map key fails closed instead of bypassing redaction');
+  } catch (err: any) {
+    assert(false, 'Test 25: PII in object Map keys', err.message);
+  }
+
+  // TEST 26: symbol-keyed PII inside an unrebuildable value is still detected
+  try {
+    const policy = new PiiRedactionPolicy();
+    const tag = Symbol('contact');
+    class Holder {}
+    const instance = new Holder();
+    Object.defineProperty(instance, tag, { value: 'grace@example.com', enumerable: true });
+
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchRecord', { holder: instance });
+    assert(result.decision === 'deny', 'Test 26: symbol-keyed PII on a class instance is detected via Reflect.ownKeys');
+  } catch (err: any) {
+    assert(false, 'Test 26: symbol-keyed PII detection', err.message);
   }
 
   // TEST 17: PII hidden only under a forbidden (__proto__) key does not leak
