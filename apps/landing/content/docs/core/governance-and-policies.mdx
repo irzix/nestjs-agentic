@@ -126,8 +126,8 @@ interface Provenance {
 
 The label is populated on built-in paths:
 
-- **Tool execution** — `LocalToolProvider` stamps successful and failed tool results with `{ source: 'tool', origin: <toolName> }`. It surfaces on the `ToolExecutionResult` and on the resulting `{ role: 'tool' }` message.
-- **RAG retrieval** — `KnowledgeBase.queryChunks`/`queryChunksScored` tag retrieved chunks with `{ source: 'external', origin: <parentDocumentId> }`, since their content originates from ingested documents that may be untrusted. A chunk that already carries a label is left untouched.
+- **Tool execution** — `LocalToolProvider` stamps successful tool results with `{ source: 'tool', origin: <toolName> }`; `AgentExecutor` attaches the same label to failed (thrown) tool payloads and to the resulting `{ role: 'tool' }` message.
+- **RAG retrieval** — `KnowledgeBase.queryChunks`/`queryChunksScored` tag retrieved chunks with `{ source: 'external', origin: <parentDocumentId> }`. Retrieval is a trust boundary: whatever a (possibly custom or compromised) vector store returns is treated as untrusted, so the framework always assigns `external` here rather than trusting a store-supplied label — a store cannot launder external content as `model`/`user`.
 
 A policy's `evaluateOutput` hook receives the label as an optional fourth argument, so it can make trust-aware decisions:
 
@@ -141,3 +141,5 @@ async evaluateOutput(ctx, toolName, result, provenance) {
 ```
 
 The field is fully additive: every part is optional, and tools or policies that ignore it are unaffected. Enforcement (e.g. refusing to let externally-sourced content act as instructions) is follow-on work built on top of these labels.
+
+A label is only authoritative when the framework assigns it at a boundary it controls (tool execution, RAG retrieval). A `provenance` value that arrives on caller-supplied data — a hand-built `ModelMessage`, a raw `DocumentChunk` handed to a custom store — is advisory and must not be treated as a security assertion on its own. Trust-aware policies should combine provenance with the actual execution/retrieval context rather than relying on the label alone.

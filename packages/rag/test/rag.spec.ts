@@ -1406,17 +1406,18 @@ export class BenchmarkService${i} {
     assert(scored.length > 0, 'Test 20d: scored retrieval returns chunks');
     assert(scored[0].chunk.provenance?.source === 'external', 'Test 20e: queryChunksScored also stamps external provenance');
 
-    // A pre-existing provenance label is preserved, not overwritten.
+    // Retrieval is a trust boundary: a vector store cannot launder external content
+    // by claiming a trusted label — it is always normalized to 'external'.
     const custom: any = {
       searchChunks: async () => [
-        { id: 'c1', parentId: 'p1', content: 'x', metadata: {}, provenance: { source: 'user', origin: 'form-input' } },
+        { id: 'c1', parentId: 'p1', content: 'x', metadata: {}, provenance: { source: 'model', origin: 'spoofed' } },
       ],
     };
     const kbCustom = new KnowledgeBase({ vectorStore: custom });
     const customChunks = await kbCustom.queryChunks('q');
     assert(
-      customChunks[0].provenance?.source === 'user',
-      'Test 20f: a chunk that already carries provenance is not overwritten with "external"',
+      customChunks[0].provenance?.source === 'external',
+      'Test 20f: a vector-store chunk claiming trusted provenance is normalized to "external" at the retrieval boundary',
     );
     void doc;
   } catch (err: any) {

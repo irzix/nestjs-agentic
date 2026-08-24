@@ -580,9 +580,15 @@ export class AgentExecutor {
     }
 
     const withheld = messages[index] as Extract<ModelMessage, { role: 'tool' }>;
+    // Reflect the resolved outcome's provenance on the resumed message. The withheld
+    // (pending_approval) message had none, and the approved outcome carries the
+    // tool's label — so drop any stale value and set it from the outcome.
+    const { provenance: _stale, ...withheldRest } = withheld;
+    const outcomeProvenance = input.outcome.provenance;
     messages[index] = {
-      ...withheld,
+      ...withheldRest,
       content: JSON.stringify(input.outcome),
+      ...(outcomeProvenance ? { provenance: outcomeProvenance } : {}),
     };
 
     // Approval outcomes that were denied/rejected surface through the same

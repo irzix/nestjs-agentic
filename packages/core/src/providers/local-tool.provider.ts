@@ -287,7 +287,8 @@ export class LocalToolProvider {
           args,
         });
 
-        return { success: false, status: 'denied', reason: outputResult.reason };
+        // The denial is about the tool's own output, so it carries tool provenance.
+        return { success: false, status: 'denied', reason: outputResult.reason, provenance };
       }
 
       if (outputResult.decision === 'sanitize') {

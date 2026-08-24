@@ -823,6 +823,62 @@ export async function runAgentExecutorTests() {
     assert(false, 'Test 20: Sanitizer failure fails closed', err.message);
   }
 
+  // TEST 21: Provenance is recorded on tool results and surfaced on tool messages (#137)
+  try {
+    const model = new MockModelAdapter();
+    model
+      .whenAsked('Look up order 7 then check the flaky ledger')
+      .callTool('lookupOrder', { orderId: '7' })
+      .callTool('flakyLookup', { orderId: '7' })
+      .reply('Done.');
+
+    const { runner } = createHarness(model);
+
+    const transcripts: any[][] = [];
+    const executor = new AgentExecutor(model);
+    const prepared = await runner.prepare('support', {
+      sessionId: 'sess_21_provenance',
+      message: 'Look up order 7 then check the flaky ledger',
+    });
+    const result = await executor.execute({
+      sessionId: 'sess_21_provenance',
+      message: 'Look up order 7 then check the flaky ledger',
+      model: prepared.model,
+      tools: prepared.tools,
+      instructions: prepared.config.instructions,
+      onTranscript: (messages) => {
+        transcripts.push(messages);
+      },
+    });
+
+    const success = result.toolCalls.find((c) => c.toolName === 'lookupOrder')?.result as any;
+    assert(
+      success?.success === true && success.provenance?.source === 'tool',
+      'Test 21a: a successful tool result carries { source: "tool" } provenance',
+    );
+    assert(
+      success?.provenance?.origin === 'lookupOrder',
+      'Test 21b: provenance origin is the tool name',
+    );
+
+    const failure = result.toolCalls.find((c) => c.toolName === 'flakyLookup')?.result as any;
+    assert(
+      failure?.status === 'error' && failure.provenance?.source === 'tool',
+      'Test 21c: a failed (thrown) tool result also carries tool provenance',
+    );
+
+    // The provenance is surfaced as a first-class field on the { role: 'tool' } message,
+    // not only inside the serialized content.
+    const lastTranscript = transcripts[transcripts.length - 1] ?? [];
+    const toolMessages = lastTranscript.filter((m) => m.role === 'tool');
+    assert(
+      toolMessages.length >= 2 && toolMessages.every((m) => m.provenance?.source === 'tool'),
+      'Test 21d: emitted { role: "tool" } messages expose provenance as a first-class field',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 21: Provenance on tool results and messages', err.message);
+  }
+
   console.log(`\n  📊 Step 7 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 7 Unit Tests Failed');

@@ -111,13 +111,13 @@ export class KnowledgeBase {
   }
 
   /**
-   * Stamps a retrieved chunk with `external` provenance, since its content came from
-   * an ingested document that may be untrusted. Any pre-existing provenance is kept.
+   * Stamps a retrieved chunk with `external` provenance. Retrieval is a trust
+   * boundary: whatever a (possibly custom or compromised) vector store returns is
+   * untrusted content, so the framework always assigns `{ source: 'external' }`
+   * here rather than trusting a caller-supplied label. This prevents a store from
+   * laundering external content as `model`/`user` to weaken downstream guardrails.
    */
   private static tagExternal(chunk: DocumentChunk): DocumentChunk {
-    if (chunk.provenance) {
-      return chunk;
-    }
     return { ...chunk, provenance: { source: 'external', origin: chunk.parentId } };
   }
 

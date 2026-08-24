@@ -37,8 +37,25 @@ export type ToolExecutionResult<T = unknown> =
        */
       provenance?: Provenance;
     }
-  | { success: false; status: 'denied'; reason: string }
-  | { success: false; status: 'pending_approval'; reason: string; approvalId: string };
+  | {
+      success: false;
+      status: 'denied';
+      reason: string;
+      /**
+       * Present when the denial came from an Output Rail inspecting the tool's
+       * output (`{ source: 'tool' }`). A pre-execution denial has none, since no
+       * tool content was produced.
+       */
+      provenance?: Provenance;
+    }
+  | {
+      success: false;
+      status: 'pending_approval';
+      reason: string;
+      approvalId: string;
+      /** Reserved for uniform inspection; unset, since no tool content exists yet. */
+      provenance?: Provenance;
+    };
 
 /**
  * A tool fully resolved with its policy closure — ready to be handed
