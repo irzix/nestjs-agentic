@@ -76,7 +76,8 @@ export class LocalToolProvider {
     if (warnedMethods.has(tool.methodName)) return;
     warnedMethods.add(tool.methodName);
 
-    console.warn(
+    const warn = this.options?.logger?.warn ?? ((message: string) => console.warn(message));
+    warn(
       `[LocalToolProvider] Tool "${tool.toolName}" is @ExemptFromDefaultPolicies() and has no @UsePolicies of its own — it runs with zero policy evaluation.`,
     );
   }

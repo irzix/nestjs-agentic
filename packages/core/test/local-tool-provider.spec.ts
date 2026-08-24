@@ -664,6 +664,29 @@ export async function runLocalToolProviderTests() {
       collisionWarnSpy.filter((m) => m.includes('"lookup"')).length === 2,
       'Test 8f: two distinct toolsets exposing a same-named exempt tool each independently trigger the warning',
     );
+
+    // 8g. options.logger.warn overrides console.warn, matching the codebase's
+    // existing override-with-console-fallback logging convention (review feedback)
+    const customWarnLog: string[] = [];
+    const customLoggerProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      discovery,
+      new DefaultPolicyModuleRef() as unknown as ModuleRef,
+      undefined,
+      undefined,
+      {
+        defaultModel: {} as any,
+        defaultPolicies: [],
+        logger: { warn: (msg: string) => customWarnLog.push(msg) },
+      },
+    );
+    const customLoggerTools = customLoggerProvider.buildTools([new SilentlyUnguardedTools()], agentContext);
+    await customLoggerTools.find((t) => t.name === 'fullyUnguardedAction')?.execute({ args: {} });
+    assert(
+      customWarnLog.some((m) => m.includes('fullyUnguardedAction')),
+      'Test 8g: a custom options.logger.warn receives the exemption warning instead of console.warn',
+    );
   } catch (err: any) {
     assert(false, 'Test 8: Module-level default policy chain', err.message);
   }

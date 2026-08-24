@@ -128,6 +128,8 @@ export interface AgenticModuleOptions {
    * method-level `@UsePolicies`, in array order.
    */
   defaultPolicies?: Type<ToolPolicy>[];
+  /** Overrides for internal diagnostic logging (e.g. governance warnings). Defaults to `console`. */
+  logger?: { warn?: (message: string) => void };
 }
 
 export interface RunInput {
