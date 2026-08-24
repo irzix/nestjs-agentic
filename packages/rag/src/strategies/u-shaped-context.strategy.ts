@@ -1,3 +1,5 @@
+import { PromptInjectionSanitizer } from '@nestjs-agentic/core';
+
 import type { DocumentChunk } from '../interfaces/document.interface';
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 
@@ -149,14 +151,17 @@ export class UShapedContextStrategy implements RAGStrategy {
       this.placementStrategy,
     );
 
-    // Format chunk text with safe metadata title inspection
+    // Format chunk text with safe metadata title inspection. Retrieved content is
+    // untrusted (it may originate from ingested documents an attacker controls), so
+    // it's wrapped in an explicit boundary tag to mitigate indirect prompt injection.
     const formattedChunks = uOrderedChunks.map((chunk, idx) => {
       const rawTitle = chunk.metadata?.title ?? chunk.metadata?.section;
       const title =
         typeof rawTitle === 'string' && rawTitle.trim().length > 0
           ? rawTitle.trim()
           : `Chunk ${idx + 1}`;
-      return `[Reference: ${title}]\n${chunk.content}`;
+      const boundary = PromptInjectionSanitizer.wrapWithBoundary('retrieved_chunk', chunk.content);
+      return `[Reference: ${title}]\n${boundary}`;
     });
 
     const parts: string[] = [];

@@ -1,3 +1,5 @@
+import { PromptInjectionSanitizer } from '@nestjs-agentic/core';
+
 import type { RAGContext, RAGStrategy } from '../interfaces/strategy.interface';
 
 /** Type alias for a custom context compressor function (e.g. LLM extractive summarizer). */
@@ -54,12 +56,15 @@ export class ContextualCompressionStrategy implements RAGStrategy {
       return context;
     }
 
-    // 1. Custom compressor function if supplied
+    // 1. Custom compressor function if supplied. Retrieved content is untrusted (it
+    // may originate from ingested documents an attacker controls), so the final
+    // output is wrapped in an explicit boundary tag to mitigate indirect prompt
+    // injection before being spliced into the prompt.
     if (this.compressFn) {
       const customCompressed = await this.compressFn(context.query, rawContext);
       return {
         ...context,
-        compressedContext: customCompressed,
+        compressedContext: PromptInjectionSanitizer.wrapWithBoundary('retrieved_chunk', customCompressed),
       };
     }
 
@@ -103,7 +108,7 @@ export class ContextualCompressionStrategy implements RAGStrategy {
 
     return {
       ...context,
-      compressedContext: processedText,
+      compressedContext: PromptInjectionSanitizer.wrapWithBoundary('retrieved_chunk', processedText),
     };
   }
 }

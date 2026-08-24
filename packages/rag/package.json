@@ -17,6 +17,7 @@
     "test": "tsc -p test/tsconfig.json && node dist/test/test/rag.spec.js"
   },
   "dependencies": {
+    "@nestjs-agentic/core": "^1.2.0",
     "@nestjs-agentic/memory": "*"
   },
   "peerDependencies": {

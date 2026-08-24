@@ -77,3 +77,32 @@ When multiple policies are attached via `@UsePolicies(PolicyA, PolicyB)`:
 3. Only if all policies return `allow` is the tool closure executed.
 
 Policies from `AgenticModuleOptions.defaultPolicies` (see [Module Configuration](/docs/core/module-configuration)) evaluate first, before class-level `@UsePolicies`, before method-level `@UsePolicies` — so a module-wide deny-by-default guard short-circuits ahead of any tool-specific policy. A tool can opt out of the module defaults with `@ExemptFromDefaultPolicies()` while keeping its own `@UsePolicies`.
+
+---
+
+## Indirect Prompt Injection Mitigation
+
+Tool output — a scraped web page, a third-party API response, a document a user uploaded — is untrusted text. If it contains fake role markers (`<|im_start|>`, `[INST]`, `Human:`) or `<system>` tags, a model can be tricked into treating that text as new instructions instead of data (see Greshake et al., USENIX Security 2023).
+
+`PromptInjectionSanitizationPolicy` is a built-in Output Rail that strips these known delimiter patterns from tool output before it re-enters the model's context:
+
+```typescript
+import { PromptInjectionSanitizationPolicy } from '@nestjs-agentic/core';
+
+@Tool({ name: 'fetch_web_page' })
+@UsePolicies(new PromptInjectionSanitizationPolicy())
+async fetchWebPage() { ... }
+```
+
+The underlying utility is also exported standalone for use outside the policy system, e.g. wrapping untrusted content in an explicit XML boundary tag before assembling a prompt manually:
+
+```typescript
+import { PromptInjectionSanitizer } from '@nestjs-agentic/core';
+
+const safe = PromptInjectionSanitizer.wrapWithBoundary('untrusted_pr_diff', rawDiff);
+// <untrusted_pr_diff>
+// ...sanitized diff content...
+// </untrusted_pr_diff>
+```
+
+This is a mitigation, not a guarantee — a novel injection payload that doesn't match a known delimiter pattern will still pass through.

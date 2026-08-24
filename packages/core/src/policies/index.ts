@@ -4,3 +4,4 @@ export * from './logging.policy';
 export * from './rate-limit.policy';
 export * from './secret-redaction.policy';
 export * from './canary-detection.policy';
+export * from './prompt-injection-sanitization.policy';
