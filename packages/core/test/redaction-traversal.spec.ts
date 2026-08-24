@@ -18,29 +18,19 @@ export async function runRedactionTraversalTests() {
 
   const upper = (s: string) => s.toUpperCase();
 
-  // TEST 1: safe defaults — forbidden keys skipped, non-plain preserved
+  // TEST 1: safe defaults — forbidden keys skipped and reported as a modification
   try {
     const malicious = JSON.parse('{"__proto__": {"polluted": true}, "note": "x"}');
-    const { value } = traverseAndRedact(malicious, { maxDepth: 10, transformString: upper });
+    const { value, modified } = traverseAndRedact(malicious, { maxDepth: 10, transformString: upper });
     assert(({} as any).polluted === undefined, 'Test 1a: global Object.prototype not polluted (default skipForbiddenKeys)');
     assert(!Object.prototype.hasOwnProperty.call(value, 'polluted'), 'Test 1b: forbidden key dropped from the clone by default');
-
-    const now = new Date();
-    const { value: withDate } = traverseAndRedact({ ts: now }, { maxDepth: 10, transformString: upper });
-    assert((withDate as any).ts instanceof Date, 'Test 1c: Date preserved by default (default preserveNonPlainObjects)');
+    assert(modified === true, 'Test 1c: dropping a forbidden key is reported as a modification');
   } catch (err: any) {
     assert(false, 'Test 1: safe defaults', err.message);
   }
 
-  // TEST 2: opting out of safe defaults restores legacy behavior
+  // TEST 2: forbidden keys can be cloned through with an explicit opt-out
   try {
-    const now = new Date();
-    const { value } = traverseAndRedact(
-      { ts: now },
-      { maxDepth: 10, transformString: upper, preserveNonPlainObjects: false },
-    );
-    assert(!((value as any).ts instanceof Date), 'Test 2a: preserveNonPlainObjects: false clones Date into a plain object (legacy opt-in)');
-
     const malicious = JSON.parse('{"__proto__": {"polluted": true}, "note": "x"}');
     const { value: skipOff } = traverseAndRedact(
       malicious,
@@ -48,10 +38,10 @@ export async function runRedactionTraversalTests() {
     );
     assert(
       Object.prototype.hasOwnProperty.call(skipOff, '__proto__') || (skipOff as any).polluted === true,
-      'Test 2b: skipForbiddenKeys: false clones the forbidden key through (explicit opt-out)',
+      'Test 2a: skipForbiddenKeys: false clones the forbidden key through (explicit opt-out)',
     );
   } catch (err: any) {
-    assert(false, 'Test 2: opting out of safe defaults', err.message);
+    assert(false, 'Test 2: forbidden key opt-out', err.message);
   }
 
   // TEST 3: onDepthExceeded 'passthrough' (default) vs 'deny'
@@ -103,6 +93,33 @@ export async function runRedactionTraversalTests() {
     assert((result.value as any).other === 'X', 'Test 6b: keys without an override still go through generic traversal');
   } catch (err: any) {
     assert(false, 'Test 6: handleKey override', err.message);
+  }
+
+  // TEST 7: type-aware handling — Date/RegExp preserved, Map/Set/class inspected + type-preserved
+  try {
+    class Money {
+      constructor(public label: string) {}
+    }
+    const now = new Date();
+    const input = {
+      ts: now,
+      pattern: /abc/gi,
+      lookup: new Map([['k', 'secret']]),
+      tags: new Set(['secret']),
+      money: new Money('secret'),
+    };
+
+    const { value, modified } = traverseAndRedact(input, { maxDepth: 20, transformString: upper });
+    const out = value as any;
+
+    assert(out.ts instanceof Date && out.ts.getTime() === now.getTime(), 'Test 7a: Date preserved unchanged');
+    assert(out.pattern instanceof RegExp && out.pattern.source === 'abc', 'Test 7b: RegExp preserved unchanged');
+    assert(out.lookup instanceof Map && out.lookup.get('k') === 'SECRET', 'Test 7c: Map type preserved AND its values inspected/transformed');
+    assert(out.tags instanceof Set && out.tags.has('SECRET'), 'Test 7d: Set type preserved AND its members inspected/transformed');
+    assert(out.money instanceof Money && out.money.label === 'SECRET', 'Test 7e: class instance keeps its prototype AND its string fields are inspected');
+    assert(modified === true, 'Test 7f: inspecting inside Map/Set/class counts as a modification');
+  } catch (err: any) {
+    assert(false, 'Test 7: type-aware container handling', err.message);
   }
 
   console.log(`\n  📊 traverseAndRedact Test Results: ${passed} passed, ${failed} failed.\n`);

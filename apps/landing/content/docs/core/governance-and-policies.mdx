@@ -173,4 +173,4 @@ new PiiRedactionPolicy({
 
 PII detection here is pattern-based, not exhaustive — it complements, and does not replace, structured data classification for regulated workloads (HIPAA, PCI-DSS, GDPR).
 
-The shared traversal fails closed: output nested deeper than `maxDepth` is **denied**, not silently allowed through unexamined, since PII could be hiding in the unchecked subtree. It also defaults to safe cloning — prototype-polluting keys (`__proto__`, `prototype`, `constructor`) are dropped, and non-plain values (`Date`, `Map`, `Set`, class instances) pass through unchanged instead of being corrupted into a plain object.
+The shared traversal fails closed: output nested deeper than `maxDepth` is **denied**, not silently allowed through unexamined, since PII could be hiding in the unchecked subtree. It is also type-aware — `Map`, `Set`, and class instances keep their type while their contents are still inspected and redacted, `Date`/`RegExp` are preserved as-is, and prototype-polluting keys (`__proto__`, `prototype`, `constructor`) are dropped (which itself counts as a redaction, so the sanitized clone is always the value returned).

@@ -19,7 +19,12 @@ export interface PiiRedactionPolicyOptions {
   /** Redact US Social Security Numbers (`###-##-####`). Default: `true` */
   redactSsn?: boolean;
 
-  /** Additional custom regular expression patterns to match and redact. */
+  /**
+   * Additional custom regular expression patterns to match and redact. Patterns are
+   * developer-supplied and must be trusted: a catastrophically-backtracking expression
+   * applied to large tool output could cause a ReDoS-style stall. Prefer simple,
+   * pre-reviewed patterns and avoid sourcing them from untrusted tenant input.
+   */
   customPatterns?: RegExp[];
 
   /**
@@ -120,7 +125,14 @@ export class PiiRedactionPolicy implements ToolPolicy {
     this.customPatterns = options?.customPatterns ?? [];
     this.sensitiveKeys = new Set(options?.sensitiveKeys ?? []);
     this.maskPlaceholder = options?.maskPlaceholder;
-    this.maxDepth = options?.maxDepth ?? 50;
+
+    const maxDepth = options?.maxDepth ?? 50;
+    if (!Number.isInteger(maxDepth) || maxDepth < 0) {
+      throw new TypeError(
+        `PiiRedactionPolicy: maxDepth must be a non-negative integer, received ${String(maxDepth)}.`,
+      );
+    }
+    this.maxDepth = maxDepth;
   }
 
   /**

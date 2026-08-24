@@ -273,33 +273,75 @@ export async function runPiiRedactionTests() {
     assert(false, 'Test 13: prototype-pollution safety', err.message);
   }
 
-  // TEST 14: Non-plain objects (Date, Map, Set, class instances) are preserved, not corrupted
+  // TEST 14: Non-plain objects keep their type, and their contents are still inspected for PII
   try {
     const policy = new PiiRedactionPolicy();
-    class Money {
-      constructor(public cents: number) {}
+    class Contact {
+      constructor(public email: string, public id: number) {}
     }
     const now = new Date();
     const output = {
-      email: 'jane@example.com',
-      createdAt: now,
-      tags: new Set(['vip', 'returning']),
-      lookup: new Map([['k', 'v']]),
-      price: new Money(1999),
+      createdAt: now, // opaque value type: preserved, carries no PII
+      tags: new Set(['vip', 'jane@example.com']),
+      lookup: new Map([['primary', 'reach me at bob@example.com']]),
+      contact: new Contact('carol@example.com', 7),
     };
 
     const result = await policy.evaluateOutput(dummyCtx, 'fetchRecord', output);
-    assert(result.decision === 'sanitize', 'Test 14a: object with PII alongside non-plain values is still sanitized');
+    assert(result.decision === 'sanitize', 'Test 14a: object with PII inside non-plain containers is sanitized');
     if (result.decision === 'sanitize') {
       const sanitized = result.sanitizedResult as typeof output;
-      assert(!sanitized.email.includes('jane@example.com'), 'Test 14b: PII field is still redacted');
-      assert(sanitized.createdAt instanceof Date && sanitized.createdAt.getTime() === now.getTime(), 'Test 14c: Date value preserved, not corrupted to {}');
-      assert(sanitized.tags instanceof Set && sanitized.tags.has('vip'), 'Test 14d: Set value preserved');
-      assert(sanitized.lookup instanceof Map && sanitized.lookup.get('k') === 'v', 'Test 14e: Map value preserved');
-      assert(sanitized.price instanceof Money && sanitized.price.cents === 1999, 'Test 14f: class instance preserved');
+      assert(sanitized.createdAt instanceof Date && sanitized.createdAt.getTime() === now.getTime(), 'Test 14b: Date value preserved, not corrupted');
+      // Type preserved AND contents inspected — PII inside must not slip through.
+      assert(sanitized.tags instanceof Set, 'Test 14c: Set type preserved');
+      assert(!sanitized.tags.has('jane@example.com') && sanitized.tags.has('vip'), 'Test 14d: PII inside a Set is redacted, non-PII member kept');
+      assert(sanitized.lookup instanceof Map, 'Test 14e: Map type preserved');
+      assert(!String(sanitized.lookup.get('primary')).includes('bob@example.com'), 'Test 14f: PII inside a Map value is redacted');
+      assert(sanitized.contact instanceof Contact, 'Test 14g: class instance keeps its prototype (instanceof still holds)');
+      assert(!sanitized.contact.email.includes('carol@example.com'), 'Test 14h: PII in a class-instance field is redacted');
+      assert(sanitized.contact.id === 7, 'Test 14i: non-PII class-instance field preserved');
     }
   } catch (err: any) {
-    assert(false, 'Test 14: non-plain object preservation', err.message);
+    assert(false, 'Test 14: non-plain container inspection', err.message);
+  }
+
+  // TEST 17: PII hidden only under a forbidden (__proto__) key does not leak
+  try {
+    const policy = new PiiRedactionPolicy();
+    // An own __proto__ key whose subtree contains PII; the forbidden key must be
+    // dropped AND the result treated as sanitized (not allowed through as-is).
+    const malicious = JSON.parse('{"__proto__": {"email": "leaked@example.com"}}');
+
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchRecord', malicious);
+    assert(result.decision === 'sanitize', 'Test 17a: an object whose only content is under a forbidden key is sanitized, not allowed');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as Record<string, unknown>;
+      assert(!Object.prototype.hasOwnProperty.call(sanitized, '__proto__'), 'Test 17b: the forbidden key is dropped from the sanitized clone');
+      assert(JSON.stringify(sanitized) === '{}', 'Test 17c: the PII-bearing subtree does not survive into the output');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 17: PII under a forbidden key', err.message);
+  }
+
+  // TEST 18: maxDepth is validated at construction
+  try {
+    let threw = false;
+    try {
+      new PiiRedactionPolicy({ maxDepth: -1 });
+    } catch {
+      threw = true;
+    }
+    assert(threw, 'Test 18a: a negative maxDepth is rejected at construction');
+
+    let threwNaN = false;
+    try {
+      new PiiRedactionPolicy({ maxDepth: Number.NaN });
+    } catch {
+      threwNaN = true;
+    }
+    assert(threwNaN, 'Test 18b: a non-integer maxDepth is rejected at construction');
+  } catch (err: any) {
+    assert(false, 'Test 18: maxDepth validation', err.message);
   }
 
   // TEST 15: Circular references inside arrays are handled safely (not just plain objects)

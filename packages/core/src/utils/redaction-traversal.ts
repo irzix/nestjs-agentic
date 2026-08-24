@@ -10,7 +10,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** What a traversal does when a plain object/array is nested deeper than `maxDepth`. */
+/** What a traversal does when a value is nested deeper than `maxDepth`. */
 export type DepthExceededBehavior =
   /** Return the subtree unchanged, without inspecting it further (legacy behavior). */
   | 'passthrough'
@@ -42,15 +42,6 @@ export interface RedactionTraversalOptions {
   onDepthExceeded?: DepthExceededBehavior;
 
   /**
-   * When `false`, non-plain objects (`Date`, `Map`, `Set`, class instances, etc.) are
-   * cloned into a plain `{}`/`[]`, which corrupts their semantics (an empty object in
-   * place of a `Date`). Set to `false` only if a caller specifically needs the legacy
-   * clone-everything behavior.
-   * Default: `true` (non-plain values are returned unchanged).
-   */
-  preserveNonPlainObjects?: boolean;
-
-  /**
    * When `false`, prototype-polluting keys (`__proto__`, `prototype`, `constructor`)
    * are cloned like any other key, which can mutate the sanitized clone's prototype
    * chain from untrusted input. Set to `false` only for trusted input where these keys
@@ -63,9 +54,9 @@ export interface RedactionTraversalOptions {
 export interface RedactionTraversalResult {
   /** The (possibly cloned and redacted) value. */
   value: unknown;
-  /** Whether any string or keyed value was changed. */
+  /** Whether any string, keyed value, or dropped forbidden key changed the output. */
   modified: boolean;
-  /** Whether a plain object/array nested deeper than `maxDepth` was encountered. */
+  /** Whether a value nested deeper than `maxDepth` was encountered (only when `onDepthExceeded: 'deny'`). */
   depthExceeded: boolean;
 }
 
@@ -88,7 +79,6 @@ export function traverseAndRedact(
   let depthExceeded = false;
   const seenMap = new WeakMap<object, unknown>();
   const onDepthExceeded = options.onDepthExceeded ?? 'passthrough';
-  const preserveNonPlainObjects = options.preserveNonPlainObjects ?? true;
   const skipForbiddenKeys = options.skipForbiddenKeys ?? true;
 
   function walk(value: unknown, depth: number): unknown {
@@ -115,18 +105,18 @@ export function traverseAndRedact(
       return value;
     }
 
-    const isArray = Array.isArray(value);
-    if (!isArray && preserveNonPlainObjects && !isPlainRecord(value)) {
-      // Non-plain object (Date, Map, Set, class instance, etc): returned unchanged
-      // to preserve its semantics rather than being cloned into a plain {}.
-      return value;
-    }
-
     if (seenMap.has(value)) {
       return seenMap.get(value);
     }
 
-    if (isArray) {
+    // Value-like objects with internal slots that can't be reconstructed by copying
+    // enumerable properties, and that carry no redactable string content. Preserved
+    // as-is so their semantics survive sanitization.
+    if (value instanceof Date || value instanceof RegExp) {
+      return value;
+    }
+
+    if (Array.isArray(value)) {
       const clone: unknown[] = [];
       seenMap.set(value, clone);
       for (const item of value) {
@@ -135,13 +125,43 @@ export function traverseAndRedact(
       return clone;
     }
 
-    // Cloning into a null-prototype container means an own `__proto__` key on the
-    // source object can never mutate a real prototype chain, regardless of
-    // `skipForbiddenKeys` — a defense-in-depth floor under the opt-out.
-    const clone: Record<string, unknown> = Object.create(null);
+    // Map/Set are rebuilt with their type preserved AND their contents inspected,
+    // so PII/secrets held inside them can't slip through unredacted. Map keys are
+    // left intact (transforming them would break lookups); values — where payload
+    // data lives — are recursed.
+    if (value instanceof Map) {
+      const clone = new Map<unknown, unknown>();
+      seenMap.set(value, clone);
+      for (const [k, v] of value) {
+        clone.set(k, walk(v, depth + 1));
+      }
+      return clone;
+    }
+
+    if (value instanceof Set) {
+      const clone = new Set<unknown>();
+      seenMap.set(value, clone);
+      for (const member of value) {
+        clone.add(walk(member, depth + 1));
+      }
+      return clone;
+    }
+
+    // Plain records clone into a null-prototype container so an own `__proto__` key on
+    // untrusted input can never mutate a real prototype chain. Class instances clone
+    // onto their original prototype, so `instanceof` and methods survive while their
+    // enumerable string fields are still inspected and redacted.
+    const plain = isPlainRecord(value);
+    const clone: Record<string, unknown> = plain
+      ? Object.create(null)
+      : Object.create(Object.getPrototypeOf(value));
     seenMap.set(value, clone);
     for (const [k, v] of Object.entries(value)) {
       if (skipForbiddenKeys && FORBIDDEN_KEYS.has(k)) {
+        // Dropping the key changes the output, so the caller must treat this as a
+        // modification — otherwise a result whose only unsafe content sits under a
+        // forbidden key would be reported unchanged and the original forwarded.
+        modified = true;
         continue;
       }
 
