@@ -103,7 +103,7 @@ export class SecretRedactionPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    const { value, modified } = traverseAndRedact(result, {
+    const { value, modified, keyCollision } = traverseAndRedact(result, {
       maxDepth: this.maxDepth,
       transformString: (text) => this.redactString(text),
       handleKey: (key, keyValue) => {
@@ -113,6 +113,15 @@ export class SecretRedactionPolicy implements ToolPolicy {
         return { handled: false };
       },
     });
+
+    // Redacting Map keys collapsed two distinct keys into one, which would silently
+    // drop an entry — fail closed rather than return a Map that lost data.
+    if (keyCollision) {
+      return {
+        decision: 'deny',
+        reason: 'Redacting secrets in Map keys produced a key collision; refusing to return output that would silently drop an entry.',
+      };
+    }
 
     if (modified) {
       return { decision: 'sanitize', sanitizedResult: value };

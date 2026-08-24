@@ -170,7 +170,7 @@ export class PiiRedactionPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    const { value, modified, depthExceeded } = traverseAndRedact(result, {
+    const { value, modified, depthExceeded, keyCollision } = traverseAndRedact(result, {
       maxDepth: this.maxDepth,
       onDepthExceeded: 'deny',
       transformString: (text) => this.redactString(text),
@@ -192,6 +192,15 @@ export class PiiRedactionPolicy implements ToolPolicy {
       return {
         decision: 'deny',
         reason: `Tool output exceeds maximum PII-scanning depth (${this.maxDepth}); unable to fully inspect for personal data.`,
+      };
+    }
+
+    // Redacting Map keys collapsed two distinct keys into one, which would silently
+    // drop an entry — fail closed rather than return a Map that lost data.
+    if (keyCollision) {
+      return {
+        decision: 'deny',
+        reason: 'Redacting PII in Map keys produced a key collision; refusing to return output that would silently drop an entry.',
       };
     }
 

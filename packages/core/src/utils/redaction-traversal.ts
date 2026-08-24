@@ -58,6 +58,12 @@ export interface RedactionTraversalResult {
   modified: boolean;
   /** Whether a value nested deeper than `maxDepth` was encountered (only when `onDepthExceeded: 'deny'`). */
   depthExceeded: boolean;
+  /**
+   * Whether redacting a `Map`'s string keys caused two distinct keys to collapse to the
+   * same value, which would silently drop an entry. Callers should fail closed rather
+   * than return a Map that lost data.
+   */
+  keyCollision: boolean;
 }
 
 /**
@@ -77,6 +83,7 @@ export function traverseAndRedact(
 ): RedactionTraversalResult {
   let modified = false;
   let depthExceeded = false;
+  let keyCollision = false;
   const seenMap = new WeakMap<object, unknown>();
   const onDepthExceeded = options.onDepthExceeded ?? 'passthrough';
   const skipForbiddenKeys = options.skipForbiddenKeys ?? true;
@@ -126,15 +133,28 @@ export function traverseAndRedact(
     }
 
     // Map/Set are rebuilt with their type preserved AND their contents inspected,
-    // so PII/secrets held inside them can't slip through unredacted. Both keys and
-    // values are recursed — a key can itself be PII-bearing. In the common case a
-    // key carries no sensitive pattern and is returned unchanged, so lookups still
-    // work; only a key that actually matches a redaction rule is rewritten.
+    // so PII/secrets held inside them can't slip through unredacted.
     if (value instanceof Map) {
       const clone = new Map<unknown, unknown>();
       seenMap.set(value, clone);
       for (const [k, v] of value) {
-        clone.set(walk(k, depth + 1), walk(v, depth + 1));
+        // String keys are redacted so PII in a key can't leak. Non-string keys
+        // (objects, etc) are preserved by reference: cloning them would break
+        // reference-based `Map.get` lookups even when they carry no sensitive data.
+        let newKey: unknown = k;
+        if (typeof k === 'string') {
+          const transformedKey = options.transformString(k);
+          if (transformedKey !== k) {
+            modified = true;
+            // A redacted key that collides with an existing one would silently drop
+            // an entry; flag it so the caller can fail closed instead of losing data.
+            if (clone.has(transformedKey)) {
+              keyCollision = true;
+            }
+          }
+          newKey = transformedKey;
+        }
+        clone.set(newKey, walk(v, depth + 1));
       }
       return clone;
     }
@@ -181,5 +201,5 @@ export function traverseAndRedact(
   }
 
   const value = walk(root, 0);
-  return { value, modified, depthExceeded };
+  return { value, modified, depthExceeded, keyCollision };
 }

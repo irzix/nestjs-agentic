@@ -371,6 +371,44 @@ export async function runPiiRedactionTests() {
     assert(false, 'Test 19: PII in Map keys', err.message);
   }
 
+  // TEST 20: object Map keys are preserved by reference so lookups still work
+  try {
+    const policy = new PiiRedactionPolicy();
+    const objKey = { id: 1 };
+    const input = { records: new Map<object, string>([[objKey, 'reach me at jane@example.com']]) };
+
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchRecords', input);
+    assert(result.decision === 'sanitize', 'Test 20a: PII in the value still triggers sanitization');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as { records: Map<object, string> };
+      // The original object key reference must still resolve — it was not cloned.
+      assert(sanitized.records.get(objKey) !== undefined, 'Test 20b: an object Map key is preserved by reference (lookup still works)');
+      assert(!String(sanitized.records.get(objKey)).includes('jane@example.com'), 'Test 20c: the value under the object key is still redacted');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 20: object Map key preservation', err.message);
+  }
+
+  // TEST 21: a Map-key redaction collision fails closed instead of silently dropping an entry
+  try {
+    const policy = new PiiRedactionPolicy();
+    // Two distinct email keys both redact to [REDACTED_EMAIL] -> collision.
+    const input = {
+      records: new Map([
+        ['alice@example.com', 'first'],
+        ['bob@example.com', 'second'],
+      ]),
+    };
+
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchRecords', input);
+    assert(result.decision === 'deny', 'Test 21a: a Map-key redaction collision fails closed (deny)');
+    if (result.decision === 'deny') {
+      assert(result.reason.toLowerCase().includes('collision'), 'Test 21b: the denial reason explains the key collision');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 21: Map key collision fail-closed', err.message);
+  }
+
   // TEST 15: Circular references inside arrays are handled safely (not just plain objects)
   try {
     const policy = new PiiRedactionPolicy();
