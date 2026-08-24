@@ -1,5 +1,11 @@
 # @nestjs-agentic/core
 
+## 1.3.0
+
+### Minor Changes
+
+- eb84976: Add `AgenticModuleOptions.defaultPolicies`, a module-wide policy chain applied to every discovered tool that doesn't opt out via the new `@ExemptFromDefaultPolicies()` decorator — enabling deny-by-default governance instead of purely per-tool opt-in via `@UsePolicies`. Default policies evaluate before class-level and method-level `@UsePolicies`. Closes #135.
+
 ## 1.2.0
 
 ## 1.1.0
