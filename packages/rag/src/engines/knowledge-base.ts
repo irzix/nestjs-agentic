@@ -79,7 +79,8 @@ export class KnowledgeBase {
    * @returns Promise resolving to an array of matching DocumentChunk objects.
    */
   async queryChunks(query: string, limit = 5, filter?: Record<string, unknown>): Promise<DocumentChunk[]> {
-    return this.vectorStore.searchChunks(query, limit, filter);
+    const chunks = await this.vectorStore.searchChunks(query, limit, filter);
+    return chunks.map((chunk) => KnowledgeBase.tagExternal(chunk));
   }
 
   /**
@@ -101,11 +102,23 @@ export class KnowledgeBase {
     filter?: Record<string, unknown>,
   ): Promise<ScoredDocumentChunk[]> {
     if (this.vectorStore.searchChunksScored) {
-      return this.vectorStore.searchChunksScored(query, limit, filter);
+      const scored = await this.vectorStore.searchChunksScored(query, limit, filter);
+      return scored.map(({ chunk, score }) => ({ chunk: KnowledgeBase.tagExternal(chunk), score }));
     }
 
     const chunks = await this.vectorStore.searchChunks(query, limit, filter);
-    return chunks.map((chunk, rank) => ({ chunk, score: 1 / (rank + 1) }));
+    return chunks.map((chunk, rank) => ({ chunk: KnowledgeBase.tagExternal(chunk), score: 1 / (rank + 1) }));
+  }
+
+  /**
+   * Stamps a retrieved chunk with `external` provenance. Retrieval is a trust
+   * boundary: whatever a (possibly custom or compromised) vector store returns is
+   * untrusted content, so the framework always assigns `{ source: 'external' }`
+   * here rather than trusting a caller-supplied label. This prevents a store from
+   * laundering external content as `model`/`user` to weaken downstream guardrails.
+   */
+  private static tagExternal(chunk: DocumentChunk): DocumentChunk {
+    return { ...chunk, provenance: { source: 'external', origin: chunk.parentId } };
   }
 
   /**

@@ -8,6 +8,7 @@ export * from './idempotency.interface';
 export * from './model.interface';
 export * from './observer.interface';
 export * from './policy.interface';
+export * from './provenance.interface';
 export * from './runtime.interface';
 export * from './session.interface';
 export * from './state-store.interface';

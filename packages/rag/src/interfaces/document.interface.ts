@@ -1,3 +1,5 @@
+import type { Provenance } from '@nestjs-agentic/core';
+
 /**
   * Represents a granular text chunk derived from a parent document.
   */
@@ -12,6 +14,12 @@ export interface DocumentChunk {
   embedding?: number[];
   /** Custom domain metadata attributes (e.g. section title, page number, author). */
   metadata: Record<string, unknown>;
+  /**
+   * Provenance label for the chunk. Retrieved chunks are stamped by `KnowledgeBase`
+   * as `{ source: 'external' }` since their content originates from ingested documents
+   * that may be untrusted. Optional and purely additive.
+   */
+  provenance?: Provenance;
 }
 
 /**

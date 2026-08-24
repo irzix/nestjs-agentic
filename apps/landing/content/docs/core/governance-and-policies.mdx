@@ -108,3 +108,38 @@ const safe = PromptInjectionSanitizer.wrapWithBoundary('untrusted_pr_diff', rawD
 `wrapWithBoundary` rejects tag names that aren't valid XML-name-like identifiers and neutralizes any occurrence of the boundary markup inside the content, so untrusted text can't close or forge its own boundary. When traversing structured tool output, `PromptInjectionSanitizationPolicy` only rewrites plain objects and arrays — `Date`, `Map`, `Set`, and class instances pass through unchanged — and denies output nested deeper than its configured `maxDepth` rather than returning an uninspected subtree.
 
 This is a mitigation, not a guarantee — a novel injection payload that doesn't match a known delimiter pattern will still pass through. Prefer provider-native structured message roles for isolating untrusted data where available.
+
+---
+
+## Provenance and Taint Tracking
+
+Content flowing through an agent carries an optional **provenance** label so policies, audit sinks, and observers can reason about *where content came from*, not just what it says. This is the structural prerequisite for trust-aware guardrails: you can sanitize known-bad patterns without provenance, but distinguishing "the model produced this" from "an untrusted document produced this" requires an origin label.
+
+```typescript
+type ProvenanceSource = 'model' | 'tool' | 'external' | 'user';
+
+interface Provenance {
+  source: ProvenanceSource;
+  origin?: string; // e.g. tool name, document source URL, retrieval store id
+}
+```
+
+The label is populated on built-in paths:
+
+- **Tool execution** — `LocalToolProvider` stamps successful tool results with `{ source: 'tool', origin: <toolName> }`; `AgentExecutor` attaches the same label to failed (thrown) tool payloads and to the resulting `{ role: 'tool' }` message.
+- **RAG retrieval** — `KnowledgeBase.queryChunks`/`queryChunksScored` tag retrieved chunks with `{ source: 'external', origin: <parentDocumentId> }`. Retrieval is a trust boundary: whatever a (possibly custom or compromised) vector store returns is treated as untrusted, so the framework always assigns `external` here rather than trusting a store-supplied label — a store cannot launder external content as `model`/`user`.
+
+A policy's `evaluateOutput` hook receives the label as an optional fourth argument, so it can make trust-aware decisions:
+
+```typescript
+async evaluateOutput(ctx, toolName, result, provenance) {
+  if (provenance?.source === 'external') {
+    // apply stricter handling to externally-sourced content
+  }
+  return { decision: 'allow' };
+}
+```
+
+The field is fully additive: every part is optional, and tools or policies that ignore it are unaffected. Enforcement (e.g. refusing to let externally-sourced content act as instructions) is follow-on work built on top of these labels.
+
+A label is only authoritative when the framework assigns it at a boundary it controls (tool execution, RAG retrieval). A `provenance` value that arrives on caller-supplied data — a hand-built `ModelMessage`, a raw `DocumentChunk` handed to a custom store — is advisory and must not be treated as a security assertion on its own. Trust-aware policies should combine provenance with the actual execution/retrieval context rather than relying on the label alone.

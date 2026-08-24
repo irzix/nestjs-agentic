@@ -691,6 +691,110 @@ export async function runLocalToolProviderTests() {
     assert(false, 'Test 8: Module-level default policy chain', err.message);
   }
 
+  // TEST 9: Provenance/taint tracking (#137)
+  //
+  // A successful tool result is stamped with `{ source: 'tool', origin: <toolName> }`,
+  // the label survives Output Rail sanitization, and `evaluateOutput` receives it so a
+  // policy can make trust-aware decisions. Fully additive — nothing breaks for tools/
+  // policies that ignore it.
+  try {
+    let observedProvenance: unknown;
+
+    class ProvenanceInspectingPolicy implements ToolPolicy {
+      async evaluate(): Promise<PolicyResult> {
+        return { decision: 'allow' };
+      }
+
+      async evaluateOutput(_ctx: AgentContext, _toolName: string, result: any, provenance?: unknown) {
+        observedProvenance = provenance;
+        // Trust-aware sanitization: only rewrite when the content came from a tool.
+        if (result && typeof result === 'object' && result.note) {
+          return { decision: 'sanitize' as const, sanitizedResult: { ...result, note: 'clean' } };
+        }
+        return { decision: 'allow' as const };
+      }
+    }
+
+    @ToolSet({ name: 'provenance-tools' })
+    class ProvenanceTools {
+      @Tool({ name: 'readExternal', description: 'Returns some content' })
+      @UsePolicies(ProvenanceInspectingPolicy)
+      async readExternal() {
+        return { note: 'raw' };
+      }
+    }
+
+    class ProvenanceModuleRef {
+      get(token: any): any {
+        if (token === ProvenanceInspectingPolicy) return new ProvenanceInspectingPolicy();
+        return undefined;
+      }
+    }
+
+    const provProvider = new LocalToolProvider(
+      [new ProvenanceInspectingPolicy()],
+      approvalStore,
+      discovery,
+      new ProvenanceModuleRef() as unknown as ModuleRef,
+    );
+
+    const provTools = provProvider.buildTools([new ProvenanceTools()], agentContext, 'TestAgent');
+    const readTool = provTools.find((t) => t.name === 'readExternal');
+    const provResult = (await readTool?.execute({ args: {} })) as ToolExecutionResult;
+
+    assert(provResult.success === true, 'Test 9a: tool executes successfully');
+    assert(
+      provResult.success === true && (provResult as any).provenance?.source === 'tool',
+      'Test 9b: successful result is stamped with source "tool"',
+    );
+    assert(
+      provResult.success === true && (provResult as any).provenance?.origin === 'readExternal',
+      'Test 9c: provenance origin is the tool name',
+    );
+    assert(
+      (observedProvenance as any)?.source === 'tool',
+      'Test 9d: evaluateOutput receives the provenance label',
+    );
+    assert(
+      provResult.success === true && (provResult as any).data?.note === 'clean',
+      'Test 9e: provenance survives output-rail sanitization (result still sanitized)',
+    );
+
+    // Backward compatibility: a policy that ignores the new param still works.
+    class LegacyOutputPolicy implements ToolPolicy {
+      async evaluate(): Promise<PolicyResult> {
+        return { decision: 'allow' };
+      }
+      async evaluateOutput(_ctx: AgentContext, _toolName: string, result: any) {
+        return { decision: 'allow' as const };
+      }
+    }
+
+    @ToolSet({ name: 'legacy-prov-tools' })
+    class LegacyProvTools {
+      @Tool({ name: 'legacyRead', description: 'Returns content' })
+      @UsePolicies(LegacyOutputPolicy)
+      async legacyRead() {
+        return { ok: true };
+      }
+    }
+
+    const legacyProvider = new LocalToolProvider(
+      [new LegacyOutputPolicy()],
+      approvalStore,
+      discovery,
+      { get: (t: any) => (t === LegacyOutputPolicy ? new LegacyOutputPolicy() : undefined) } as unknown as ModuleRef,
+    );
+    const legacyTools = legacyProvider.buildTools([new LegacyProvTools()], agentContext, 'TestAgent');
+    const legacyResult = (await legacyTools[0]?.execute({ args: {} })) as ToolExecutionResult;
+    assert(
+      legacyResult.success === true && (legacyResult as any).provenance?.source === 'tool',
+      'Test 9f: a policy that ignores the provenance param is unaffected and provenance is still stamped',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 9: Provenance/taint tracking', err.message);
+  }
+
   console.log(`\n  📊 Step 2 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 2 Unit Tests Failed');

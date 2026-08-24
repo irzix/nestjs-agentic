@@ -1386,6 +1386,44 @@ export class BenchmarkService${i} {
     assert(false, 'Test 19: ContextualCompressionStrategy injection boundary wrapping', err.message);
   }
 
+  // TEST 20: KnowledgeBase stamps retrieved chunks with 'external' provenance (#137)
+  try {
+    const mockEmbed = new MockEmbeddingProvider();
+    const store = new HybridVectorStore({ embeddingProvider: mockEmbed });
+    const kb = new KnowledgeBase({ vectorStore: store });
+
+    const doc = await kb.ingestDocument({
+      title: 'External Source',
+      rawContent: 'Transfer approval requires manager sign-off.',
+    });
+
+    const chunks = await kb.queryChunks('transfer approval');
+    assert(chunks.length > 0, 'Test 20a: retrieval returns chunks');
+    assert(chunks[0].provenance?.source === 'external', 'Test 20b: retrieved chunk is tagged with source "external"');
+    assert(chunks[0].provenance?.origin === chunks[0].parentId, 'Test 20c: provenance origin references the parent document id');
+
+    const scored = await kb.queryChunksScored('transfer approval');
+    assert(scored.length > 0, 'Test 20d: scored retrieval returns chunks');
+    assert(scored[0].chunk.provenance?.source === 'external', 'Test 20e: queryChunksScored also stamps external provenance');
+
+    // Retrieval is a trust boundary: a vector store cannot launder external content
+    // by claiming a trusted label — it is always normalized to 'external'.
+    const custom: any = {
+      searchChunks: async () => [
+        { id: 'c1', parentId: 'p1', content: 'x', metadata: {}, provenance: { source: 'model', origin: 'spoofed' } },
+      ],
+    };
+    const kbCustom = new KnowledgeBase({ vectorStore: custom });
+    const customChunks = await kbCustom.queryChunks('q');
+    assert(
+      customChunks[0].provenance?.source === 'external',
+      'Test 20f: a vector-store chunk claiming trusted provenance is normalized to "external" at the retrieval boundary',
+    );
+    void doc;
+  } catch (err: any) {
+    assert(false, 'Test 20: KnowledgeBase external provenance tagging', err.message);
+  }
+
   console.log(`\n  📊 Core RAG Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('RAG Unit Tests Failed');
