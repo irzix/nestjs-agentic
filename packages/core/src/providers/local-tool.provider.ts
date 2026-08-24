@@ -28,8 +28,14 @@ type PolicyConstructor = new (...args: unknown[]) => ToolPolicy;
 
 @Injectable()
 export class LocalToolProvider {
-  /** Tools that already triggered the no-replacement-policy warning, so it logs once per tool rather than once per call. */
-  private readonly warnedExemptTools = new Set<string>();
+  /**
+   * Tools that already triggered the no-replacement-policy warning, so it
+   * logs once per tool rather than once per call. Keyed by instance + method
+   * name (not `toolName` alone) — two different toolsets can expose a tool
+   * with the same name, and toolName-only keying would let one suppress the
+   * other's warning.
+   */
+  private readonly warnedExemptTools = new WeakMap<object, Set<string>>();
 
   constructor(
     @Optional() @Inject(POLICY_INSTANCES) private readonly policyInstances: ToolPolicy[],
@@ -61,8 +67,15 @@ export class LocalToolProvider {
    */
   private warnIfExemptWithNoPolicies(tool: DiscoveredTool, allPolicyConstructors: PolicyConstructor[]): void {
     if (!tool.exemptFromDefaultPolicies || allPolicyConstructors.length > 0) return;
-    if (this.warnedExemptTools.has(tool.toolName)) return;
-    this.warnedExemptTools.add(tool.toolName);
+
+    let warnedMethods = this.warnedExemptTools.get(tool.instance);
+    if (!warnedMethods) {
+      warnedMethods = new Set();
+      this.warnedExemptTools.set(tool.instance, warnedMethods);
+    }
+    if (warnedMethods.has(tool.methodName)) return;
+    warnedMethods.add(tool.methodName);
+
     console.warn(
       `[LocalToolProvider] Tool "${tool.toolName}" is @ExemptFromDefaultPolicies() and has no @UsePolicies of its own — it runs with zero policy evaluation.`,
     );

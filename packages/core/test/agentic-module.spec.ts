@@ -225,6 +225,7 @@ export async function runAgenticModuleTests() {
   }
 
   // TEST 4: defaultPolicies wired end-to-end through forRoot()/forFeature() (#135)
+  let test4ModuleRef: { close(): Promise<void> } | undefined;
   try {
     const { ExemptFromDefaultPolicies } = await import('../src');
 
@@ -275,6 +276,7 @@ export async function runAgenticModuleTests() {
         }),
       ],
     }).compile();
+    test4ModuleRef = moduleRef;
 
     const runner = moduleRef.get(AgentRunner, { strict: false });
 
@@ -297,11 +299,11 @@ export async function runAgenticModuleTests() {
       exemptToolResult?.success === true,
       'Test 4b: @ExemptFromDefaultPolicies() lets the tool run despite the module default policy chain, resolved through real DI',
     );
-
-    await moduleRef.close();
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     assert(false, 'Test 4: defaultPolicies wired through forRoot/forFeature', message);
+  } finally {
+    await test4ModuleRef?.close();
   }
 
   console.log(`\n  📊 Step 8 Results: ${passed} passed, ${failed} failed.\n`);

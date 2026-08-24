@@ -619,6 +619,51 @@ export async function runLocalToolProviderTests() {
       warnSpy.filter((m) => m.includes('fullyUnguardedAction')).length === 1,
       'Test 8e2: the warning is logged once per tool, not once per call',
     );
+
+    // 8f. Two different toolsets exposing a same-named exempt+unguarded tool
+    // must each get their own warning — collision-free per-instance/method
+    // keying, not keyed by toolName alone (review feedback).
+    @ToolSet({ name: 'toolset-a' })
+    class ToolsetA {
+      @Tool({ name: 'lookup', description: 'Exempt, unguarded, in toolset A' })
+      @ExemptFromDefaultPolicies()
+      async lookup() {
+        return { from: 'A' };
+      }
+    }
+    @ToolSet({ name: 'toolset-b' })
+    class ToolsetB {
+      @Tool({ name: 'lookup', description: 'Exempt, unguarded, in toolset B' })
+      @ExemptFromDefaultPolicies()
+      async lookup() {
+        return { from: 'B' };
+      }
+    }
+
+    const collisionWarnSpy: string[] = [];
+    const originalWarn2 = console.warn;
+    console.warn = (msg: string) => collisionWarnSpy.push(msg);
+    try {
+      const collisionProvider = new LocalToolProvider(
+        [],
+        approvalStore,
+        discovery,
+        new DefaultPolicyModuleRef() as unknown as ModuleRef,
+        undefined,
+        undefined,
+        { defaultModel: {} as any, defaultPolicies: [] },
+      );
+      const toolsA = collisionProvider.buildTools([new ToolsetA()], agentContext);
+      const toolsB = collisionProvider.buildTools([new ToolsetB()], agentContext);
+      await toolsA.find((t) => t.name === 'lookup')?.execute({ args: {} });
+      await toolsB.find((t) => t.name === 'lookup')?.execute({ args: {} });
+    } finally {
+      console.warn = originalWarn2;
+    }
+    assert(
+      collisionWarnSpy.filter((m) => m.includes('"lookup"')).length === 2,
+      'Test 8f: two distinct toolsets exposing a same-named exempt tool each independently trigger the warning',
+    );
   } catch (err: any) {
     assert(false, 'Test 8: Module-level default policy chain', err.message);
   }
