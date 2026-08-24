@@ -297,6 +297,8 @@ export async function runPiiRedactionTests() {
       assert(!sanitized.tags.has('jane@example.com') && sanitized.tags.has('vip'), 'Test 14d: PII inside a Set is redacted, non-PII member kept');
       assert(sanitized.lookup instanceof Map, 'Test 14e: Map type preserved');
       assert(!String(sanitized.lookup.get('primary')).includes('bob@example.com'), 'Test 14f: PII inside a Map value is redacted');
+      // A non-PII key ('primary') is preserved so the entry is still addressable.
+      assert(sanitized.lookup.has('primary'), 'Test 14g2: a non-PII Map key is left intact so lookups still work');
       assert(sanitized.contact instanceof Contact, 'Test 14g: class instance keeps its prototype (instanceof still holds)');
       assert(!sanitized.contact.email.includes('carol@example.com'), 'Test 14h: PII in a class-instance field is redacted');
       assert(sanitized.contact.id === 7, 'Test 14i: non-PII class-instance field preserved');
@@ -339,9 +341,34 @@ export async function runPiiRedactionTests() {
     } catch {
       threwNaN = true;
     }
-    assert(threwNaN, 'Test 18b: a non-integer maxDepth is rejected at construction');
+    assert(threwNaN, 'Test 18b: a non-finite (NaN) maxDepth is rejected at construction');
+
+    let threwFractional = false;
+    try {
+      new PiiRedactionPolicy({ maxDepth: 1.5 });
+    } catch {
+      threwFractional = true;
+    }
+    assert(threwFractional, 'Test 18c: a fractional (non-integer) maxDepth is rejected at construction');
   } catch (err: any) {
     assert(false, 'Test 18: maxDepth validation', err.message);
+  }
+
+  // TEST 19: PII in a Map key (not just the value) is redacted
+  try {
+    const policy = new PiiRedactionPolicy();
+    const output = { records: new Map([['jane@example.com', 'active']]) };
+
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchRecords', output);
+    assert(result.decision === 'sanitize', 'Test 19a: a PII-bearing Map key triggers sanitization');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as { records: Map<string, string> };
+      const keys = [...sanitized.records.keys()];
+      assert(!keys.some((k) => k.includes('jane@example.com')), 'Test 19b: the email in the Map key is redacted');
+      assert(keys.some((k) => k.includes('[REDACTED_EMAIL]')), 'Test 19c: the redacted key carries the placeholder');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 19: PII in Map keys', err.message);
   }
 
   // TEST 15: Circular references inside arrays are handled safely (not just plain objects)

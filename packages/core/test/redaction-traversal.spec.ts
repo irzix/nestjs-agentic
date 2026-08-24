@@ -18,15 +18,17 @@ export async function runRedactionTraversalTests() {
 
   const upper = (s: string) => s.toUpperCase();
 
-  // TEST 1: safe defaults — forbidden keys skipped and reported as a modification
+  // TEST 1: forbidden keys are skipped and reported as a modification (isolated,
+  // identity transform so only the key-dropping behavior is exercised)
   try {
-    const malicious = JSON.parse('{"__proto__": {"polluted": true}, "note": "x"}');
-    const { value, modified } = traverseAndRedact(malicious, { maxDepth: 10, transformString: upper });
+    const identity = (s: string) => s;
+    const malicious = JSON.parse('{"__proto__": {"polluted": true}}');
+    const { value, modified } = traverseAndRedact(malicious, { maxDepth: 10, transformString: identity });
     assert(({} as any).polluted === undefined, 'Test 1a: global Object.prototype not polluted (default skipForbiddenKeys)');
-    assert(!Object.prototype.hasOwnProperty.call(value, 'polluted'), 'Test 1b: forbidden key dropped from the clone by default');
-    assert(modified === true, 'Test 1c: dropping a forbidden key is reported as a modification');
+    assert(!Object.prototype.hasOwnProperty.call(value, '__proto__'), 'Test 1b: own __proto__ key dropped from the clone by default');
+    assert(modified === true, 'Test 1c: dropping a forbidden key alone is reported as a modification');
   } catch (err: any) {
-    assert(false, 'Test 1: safe defaults', err.message);
+    assert(false, 'Test 1: forbidden key handling', err.message);
   }
 
   // TEST 2: forbidden keys can be cloned through with an explicit opt-out
@@ -114,7 +116,8 @@ export async function runRedactionTraversalTests() {
 
     assert(out.ts instanceof Date && out.ts.getTime() === now.getTime(), 'Test 7a: Date preserved unchanged');
     assert(out.pattern instanceof RegExp && out.pattern.source === 'abc', 'Test 7b: RegExp preserved unchanged');
-    assert(out.lookup instanceof Map && out.lookup.get('k') === 'SECRET', 'Test 7c: Map type preserved AND its values inspected/transformed');
+    // 'upper' transforms both key ('k' -> 'K') and value ('secret' -> 'SECRET').
+    assert(out.lookup instanceof Map && out.lookup.get('K') === 'SECRET', 'Test 7c: Map type preserved AND both keys and values inspected/transformed');
     assert(out.tags instanceof Set && out.tags.has('SECRET'), 'Test 7d: Set type preserved AND its members inspected/transformed');
     assert(out.money instanceof Money && out.money.label === 'SECRET', 'Test 7e: class instance keeps its prototype AND its string fields are inspected');
     assert(modified === true, 'Test 7f: inspecting inside Map/Set/class counts as a modification');

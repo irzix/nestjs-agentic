@@ -126,14 +126,15 @@ export function traverseAndRedact(
     }
 
     // Map/Set are rebuilt with their type preserved AND their contents inspected,
-    // so PII/secrets held inside them can't slip through unredacted. Map keys are
-    // left intact (transforming them would break lookups); values — where payload
-    // data lives — are recursed.
+    // so PII/secrets held inside them can't slip through unredacted. Both keys and
+    // values are recursed — a key can itself be PII-bearing. In the common case a
+    // key carries no sensitive pattern and is returned unchanged, so lookups still
+    // work; only a key that actually matches a redaction rule is rewritten.
     if (value instanceof Map) {
       const clone = new Map<unknown, unknown>();
       seenMap.set(value, clone);
       for (const [k, v] of value) {
-        clone.set(k, walk(v, depth + 1));
+        clone.set(walk(k, depth + 1), walk(v, depth + 1));
       }
       return clone;
     }
