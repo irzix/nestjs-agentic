@@ -18,6 +18,7 @@ import { runToolDiscoveryTests } from './tool-discovery.spec';
 import { runModelCascadeTests } from './model-cascade.spec';
 import { runUCurveFormatterTests } from './u-curve-formatter.spec';
 import { runPromptInjectionSanitizerTests } from './prompt-injection-sanitizer.spec';
+import { runPiiRedactionTests } from './pii-redaction.spec';
 
 async function runAllCoreTests() {
   console.log('====================================================');
@@ -45,9 +46,10 @@ async function runAllCoreTests() {
     await runModelCascadeTests();
     await runUCurveFormatterTests();
     await runPromptInjectionSanitizerTests();
+    await runPiiRedactionTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 20 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 21 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

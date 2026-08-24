@@ -143,3 +143,32 @@ async evaluateOutput(ctx, toolName, result, provenance) {
 The field is fully additive: every part is optional, and tools or policies that ignore it are unaffected. Enforcement (e.g. refusing to let externally-sourced content act as instructions) is follow-on work built on top of these labels.
 
 A label is only authoritative when the framework assigns it at a boundary it controls (tool execution, RAG retrieval). A `provenance` value that arrives on caller-supplied data — a hand-built `ModelMessage`, a raw `DocumentChunk` handed to a custom store — is advisory and must not be treated as a security assertion on its own. Trust-aware policies should combine provenance with the actual execution/retrieval context rather than relying on the label alone.
+
+---
+
+## PII Detection and Redaction
+
+`PiiRedactionPolicy` is a built-in Output Rail that detects and redacts common personally identifiable information from tool output — email addresses, phone numbers (NANP and international formats), credit card numbers, and US Social Security Numbers — before it reaches the model reasoning loop. It shares its object-traversal logic with `SecretRedactionPolicy`, so both get the same circular-reference-safe, depth-bounded walking.
+
+```typescript
+import { PiiRedactionPolicy } from '@nestjs-agentic/core';
+
+@Tool({ name: 'fetch_customer_record' })
+@UsePolicies(new PiiRedactionPolicy())
+async fetchCustomerRecord() { ... }
+```
+
+Each category is independently toggleable, and credit card numbers are validated with a Luhn checksum to reduce false positives (a 16-digit number that fails the checksum is left untouched):
+
+```typescript
+new PiiRedactionPolicy({
+  redactEmail: true,
+  redactPhone: true,
+  redactCreditCard: true,
+  redactSsn: false, // e.g. disable for a jurisdiction without US SSNs
+  sensitiveKeys: ['homeAddress'], // masked wholesale regardless of content
+  customPatterns: [/EMP-\d{6}/g],
+});
+```
+
+PII detection here is pattern-based, not exhaustive — it complements, and does not replace, structured data classification for regulated workloads (HIPAA, PCI-DSS, GDPR).
