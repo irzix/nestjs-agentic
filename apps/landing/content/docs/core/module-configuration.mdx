@@ -103,7 +103,7 @@ export class FinanceModule {}
 
 ## Deny-by-Default Governance (`defaultPolicies`)
 
-Without `defaultPolicies`, policies are entirely opt-in per tool via `@UsePolicies(...)` — a tool with no annotation ships completely unguarded. `defaultPolicies` runs a shared policy chain against every discovered tool automatically:
+Without `defaultPolicies`, policies are entirely opt-in per tool via `@UsePolicies(...)` — a tool with neither class-level nor method-level `@UsePolicies` metadata ships completely unguarded. `defaultPolicies` runs a shared policy chain against every discovered tool automatically:
 
 ```typescript
 AgenticModule.forRoot({
@@ -113,15 +113,18 @@ AgenticModule.forRoot({
 
 AgenticModule.forFeature({
   toolSets: [PaymentTools],
-  // Classes listed in defaultPolicies must also be registered here (or in
-  // another forFeature call) so they resolve through DI like any other policy.
+  // Classes listed in defaultPolicies must also be registered as providers
+  // via a policies array — this can be the same forFeature call or a
+  // different one, since LocalToolProvider resolves POLICY_INSTANCES across
+  // the whole application context, not just the local module (unlike an
+  // agent and its tool sets, which must share one forFeature call).
   policies: [SecretRedactionPolicy, RateLimitPolicy, HighValueApprovalPolicy],
 });
 ```
 
 Evaluation order is deterministic — module defaults run first, so a deny-by-default guard short-circuits before any tool-specific policy runs:
 
-```
+```text
 defaultPolicies -> class-level @UsePolicies -> method-level @UsePolicies
 ```
 

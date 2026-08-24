@@ -585,19 +585,21 @@ AgenticModule.forRoot({
 AgenticModule.forFeature({
   agents: [SupportAgent],
   toolSets: [OrderTools],
-  // defaultPolicies classes must also be listed here (or in another
-  // forFeature call) so they resolve through DI like any other policy.
+  // defaultPolicies classes must also be registered as providers via a
+  // policies array — the same forFeature call or a different one, since
+  // POLICY_INSTANCES resolves across the whole application context (unlike
+  // an agent and its tool sets, which must share one forFeature call).
   policies: [RefundLimitPolicy, SecretRedactionPolicy, RateLimitPolicy],
 });
 ```
 
 ### Deny-by-default governance with `defaultPolicies`
 
-Without `defaultPolicies`, policies are entirely opt-in per tool via `@UsePolicies(...)` — a tool with no annotation ships completely unguarded. `defaultPolicies` runs a shared policy chain against every discovered tool automatically:
+Without `defaultPolicies`, policies are entirely opt-in per tool via `@UsePolicies(...)` — a tool with neither class-level nor method-level `@UsePolicies` metadata ships completely unguarded. `defaultPolicies` runs a shared policy chain against every discovered tool automatically:
 
 **Evaluation order** (deterministic, module defaults first so a deny-by-default guard short-circuits before any tool-specific policy runs):
 
-```
+```text
 defaultPolicies -> class-level @UsePolicies -> method-level @UsePolicies
 ```
 

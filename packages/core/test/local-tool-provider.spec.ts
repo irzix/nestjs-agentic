@@ -579,6 +579,46 @@ export async function runLocalToolProviderTests() {
       OrderTrackingAllowPolicy.callOrder.join(',') === 'default,method-level',
       'Test 8d: module default policies evaluate before class/method-level @UsePolicies',
     );
+
+    // 8e. An exempt tool with zero policies of its own logs a once-per-tool
+    // warning, so running with no policy evaluation at all is visible
+    // instead of only discoverable by reading discovery metadata (review feedback).
+    @ToolSet({ name: 'silently-unguarded-tools' })
+    class SilentlyUnguardedTools {
+      @Tool({ description: 'Exempt and has zero policies of its own' })
+      @ExemptFromDefaultPolicies()
+      async fullyUnguardedAction() {
+        return { ran: true };
+      }
+    }
+
+    const warnSpy: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (msg: string) => warnSpy.push(msg);
+    try {
+      const warnProvider = new LocalToolProvider(
+        [new DefaultDenyPolicy()],
+        approvalStore,
+        discovery,
+        new DefaultPolicyModuleRef() as unknown as ModuleRef,
+        undefined,
+        undefined,
+        { defaultModel: {} as any, defaultPolicies: [] },
+      );
+      const warnTools = warnProvider.buildTools([new SilentlyUnguardedTools()], agentContext);
+      await warnTools.find((t) => t.name === 'fullyUnguardedAction')?.execute({ args: {} });
+      await warnTools.find((t) => t.name === 'fullyUnguardedAction')?.execute({ args: {} });
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert(
+      warnSpy.some((m) => m.includes('fullyUnguardedAction') && m.includes('zero policy evaluation')),
+      'Test 8e: an exempt tool with no @UsePolicies of its own logs a warning that it runs unguarded',
+    );
+    assert(
+      warnSpy.filter((m) => m.includes('fullyUnguardedAction')).length === 1,
+      'Test 8e2: the warning is logged once per tool, not once per call',
+    );
   } catch (err: any) {
     assert(false, 'Test 8: Module-level default policy chain', err.message);
   }
