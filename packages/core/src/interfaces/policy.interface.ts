@@ -1,4 +1,5 @@
 import type { AgentContext } from './agent-context.interface';
+import type { Provenance } from './provenance.interface';
 
 /**
  * 3-State policy evaluation decision result returned by a ToolPolicy before tool execution.
@@ -59,11 +60,14 @@ export interface ToolPolicy {
    * @param ctx Captured execution context containing security metadata and session ID.
    * @param toolName Name of the tool method invoked.
    * @param result Raw output data returned by the tool method execution.
+   * @param provenance Optional trust/origin label for the output (e.g. `{ source: 'tool' }`),
+   *   letting a policy make trust-aware decisions. Undefined when the caller has no label.
    * @returns Promise resolving to PolicyOutputResult (allow, deny, or sanitize).
    */
   evaluateOutput?(
     ctx: AgentContext,
     toolName: string,
     result: unknown,
+    provenance?: Provenance,
   ): Promise<PolicyOutputResult>;
 }

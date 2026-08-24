@@ -37,6 +37,7 @@ import type {
   ToolCallRecord,
   ToolExecutionResult,
 } from '../interfaces/tool.interface';
+import type { Provenance } from '../interfaces/provenance.interface';
 import { validateToolArgs } from '../utils/tool-args.validator';
 import type { AgentObserver } from '../interfaces/observer.interface';
 import { ObserverNotifier } from '../observers/observer-notifier';
@@ -139,6 +140,8 @@ interface ToolFailurePayload {
   success: false;
   status: 'error';
   error: string;
+  /** Provenance of the failed tool call; the error text still originated from the tool. */
+  provenance?: Provenance;
 }
 
 /** Upper bound on a reported tool error message, which reaches the model. */
@@ -917,7 +920,12 @@ export class AgentExecutor {
       ? `${sanitized.slice(0, MAX_TOOL_ERROR_LENGTH)}...`
       : sanitized;
 
-    return { success: false, status: 'error', error: message || 'Tool execution failed.' };
+    return {
+      success: false,
+      status: 'error',
+      error: message || 'Tool execution failed.',
+      provenance: { source: 'tool', origin: tool.name },
+    };
   }
 
   private pushToolMessage(
@@ -925,11 +933,18 @@ export class AgentExecutor {
     call: ModelToolCall,
     payload: ToolExecutionResult | ToolFailurePayload | { error: string },
   ): void {
+    // Surface the payload's provenance as a first-class field on the tool message
+    // (it's also serialized inside `content`), so policies/observers can read it
+    // without parsing the JSON string.
+    const provenance =
+      'provenance' in payload && payload.provenance ? payload.provenance : undefined;
+
     state.messages.push({
       role: 'tool',
       toolCallId: call.id,
       toolName: call.name,
       content: JSON.stringify(payload),
+      ...(provenance ? { provenance } : {}),
     });
   }
 

@@ -1,4 +1,5 @@
 import type { ModelConfig } from './runtime.interface';
+import type { Provenance } from './provenance.interface';
 import type { ToolParamSchema } from './tool.interface';
 
 /**
@@ -35,7 +36,18 @@ export type ModelMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
   | { role: 'assistant'; content: string; toolCalls?: ModelToolCall[] }
-  | { role: 'tool'; toolCallId: string; toolName: string; content: string };
+  | {
+      role: 'tool';
+      toolCallId: string;
+      toolName: string;
+      content: string;
+      /**
+       * Provenance label for the tool output carried in `content`. Additive and
+       * provider-inert (adapters forward only `content`); lets policies, audit
+       * sinks, and observers reason about the trust of a tool message.
+       */
+      provenance?: Provenance;
+    };
 
 /** Token accounting reported by a provider, when available. */
 export interface ModelUsage {

@@ -1,6 +1,7 @@
 
 
 import type { AgentContext } from './agent-context.interface';
+import type { Provenance } from './provenance.interface';
 
 /** Schema of a single tool parameter exposed to the LLM. */
 export interface ToolParamSchema {
@@ -26,7 +27,16 @@ export interface ToolExecutionInput {
 }
 
 export type ToolExecutionResult<T = unknown> =
-  | { success: true; data: T }
+  | {
+      success: true;
+      data: T;
+      /**
+       * Provenance label for the tool's output. Populated by `LocalToolProvider`
+       * as `{ source: 'tool', origin: <toolName> }`. Optional and purely additive:
+       * consumers that ignore it are unaffected.
+       */
+      provenance?: Provenance;
+    }
   | { success: false; status: 'denied'; reason: string }
   | { success: false; status: 'pending_approval'; reason: string; approvalId: string };
 

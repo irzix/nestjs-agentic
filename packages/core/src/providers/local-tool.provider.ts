@@ -266,13 +266,14 @@ export class LocalToolProvider {
       return finalResult;
     }
 
+    const provenance = finalResult.provenance;
     const policyMap = this.getPolicyMap();
 
     for (const Constructor of allPolicyConstructors) {
       const policy = this.resolvePolicy(Constructor, policyMap);
       if (!policy?.evaluateOutput) continue;
 
-      const outputResult = await policy.evaluateOutput(agentContext, toolName, finalResult.data);
+      const outputResult = await policy.evaluateOutput(agentContext, toolName, finalResult.data, provenance);
 
       if (outputResult.decision === 'deny') {
         await this.audit?.record({
@@ -349,7 +350,10 @@ export class LocalToolProvider {
       const policy = this.resolvePolicy(Constructor, policyMap);
       if (!policy?.evaluateOutput) continue;
 
-      const outputResult = await policy.evaluateOutput(agentContext, toolName, { error: message });
+      const outputResult = await policy.evaluateOutput(agentContext, toolName, { error: message }, {
+        source: 'tool',
+        origin: toolName,
+      });
 
       if (outputResult.decision === 'deny') {
         await this.audit?.record({
@@ -591,7 +595,7 @@ export class LocalToolProvider {
       tool.instance as Record<string, (...args: unknown[]) => Promise<unknown>>
     )[tool.methodName](...methodArgs);
 
-    return { success: true, data };
+    return { success: true, data, provenance: { source: 'tool', origin: tool.toolName } };
   }
 }
 
