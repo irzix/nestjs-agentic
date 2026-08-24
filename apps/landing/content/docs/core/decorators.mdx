@@ -113,3 +113,15 @@ Attaches one or more `ToolPolicy` classes to a tool method or toolset class.
 @Tool({ description: 'Disburse corporate funds' })
 async disburseFunds(...) { ... }
 ```
+
+---
+
+## `@ExemptFromDefaultPolicies()`
+
+Opts a tool method or an entire toolset class out of `AgenticModuleOptions.defaultPolicies` (see [Module Configuration](/docs/core/module-configuration)). `@UsePolicies` on the same tool/class still applies.
+
+```typescript
+@Tool({ description: 'Read-only lookup, exempt from write-oriented defaults' })
+@ExemptFromDefaultPolicies()
+async getOrderStatus(...) { ... }
+```

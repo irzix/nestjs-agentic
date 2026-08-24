@@ -50,7 +50,7 @@ nestjs-agentic (Meta Package)
 
 | Package | Responsibility | Primary Primitives |
 | :--- | :--- | :--- |
-| **`@nestjs-agentic/core`** | Agent lifecycle, DI discovery, tool policy governance, execution limits, state stores, and OpenTelemetry tracing. | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context`, `@UsePolicies`, `AgenticModule`, `ApprovalService`, `ExecutionLimits` |
+| **`@nestjs-agentic/core`** | Agent lifecycle, DI discovery, tool policy governance, execution limits, state stores, and OpenTelemetry tracing. | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context`, `@UsePolicies`, `@ExemptFromDefaultPolicies`, `AgenticModule`, `ApprovalService`, `ExecutionLimits` |
 | **`@nestjs-agentic/openai`** | Model adapter for OpenAI and compatible Chat Completions endpoints with streaming and token tracking. | `OpenAiModelAdapter`, `ModelAdapter`, `ModelResponseChunk` |
 | **`@nestjs-agentic/memory`** | 5-tier cognitive memory architecture with Stanford tri-factor retrieval scoring. | `ShortTermMemory`, `ScratchpadMemory`, `SemanticMemory`, `EpisodicMemory`, `CompositeMemory` |
 | **`@nestjs-agentic/rag`** | Context engineering engine with AST-aligned code chunking, hybrid vector + lexical search, GraphRAG, and pluggable reranking. | `KnowledgeBase`, `HybridVectorStore`, `AstCodebaseSplitter`, `GraphRAGStrategy`, `RerankerStrategy` |
@@ -96,8 +96,9 @@ A `ResolvedTool` is the core security boundary between model-driven actions and 
 ```text
 ResolvedTool.execute({ args, toolCallId })
     │
-    ├── 1. Evaluate Attached Policies (@UsePolicies)
+    ├── 1. Evaluate Policies (module `defaultPolicies` -> class @UsePolicies -> method @UsePolicies)
     │     ├── Evaluate with AgentContext, tool name, arguments, and metadata
+    │     ├── A tool marked @ExemptFromDefaultPolicies() skips the module default chain
     │     │
     │     ├── DENY ──► Return { success: false, status: 'denied', reason }
     │     │

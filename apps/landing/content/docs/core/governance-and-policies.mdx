@@ -75,3 +75,5 @@ When multiple policies are attached via `@UsePolicies(PolicyA, PolicyB)`:
 1. If any policy returns `deny`, execution is immediately halted with a refusal.
 2. If any policy returns `require_approval` (and none denied), execution suspends for human sign-off.
 3. Only if all policies return `allow` is the tool closure executed.
+
+Policies from `AgenticModuleOptions.defaultPolicies` (see [Module Configuration](/docs/core/module-configuration)) evaluate first, before class-level `@UsePolicies`, before method-level `@UsePolicies` — so a module-wide deny-by-default guard short-circuits ahead of any tool-specific policy. A tool can opt out of the module defaults with `@ExemptFromDefaultPolicies()` while keeping its own `@UsePolicies`.

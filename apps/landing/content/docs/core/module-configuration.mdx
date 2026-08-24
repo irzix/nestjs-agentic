@@ -98,3 +98,42 @@ Feature modules register their own domain agents, toolsets, and policies:
 })
 export class FinanceModule {}
 ```
+
+---
+
+## Deny-by-Default Governance (`defaultPolicies`)
+
+Without `defaultPolicies`, policies are entirely opt-in per tool via `@UsePolicies(...)` — a tool with neither class-level nor method-level `@UsePolicies` metadata ships completely unguarded. `defaultPolicies` runs a shared policy chain against every discovered tool automatically:
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  defaultPolicies: [SecretRedactionPolicy, RateLimitPolicy],
+});
+
+AgenticModule.forFeature({
+  toolSets: [PaymentTools],
+  // Classes listed in defaultPolicies must also be registered as providers
+  // via a policies array — this can be the same forFeature call or a
+  // different one, since LocalToolProvider resolves POLICY_INSTANCES across
+  // the whole application context, not just the local module (unlike an
+  // agent and its tool sets, which must share one forFeature call).
+  policies: [SecretRedactionPolicy, RateLimitPolicy, HighValueApprovalPolicy],
+});
+```
+
+Evaluation order is deterministic — module defaults run first, so a deny-by-default guard short-circuits before any tool-specific policy runs:
+
+```text
+defaultPolicies -> class-level @UsePolicies -> method-level @UsePolicies
+```
+
+Opt a tool or an entire toolset class out with `@ExemptFromDefaultPolicies()` — the exemption is discoverable metadata, not a silent bypass, and `@UsePolicies` on the same tool/class still applies:
+
+```typescript
+@Tool({ description: 'Read-only lookup' })
+@ExemptFromDefaultPolicies()
+async getOrderStatus(@Param('orderId') orderId: string) {}
+```
+
+With no `defaultPolicies` configured, every existing tool behaves exactly as before.

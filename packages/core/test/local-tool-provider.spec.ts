@@ -452,6 +452,245 @@ export async function runLocalToolProviderTests() {
     assert(false, 'Test 7: Output Rails run on approval-resume path', err.message);
   }
 
+  // TEST 8: Module-level default policy chain (#135)
+  try {
+    const { ExemptFromDefaultPolicies } = await import('../src');
+
+    class DefaultDenyPolicy implements ToolPolicy {
+      async evaluate(): Promise<PolicyResult> {
+        return { decision: 'deny', reason: 'Blocked by module default policy' };
+      }
+    }
+
+    @ToolSet({ name: 'default-policy-tools' })
+    class DefaultPolicyTools {
+      @Tool({ description: 'No explicit @UsePolicies at all' })
+      async unguardedAction(@Param('value') value: string) {
+        return { value };
+      }
+
+      @Tool({ description: 'Exempted from module defaults' })
+      @ExemptFromDefaultPolicies()
+      async exemptAction(@Param('value') value: string) {
+        return { value };
+      }
+    }
+
+    class DefaultPolicyModuleRef {
+      get(token: any): any {
+        if (token === DefaultDenyPolicy) return new DefaultDenyPolicy();
+        return undefined;
+      }
+    }
+
+    const defaultPolicyProvider = new LocalToolProvider(
+      [new DefaultDenyPolicy()],
+      approvalStore,
+      discovery,
+      new DefaultPolicyModuleRef() as unknown as ModuleRef,
+      undefined,
+      undefined,
+      { defaultModel: {} as any, defaultPolicies: [DefaultDenyPolicy] },
+    );
+
+    const defaultPolicyTools = defaultPolicyProvider.buildTools(
+      [new DefaultPolicyTools()],
+      agentContext,
+    );
+
+    const unguardedTool = defaultPolicyTools.find((t) => t.name === 'unguardedAction');
+    const unguardedResult = (await unguardedTool?.execute({ args: { value: 'x' } })) as ToolExecutionResult;
+    assert(
+      !unguardedResult.success && unguardedResult.status === 'denied',
+      'Test 8a: a tool with zero explicit @UsePolicies still runs the module default policy chain',
+    );
+
+    const exemptTool = defaultPolicyTools.find((t) => t.name === 'exemptAction');
+    const exemptResult = (await exemptTool?.execute({ args: { value: 'y' } })) as ToolExecutionResult;
+    assert(
+      exemptResult.success === true,
+      'Test 8b: @ExemptFromDefaultPolicies() opts a tool out of the module default chain',
+    );
+
+    // Backward compatibility: no defaultPolicies configured -> no behavior change
+    const noDefaultsProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      discovery,
+      new DefaultPolicyModuleRef() as unknown as ModuleRef,
+    );
+    const noDefaultsTools = noDefaultsProvider.buildTools([new DefaultPolicyTools()], agentContext);
+    const noDefaultsResult = (await noDefaultsTools
+      .find((t) => t.name === 'unguardedAction')
+      ?.execute({ args: { value: 'z' } })) as ToolExecutionResult;
+    assert(
+      noDefaultsResult.success === true,
+      'Test 8c: with no defaultPolicies configured, an unguarded tool behaves exactly as before (backward compatible)',
+    );
+
+    // Ordering: default policies run before class/method policies, so an
+    // earlier deny short-circuits before a later allow would run.
+    class OrderTrackingAllowPolicy implements ToolPolicy {
+      static callOrder: string[] = [];
+      async evaluate(): Promise<PolicyResult> {
+        OrderTrackingAllowPolicy.callOrder.push('method-level');
+        return { decision: 'allow' };
+      }
+    }
+    class OrderTrackingDefaultPolicy implements ToolPolicy {
+      static callOrder: string[] = [];
+      async evaluate(): Promise<PolicyResult> {
+        OrderTrackingDefaultPolicy.callOrder.push('default');
+        OrderTrackingAllowPolicy.callOrder.push('default');
+        return { decision: 'allow' };
+      }
+    }
+
+    @ToolSet({ name: 'order-tracking-tools' })
+    class OrderTrackingTools {
+      @Tool({ description: 'Tracks policy evaluation order' })
+      @UsePolicies(OrderTrackingAllowPolicy)
+      async trackedAction() {
+        return { done: true };
+      }
+    }
+
+    class OrderModuleRef {
+      get(token: any): any {
+        if (token === OrderTrackingDefaultPolicy) return new OrderTrackingDefaultPolicy();
+        if (token === OrderTrackingAllowPolicy) return new OrderTrackingAllowPolicy();
+        return undefined;
+      }
+    }
+
+    const orderProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      discovery,
+      new OrderModuleRef() as unknown as ModuleRef,
+      undefined,
+      undefined,
+      { defaultModel: {} as any, defaultPolicies: [OrderTrackingDefaultPolicy] },
+    );
+
+    const orderTools = orderProvider.buildTools([new OrderTrackingTools()], agentContext);
+    await orderTools.find((t) => t.name === 'trackedAction')?.execute({ args: {} });
+    assert(
+      OrderTrackingAllowPolicy.callOrder.join(',') === 'default,method-level',
+      'Test 8d: module default policies evaluate before class/method-level @UsePolicies',
+    );
+
+    // 8e. An exempt tool with zero policies of its own logs a once-per-tool
+    // warning, so running with no policy evaluation at all is visible
+    // instead of only discoverable by reading discovery metadata (review feedback).
+    @ToolSet({ name: 'silently-unguarded-tools' })
+    class SilentlyUnguardedTools {
+      @Tool({ description: 'Exempt and has zero policies of its own' })
+      @ExemptFromDefaultPolicies()
+      async fullyUnguardedAction() {
+        return { ran: true };
+      }
+    }
+
+    const warnSpy: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (msg: string) => warnSpy.push(msg);
+    try {
+      const warnProvider = new LocalToolProvider(
+        [new DefaultDenyPolicy()],
+        approvalStore,
+        discovery,
+        new DefaultPolicyModuleRef() as unknown as ModuleRef,
+        undefined,
+        undefined,
+        { defaultModel: {} as any, defaultPolicies: [] },
+      );
+      const warnTools = warnProvider.buildTools([new SilentlyUnguardedTools()], agentContext);
+      await warnTools.find((t) => t.name === 'fullyUnguardedAction')?.execute({ args: {} });
+      await warnTools.find((t) => t.name === 'fullyUnguardedAction')?.execute({ args: {} });
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert(
+      warnSpy.some((m) => m.includes('fullyUnguardedAction') && m.includes('zero policy evaluation')),
+      'Test 8e: an exempt tool with no @UsePolicies of its own logs a warning that it runs unguarded',
+    );
+    assert(
+      warnSpy.filter((m) => m.includes('fullyUnguardedAction')).length === 1,
+      'Test 8e2: the warning is logged once per tool, not once per call',
+    );
+
+    // 8f. Two different toolsets exposing a same-named exempt+unguarded tool
+    // must each get their own warning — collision-free per-instance/method
+    // keying, not keyed by toolName alone (review feedback).
+    @ToolSet({ name: 'toolset-a' })
+    class ToolsetA {
+      @Tool({ name: 'lookup', description: 'Exempt, unguarded, in toolset A' })
+      @ExemptFromDefaultPolicies()
+      async lookup() {
+        return { from: 'A' };
+      }
+    }
+    @ToolSet({ name: 'toolset-b' })
+    class ToolsetB {
+      @Tool({ name: 'lookup', description: 'Exempt, unguarded, in toolset B' })
+      @ExemptFromDefaultPolicies()
+      async lookup() {
+        return { from: 'B' };
+      }
+    }
+
+    const collisionWarnSpy: string[] = [];
+    const originalWarn2 = console.warn;
+    console.warn = (msg: string) => collisionWarnSpy.push(msg);
+    try {
+      const collisionProvider = new LocalToolProvider(
+        [],
+        approvalStore,
+        discovery,
+        new DefaultPolicyModuleRef() as unknown as ModuleRef,
+        undefined,
+        undefined,
+        { defaultModel: {} as any, defaultPolicies: [] },
+      );
+      const toolsA = collisionProvider.buildTools([new ToolsetA()], agentContext);
+      const toolsB = collisionProvider.buildTools([new ToolsetB()], agentContext);
+      await toolsA.find((t) => t.name === 'lookup')?.execute({ args: {} });
+      await toolsB.find((t) => t.name === 'lookup')?.execute({ args: {} });
+    } finally {
+      console.warn = originalWarn2;
+    }
+    assert(
+      collisionWarnSpy.filter((m) => m.includes('"lookup"')).length === 2,
+      'Test 8f: two distinct toolsets exposing a same-named exempt tool each independently trigger the warning',
+    );
+
+    // 8g. options.logger.warn overrides console.warn, matching the codebase's
+    // existing override-with-console-fallback logging convention (review feedback)
+    const customWarnLog: string[] = [];
+    const customLoggerProvider = new LocalToolProvider(
+      [],
+      approvalStore,
+      discovery,
+      new DefaultPolicyModuleRef() as unknown as ModuleRef,
+      undefined,
+      undefined,
+      {
+        defaultModel: {} as any,
+        defaultPolicies: [],
+        logger: { warn: (msg: string) => customWarnLog.push(msg) },
+      },
+    );
+    const customLoggerTools = customLoggerProvider.buildTools([new SilentlyUnguardedTools()], agentContext);
+    await customLoggerTools.find((t) => t.name === 'fullyUnguardedAction')?.execute({ args: {} });
+    assert(
+      customWarnLog.some((m) => m.includes('fullyUnguardedAction')),
+      'Test 8g: a custom options.logger.warn receives the exemption warning instead of console.warn',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 8: Module-level default policy chain', err.message);
+  }
+
   console.log(`\n  📊 Step 2 Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Step 2 Unit Tests Failed');

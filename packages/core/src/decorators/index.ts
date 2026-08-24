@@ -10,6 +10,9 @@ export type { ParamOptions, ParamMetadata } from './param.decorator';
 export { Context, CONTEXT_PARAM_KEY } from './context.decorator';
 
 export { UsePolicies } from './use-policies.decorator';
+export type { PolicyInput } from './use-policies.decorator';
+
+export { ExemptFromDefaultPolicies } from './exempt-from-default-policies.decorator';
 
 export { Agent } from './agent.decorator';
 export type { AgentDecoratorOptions } from './agent.decorator';

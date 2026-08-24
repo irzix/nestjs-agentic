@@ -90,6 +90,12 @@ export const TOOL_PARAMS_METADATA = Symbol('TOOL_PARAMS_METADATA');
 export const TOOL_POLICIES_METADATA = Symbol('TOOL_POLICIES_METADATA');
 
 /**
+ * Metadata key used by @ExemptFromDefaultPolicies decorator.
+ * @internal
+ */
+export const EXEMPT_DEFAULT_POLICIES_METADATA = Symbol('EXEMPT_DEFAULT_POLICIES_METADATA');
+
+/**
  * Metadata key used by @Agent decorator.
  * @internal
  */

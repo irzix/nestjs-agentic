@@ -1,7 +1,7 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'crypto';
-import { APPROVAL_STORE, IDEMPOTENCY_STORE, POLICY_INSTANCES } from '../constants';
+import { AGENTIC_OPTIONS, APPROVAL_STORE, IDEMPOTENCY_STORE, POLICY_INSTANCES } from '../constants';
 import {
   ApprovalToolNotFoundError,
   ExecutionCancelledError,
@@ -21,12 +21,22 @@ import type {
   ToolParamSchema,
   ToolPolicy,
 } from '../interfaces';
+import type { AgenticModuleOptions } from '../services/agent-runner.service';
 import { AuditTrail } from '../services/audit-trail.service';
 
 type PolicyConstructor = new (...args: unknown[]) => ToolPolicy;
 
 @Injectable()
 export class LocalToolProvider {
+  /**
+   * Tools that already triggered the no-replacement-policy warning, so it
+   * logs once per tool rather than once per call. Keyed by instance + method
+   * name (not `toolName` alone) — two different toolsets can expose a tool
+   * with the same name, and toolName-only keying would let one suppress the
+   * other's warning.
+   */
+  private readonly warnedExemptTools = new WeakMap<object, Set<string>>();
+
   constructor(
     @Optional() @Inject(POLICY_INSTANCES) private readonly policyInstances: ToolPolicy[],
     @Inject(APPROVAL_STORE) private readonly approvalStore: ApprovalStore,
@@ -34,7 +44,43 @@ export class LocalToolProvider {
     private readonly moduleRef: ModuleRef,
     @Optional() private readonly audit?: AuditTrail,
     @Optional() @Inject(IDEMPOTENCY_STORE) private readonly idempotencyStore?: IdempotencyStore,
+    @Optional() @Inject(AGENTIC_OPTIONS) private readonly options?: AgenticModuleOptions,
   ) {}
+
+  /**
+   * Module-wide default policies, prepended to every tool's own policy chain
+   * unless the tool is exempted via `@ExemptFromDefaultPolicies()`. Runs
+   * first so a deny-by-default guard short-circuits before any tool-specific
+   * policy is even evaluated.
+   */
+  private defaultPolicyConstructors(exempt: boolean): PolicyConstructor[] {
+    if (exempt) return [];
+    return this.options?.defaultPolicies ?? [];
+  }
+
+  /**
+   * An exempt tool with no policies of its own (no class- or method-level
+   * `@UsePolicies`) runs completely unguarded — that's a deliberate,
+   * documented capability, not a bug, but silent is different from
+   * deliberate. Warns once per tool so the gap is visible instead of only
+   * discoverable by reading `DiscoveredTool.exemptFromDefaultPolicies`.
+   */
+  private warnIfExemptWithNoPolicies(tool: DiscoveredTool, allPolicyConstructors: PolicyConstructor[]): void {
+    if (!tool.exemptFromDefaultPolicies || allPolicyConstructors.length > 0) return;
+
+    let warnedMethods = this.warnedExemptTools.get(tool.instance);
+    if (!warnedMethods) {
+      warnedMethods = new Set();
+      this.warnedExemptTools.set(tool.instance, warnedMethods);
+    }
+    if (warnedMethods.has(tool.methodName)) return;
+    warnedMethods.add(tool.methodName);
+
+    const warn = this.options?.logger?.warn ?? ((message: string) => console.warn(message));
+    warn(
+      `[LocalToolProvider] Tool "${tool.toolName}" is @ExemptFromDefaultPolicies() and has no @UsePolicies of its own — it runs with zero policy evaluation.`,
+    );
+  }
 
   private getPolicyMap(): Map<Function | string, ToolPolicy> {
     let instances = Array.isArray(this.policyInstances) ? this.policyInstances : [];
@@ -112,15 +158,20 @@ export class LocalToolProvider {
       const discovered = this.discovery.discover(instance);
       if (!discovered) return [];
 
-      return discovered.tools.map((tool) =>
-        this.buildResolvedTool(
+      return discovered.tools.map((tool) => {
+        const upstreamPolicyConstructors = [
+          ...this.defaultPolicyConstructors(tool.exemptFromDefaultPolicies),
+          ...discovered.classPolicyConstructors,
+        ];
+        this.warnIfExemptWithNoPolicies(tool, [...upstreamPolicyConstructors, ...tool.policyConstructors]);
+        return this.buildResolvedTool(
           tool,
-          discovered.classPolicyConstructors,
+          upstreamPolicyConstructors,
           agentContext,
           agentName,
           defaultApprovalTtlSeconds,
-        ),
-      );
+        );
+      });
     });
   }
 
@@ -189,10 +240,13 @@ export class LocalToolProvider {
       const discovered = this.discovery.discover(instance);
       const match = discovered?.tools.find((t) => t.toolName === toolName);
       if (match) {
-        return {
-          tool: match,
-          allPolicyConstructors: [...(discovered!.classPolicyConstructors ?? []), ...match.policyConstructors],
-        };
+        const allPolicyConstructors = [
+          ...this.defaultPolicyConstructors(match.exemptFromDefaultPolicies),
+          ...(discovered!.classPolicyConstructors ?? []),
+          ...match.policyConstructors,
+        ];
+        this.warnIfExemptWithNoPolicies(match, allPolicyConstructors);
+        return { tool: match, allPolicyConstructors };
       }
     }
     return undefined;
@@ -356,12 +410,13 @@ export class LocalToolProvider {
 
   private buildResolvedTool(
     tool: DiscoveredTool,
-    classPolicyConstructors: PolicyConstructor[],
+    /** Module defaults (unless exempted) followed by class-level `@UsePolicies`. */
+    upstreamPolicyConstructors: PolicyConstructor[],
     agentContext: AgentContext,
     agentName: string,
     defaultApprovalTtlSeconds?: number,
   ): ResolvedTool {
-    const allPolicyConstructors = [...classPolicyConstructors, ...tool.policyConstructors];
+    const allPolicyConstructors = [...upstreamPolicyConstructors, ...tool.policyConstructors];
 
     const parameters: ToolParamSchema[] = tool.params.map((p) => ({
       name: p.name,
