@@ -1,4 +1,5 @@
 import type { AgentContext, PolicyOutputResult, PolicyResult, ToolPolicy } from '../interfaces';
+import { traverseAndRedact } from '../utils/redaction-traversal';
 
 /**
  * Options for configuring SecretRedactionPolicy.
@@ -102,77 +103,49 @@ export class SecretRedactionPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    let modified = false;
-    const sanitized = this.redactUnknown(
-      result,
-      () => {
-        modified = true;
+    const { value, modified, keyCollision, unredactable } = traverseAndRedact(result, {
+      maxDepth: this.maxDepth,
+      transformString: (text) => this.redactString(text),
+      handleKey: (key, keyValue) => {
+        if (this.sensitiveKeys.has(key) && typeof keyValue === 'string') {
+          return { handled: true, value: this.maskPlaceholder };
+        }
+        return { handled: false };
       },
-      new WeakMap<object, unknown>(),
-      0,
-    );
+    });
+
+    // Redaction collapsed two distinct Map keys / Set members into one, which would
+    // silently drop an entry — fail closed rather than return a container that lost data.
+    if (keyCollision) {
+      return {
+        decision: 'deny',
+        reason: 'Redacting secrets produced a Map key / Set member collision; refusing to return output that would silently drop an entry.',
+      };
+    }
+
+    // A secret sits inside a value that cannot be safely rewritten (a class instance or
+    // platform built-in). Rebuilding it would break its internal state, so the output
+    // is refused rather than forwarded with the secret intact.
+    if (unredactable) {
+      return {
+        decision: 'deny',
+        reason: 'A secret was found inside a class instance or built-in object that cannot be safely redacted; refusing to return it. Return plain JSON-compatible data from this tool to allow redaction.',
+      };
+    }
 
     if (modified) {
-      return { decision: 'sanitize', sanitizedResult: sanitized };
+      return { decision: 'sanitize', sanitizedResult: value };
     }
 
     return { decision: 'allow' };
   }
 
-  private redactUnknown(
-    value: unknown,
-    onModified: () => void,
-    seenMap: WeakMap<object, unknown>,
-    depth: number,
-  ): unknown {
-    if (depth > this.maxDepth) {
-      return value;
-    }
-
-    if (typeof value === 'string') {
-      return this.redactString(value, onModified);
-    }
-
-    if (typeof value === 'object' && value !== null) {
-      // If we've already created a sanitized node for this original object, return it
-      if (seenMap.has(value as object)) {
-        return seenMap.get(value as object);
-      }
-
-      // Create placeholder (array or object) and store before recursing into children
-      const placeholder: any = Array.isArray(value) ? [] : {};
-      seenMap.set(value as object, placeholder);
-
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          placeholder.push(this.redactUnknown(item, onModified, seenMap, depth + 1));
-        }
-        return placeholder;
-      }
-
-      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        if (this.sensitiveKeys.has(k) && typeof v === 'string') {
-          placeholder[k] = this.maskPlaceholder;
-          onModified();
-        } else {
-          placeholder[k] = this.redactUnknown(v, onModified, seenMap, depth + 1);
-        }
-      }
-      return placeholder;
-    }
-
-    return value;
-  }
-
-  private redactString(text: string, onModified: () => void): string {
+  private redactString(text: string): string {
     let sanitized = text;
     for (const pattern of this.patterns) {
       // Create a fresh regex with global flag to avoid state issues
       const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-      if (regex.test(sanitized)) {
-        sanitized = sanitized.replace(regex, this.maskPlaceholder);
-        onModified();
-      }
+      sanitized = sanitized.replace(regex, this.maskPlaceholder);
     }
     return sanitized;
   }
