@@ -1,5 +1,16 @@
 # @nestjs-agentic/core
 
+## 1.3.0
+
+### Minor Changes
+
+- eb84976: Add `AgenticModuleOptions.defaultPolicies`, a module-wide policy chain applied to every discovered tool that doesn't opt out via the new `@ExemptFromDefaultPolicies()` decorator — enabling deny-by-default governance instead of purely per-tool opt-in via `@UsePolicies`. Default policies evaluate before class-level and method-level `@UsePolicies`. Closes #135.
+- ca8518f: Add `PromptInjectionSanitizer` (`@nestjs-agentic/core`), a utility that strips known chat-template/role-delimiter injection vectors (`<|im_start|>`, `[INST]`, `<system>`, `Human:`, etc.) and wraps untrusted content in explicit XML boundary tags, plus `PromptInjectionSanitizationPolicy`, a built-in Output Rail applying it to tool output automatically.
+
+  `@nestjs-agentic/rag`'s `UShapedContextStrategy` and `ContextualCompressionStrategy` now wrap retrieved chunk content in a `<retrieved_chunk>` boundary and sanitize it before writing `compressedContext`, mitigating indirect prompt injection via poisoned documents. Closes #136.
+
+- ad4fcaf: Add optional provenance/trust labels (`Provenance` / `ProvenanceSource`, `'model' | 'tool' | 'external' | 'user'`) to distinguish where content originated. `ToolExecutionResult` (all branches), the `{ role: 'tool' }` `ModelMessage`, and `DocumentChunk` now carry an optional `provenance` field. `LocalToolProvider` stamps successful tool results with `{ source: 'tool', origin: <toolName> }` and `AgentExecutor` stamps failed tool payloads and the resulting tool message the same way. `KnowledgeBase` retrieval always stamps chunks with `{ source: 'external', origin: <parentId> }` — retrieval is a trust boundary, so a store cannot launder external content under a trusted label. `ToolPolicy.evaluateOutput` receives the label as an optional fourth argument for trust-aware decisions. Fully additive — no behavior change for code that ignores it. Closes #137.
+
 ## 1.2.0
 
 ## 1.1.0
