@@ -36,3 +36,7 @@ const reranker = new RerankerStrategy({
 ## Contextual Compression
 
 `ContextualCompressionStrategy` trims boilerplate, comments, and unreferenced lines from retrieved passages before injecting them into the system prompt, keeping token usage minimal.
+
+Retrieved content is untrusted — it may come from an ingested document an attacker controls — so `ContextualCompressionStrategy` and `UShapedContextStrategy` both wrap each retrieved chunk in its own `<retrieved_chunk>` boundary tag and strip known injection delimiters (via `@nestjs-agentic/core`'s `PromptInjectionSanitizer`) before writing `compressedContext`. Chunk metadata used for reference labels (title/section) is sanitized inside the same boundary, and an embedded closing tag in either content or metadata cannot escape or forge a boundary. This mitigates indirect prompt injection carried through poisoned documents (see [Governance and Policies](/docs/core/governance-and-policies) for the same mitigation applied to tool output).
+
+For `ContextualCompressionStrategy`, `maxCharacters` applies per retrieved chunk (and to a hydrated parent context as a single source), so each source keeps its own boundary rather than being merged into one.

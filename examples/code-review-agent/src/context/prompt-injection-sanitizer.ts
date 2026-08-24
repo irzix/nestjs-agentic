@@ -1,44 +1,10 @@
 /**
- * Sanitizes untrusted user inputs (PR titles, comments, diff content)
- * to prevent indirect prompt injection (OWASP LLM01 / Greshake et al.).
+ * @deprecated Promoted to `@nestjs-agentic/core` as `PromptInjectionSanitizer`.
+ * Re-exported here for backward compatibility with existing imports in this example.
+ *
+ * Note: the promoted version matches `Human:`/`Assistant:`/`System:` role markers only
+ * at the start of a line (anchored), not inline, to reduce false positives on benign
+ * prose. Delimiter tokens (`[INST]`, `<|im_start|>`, `<system>`, etc.) are matched
+ * anywhere, as before.
  */
-export class PromptInjectionSanitizer {
-  private static readonly INJECTION_PATTERNS = [
-    /<\/?system>/gi,
-    /<\|im_start\|>/gi,
-    /<\|im_end\|>/gi,
-    /\[INST\]/gi,
-    /\[\/INST\]/gi,
-    /<<SYS>>/gi,
-    /<\/SYS>/gi,
-    /Human:/gi,
-    /Assistant:/gi,
-  ];
-
-  /**
-   * Cleans potential instruction override tokens from untrusted text.
-   *
-   * @param rawText Untrusted input string.
-   * @returns Sanitized text with stripped delimiter injection vectors.
-   */
-  static sanitize(rawText: string): string {
-    if (!rawText) return '';
-    let sanitized = rawText;
-    for (const pattern of this.INJECTION_PATTERNS) {
-      sanitized = sanitized.replace(pattern, '[REDACTED_DELIMITER]');
-    }
-    return sanitized;
-  }
-
-  /**
-   * Safely wraps untrusted content inside explicit XML data boundary tags.
-   *
-   * @param tag XML boundary tag name.
-   * @param content Untrusted text payload.
-   * @returns Formatted XML boundary block.
-   */
-  static wrapWithBoundary(tag: string, content: string): string {
-    const sanitized = this.sanitize(content);
-    return `<${tag}>\n${sanitized}\n</${tag}>`;
-  }
-}
+export { PromptInjectionSanitizer } from 'nestjs-agentic';

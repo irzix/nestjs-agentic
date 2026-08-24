@@ -376,7 +376,7 @@ async function runTests() {
     const compression = new ContextualCompressionStrategy({ maxCharacters: 10 });
     const compCtx = await compression.process({ query: 'test', hydratedParentContext: 'This is a very long text that must be truncated.' });
     assert(
-      compCtx.compressedContext!.length < 50,
+      compCtx.compressedContext!.includes('[...Context Truncated...]'),
       'Test 8e: ContextualCompressionStrategy successfully truncated lengthy context via extractive boundaries',
     );
 
