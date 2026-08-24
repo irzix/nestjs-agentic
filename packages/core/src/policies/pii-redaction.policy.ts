@@ -108,6 +108,10 @@ export class PiiRedactionPolicy implements ToolPolicy {
   private readonly maskPlaceholder?: string;
   private readonly maxDepth: number;
 
+  /**
+   * @param options Configuration for which PII categories to detect, custom patterns/keys,
+   *   the mask placeholder, and traversal depth. See `PiiRedactionPolicyOptions`.
+   */
   constructor(options?: PiiRedactionPolicyOptions) {
     this.redactEmail = options?.redactEmail ?? true;
     this.redactPhone = options?.redactPhone ?? true;
@@ -121,6 +125,11 @@ export class PiiRedactionPolicy implements ToolPolicy {
 
   /**
    * Pre-execution policy hook: allows tool invocation.
+   *
+   * @param _ctx Captured execution context; unused since this is a pure Output Rail.
+   * @param _toolName Name of the tool method being invoked; unused.
+   * @param _args Arguments passed to the tool; unused.
+   * @returns Always `{ decision: 'allow' }`.
    */
   async evaluate(
     _ctx: AgentContext,
@@ -132,6 +141,13 @@ export class PiiRedactionPolicy implements ToolPolicy {
 
   /**
    * Post-execution Output Rail hook: inspects and redacts PII from the tool output.
+   *
+   * @param _ctx Captured execution context; unused.
+   * @param _toolName Name of the tool method invoked; unused.
+   * @param result Raw output data returned by the tool method execution.
+   * @returns `{ decision: 'sanitize', sanitizedResult }` if any PII was found and redacted;
+   *          `{ decision: 'deny' }` if the structure exceeds `maxDepth` (to avoid returning
+   *          an uninspected subtree); otherwise `{ decision: 'allow' }`.
    */
   async evaluateOutput(
     _ctx: AgentContext,
@@ -142,16 +158,30 @@ export class PiiRedactionPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    const { value, modified } = traverseAndRedact(result, {
+    const { value, modified, depthExceeded } = traverseAndRedact(result, {
       maxDepth: this.maxDepth,
+      onDepthExceeded: 'deny',
       transformString: (text) => this.redactString(text),
       handleKey: (key, keyValue) => {
-        if (this.sensitiveKeys.has(key) && typeof keyValue === 'string') {
+        // Masked wholesale regardless of value type (string, object, array, etc):
+        // a sensitive key like `homeAddress` may hold a structured object, not just
+        // a string, and must be redacted just as completely either way.
+        if (this.sensitiveKeys.has(key)) {
           return { handled: true, value: this.maskPlaceholder ?? DEFAULT_PLACEHOLDERS.key };
         }
         return { handled: false };
       },
     });
+
+    // Never allow output whose full depth could not be inspected: PII could be
+    // hiding in the unexamined subtree, and a security Output Rail must fail
+    // closed rather than silently pass unredacted content through.
+    if (depthExceeded) {
+      return {
+        decision: 'deny',
+        reason: `Tool output exceeds maximum PII-scanning depth (${this.maxDepth}); unable to fully inspect for personal data.`,
+      };
+    }
 
     if (modified) {
       return { decision: 'sanitize', sanitizedResult: value };
@@ -189,7 +219,12 @@ export class PiiRedactionPolicy implements ToolPolicy {
     }
 
     for (const pattern of this.customPatterns) {
-      const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+      // Strip 'y' (sticky): combined with 'g', it anchors every match attempt to the
+      // current lastIndex instead of searching forward, so a match not immediately
+      // at offset 0 would be silently skipped. Then ensure 'g' is present exactly once.
+      const withoutSticky = pattern.flags.replace('y', '');
+      const flags = withoutSticky.includes('g') ? withoutSticky : `${withoutSticky}g`;
+      const regex = new RegExp(pattern.source, flags);
       sanitized = sanitized.replace(regex, this.maskPlaceholder ?? DEFAULT_PLACEHOLDERS.custom);
     }
 

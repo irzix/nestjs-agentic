@@ -42,17 +42,20 @@ export interface RedactionTraversalOptions {
   onDepthExceeded?: DepthExceededBehavior;
 
   /**
-   * When `true`, non-plain objects (`Date`, `Map`, `Set`, class instances, etc.) are
-   * returned unchanged instead of being cloned into a plain `{}`/`[]`, which would
-   * otherwise corrupt their semantics.
-   * Default: `false` (clone everything, matching legacy `SecretRedactionPolicy` behavior).
+   * When `false`, non-plain objects (`Date`, `Map`, `Set`, class instances, etc.) are
+   * cloned into a plain `{}`/`[]`, which corrupts their semantics (an empty object in
+   * place of a `Date`). Set to `false` only if a caller specifically needs the legacy
+   * clone-everything behavior.
+   * Default: `true` (non-plain values are returned unchanged).
    */
   preserveNonPlainObjects?: boolean;
 
   /**
-   * When `true`, prototype-polluting keys (`__proto__`, `prototype`, `constructor`) are
-   * skipped during cloning.
-   * Default: `false` (matching legacy `SecretRedactionPolicy` behavior).
+   * When `false`, prototype-polluting keys (`__proto__`, `prototype`, `constructor`)
+   * are cloned like any other key, which can mutate the sanitized clone's prototype
+   * chain from untrusted input. Set to `false` only for trusted input where these keys
+   * carry meaningful data.
+   * Default: `true` (forbidden keys are skipped during cloning).
    */
   skipForbiddenKeys?: boolean;
 }
@@ -71,6 +74,11 @@ export interface RedactionTraversalResult {
  * whole keyed properties via `handleKey`). Shared by `SecretRedactionPolicy`,
  * `PiiRedactionPolicy`, and any policy needing safe, circular-reference-aware tree traversal
  * over untrusted tool output.
+ *
+ * @param root The (untrusted) value to traverse — typically a tool's raw output.
+ * @param options Traversal configuration; see `RedactionTraversalOptions`.
+ * @returns The (possibly cloned/redacted) value, whether anything was modified, and
+ *   whether traversal encountered a structure deeper than `maxDepth`.
  */
 export function traverseAndRedact(
   root: unknown,
@@ -80,11 +88,14 @@ export function traverseAndRedact(
   let depthExceeded = false;
   const seenMap = new WeakMap<object, unknown>();
   const onDepthExceeded = options.onDepthExceeded ?? 'passthrough';
+  const preserveNonPlainObjects = options.preserveNonPlainObjects ?? true;
+  const skipForbiddenKeys = options.skipForbiddenKeys ?? true;
 
   function walk(value: unknown, depth: number): unknown {
-    // Checked unconditionally at entry (for every type), matching the original
-    // SecretRedactionPolicy gate: nodes at depth <= maxDepth are processed,
-    // nodes strictly deeper are returned unchanged.
+    // Checked unconditionally at entry, for every type: nodes at depth <= maxDepth
+    // are inspected, nodes strictly deeper are returned unchanged. A string leaf at
+    // this depth is just as unsafe to skip as an unexamined object/array, so the
+    // gate applies uniformly rather than only to containers.
     if (depth > options.maxDepth) {
       if (onDepthExceeded === 'deny') {
         depthExceeded = true;
@@ -105,28 +116,32 @@ export function traverseAndRedact(
     }
 
     const isArray = Array.isArray(value);
-    if (!isArray && options.preserveNonPlainObjects && !isPlainRecord(value)) {
+    if (!isArray && preserveNonPlainObjects && !isPlainRecord(value)) {
+      // Non-plain object (Date, Map, Set, class instance, etc): returned unchanged
+      // to preserve its semantics rather than being cloned into a plain {}.
       return value;
     }
 
-    const container = value as object;
-    if (seenMap.has(container)) {
-      return seenMap.get(container);
+    if (seenMap.has(value)) {
+      return seenMap.get(value);
     }
 
     if (isArray) {
       const clone: unknown[] = [];
-      seenMap.set(container, clone);
-      for (const item of value as unknown[]) {
+      seenMap.set(value, clone);
+      for (const item of value) {
         clone.push(walk(item, depth + 1));
       }
       return clone;
     }
 
-    const clone: Record<string, unknown> = {};
-    seenMap.set(container, clone);
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (options.skipForbiddenKeys && FORBIDDEN_KEYS.has(k)) {
+    // Cloning into a null-prototype container means an own `__proto__` key on the
+    // source object can never mutate a real prototype chain, regardless of
+    // `skipForbiddenKeys` — a defense-in-depth floor under the opt-out.
+    const clone: Record<string, unknown> = Object.create(null);
+    seenMap.set(value, clone);
+    for (const [k, v] of Object.entries(value)) {
+      if (skipForbiddenKeys && FORBIDDEN_KEYS.has(k)) {
         continue;
       }
 

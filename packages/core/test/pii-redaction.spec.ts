@@ -214,6 +214,133 @@ export async function runPiiRedactionTests() {
     assert(false, 'Test 10: custom patterns and placeholder', err.message);
   }
 
+  // TEST 11: A sensitive key holding a structured (non-string) value is masked wholesale
+  try {
+    const policy = new PiiRedactionPolicy({ sensitiveKeys: ['homeAddress'] });
+    const customer = {
+      username: 'agent_user',
+      // A sensitive key can hold an object, not just a string — must still be
+      // masked wholesale rather than recursed into.
+      homeAddress: { street: '123 Main St', city: 'Springfield', zip: '62704' },
+      contacts: {
+        homeAddress: ['123 Main St', 'Springfield'],
+      },
+    };
+
+    const result = await policy.evaluateOutput(dummyCtx, 'getCustomer', customer);
+    assert(result.decision === 'sanitize', 'Test 11a: object-valued sensitive key triggers sanitization');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as any;
+      assert(sanitized.username === 'agent_user', 'Test 11b: non-sensitive field preserved');
+      assert(sanitized.homeAddress === '[REDACTED_PII]', 'Test 11c: object-valued sensitive key masked wholesale, not recursed into');
+      assert(sanitized.contacts.homeAddress === '[REDACTED_PII]', 'Test 11d: array-valued sensitive key nested in an object is also masked wholesale');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 11: sensitive key masks non-string values wholesale', err.message);
+  }
+
+  // TEST 12: Output nested deeper than maxDepth is denied, never silently allowed
+  try {
+    const shallowPolicy = new PiiRedactionPolicy({ maxDepth: 1 });
+    // Email is buried below the depth limit; a naive impl would return it unchecked.
+    const deep = { level1: { level2: { email: 'buried@example.com' } } };
+
+    const result = await shallowPolicy.evaluateOutput(dummyCtx, 'fetchDeep', deep);
+    assert(result.decision === 'deny', 'Test 12a: output deeper than maxDepth is denied, never allowed unexamined');
+    if (result.decision === 'deny') {
+      assert(result.reason.includes('depth'), 'Test 12b: denial reason explains the depth limit');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 12: maxDepth exceeded fails closed', err.message);
+  }
+
+  // TEST 13: Prototype-polluting keys are neutralized during cloning
+  try {
+    const policy = new PiiRedactionPolicy();
+    const malicious = JSON.parse('{"__proto__": {"polluted": true}, "email": "test@example.com"}');
+
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchRecord', malicious);
+    assert(({} as Record<string, unknown>).polluted === undefined, 'Test 13a: global Object.prototype is not polluted');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as Record<string, unknown>;
+      assert(
+        Object.getPrototypeOf(sanitized) !== malicious.__proto__,
+        'Test 13b: the sanitized clone\'s own prototype was not reassigned from the input\'s __proto__ key',
+      );
+      assert(!Object.prototype.hasOwnProperty.call(sanitized, 'polluted'), 'Test 13c: the forbidden key does not appear as an own property either');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 13: prototype-pollution safety', err.message);
+  }
+
+  // TEST 14: Non-plain objects (Date, Map, Set, class instances) are preserved, not corrupted
+  try {
+    const policy = new PiiRedactionPolicy();
+    class Money {
+      constructor(public cents: number) {}
+    }
+    const now = new Date();
+    const output = {
+      email: 'jane@example.com',
+      createdAt: now,
+      tags: new Set(['vip', 'returning']),
+      lookup: new Map([['k', 'v']]),
+      price: new Money(1999),
+    };
+
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchRecord', output);
+    assert(result.decision === 'sanitize', 'Test 14a: object with PII alongside non-plain values is still sanitized');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as typeof output;
+      assert(!sanitized.email.includes('jane@example.com'), 'Test 14b: PII field is still redacted');
+      assert(sanitized.createdAt instanceof Date && sanitized.createdAt.getTime() === now.getTime(), 'Test 14c: Date value preserved, not corrupted to {}');
+      assert(sanitized.tags instanceof Set && sanitized.tags.has('vip'), 'Test 14d: Set value preserved');
+      assert(sanitized.lookup instanceof Map && sanitized.lookup.get('k') === 'v', 'Test 14e: Map value preserved');
+      assert(sanitized.price instanceof Money && sanitized.price.cents === 1999, 'Test 14f: class instance preserved');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 14: non-plain object preservation', err.message);
+  }
+
+  // TEST 15: Circular references inside arrays are handled safely (not just plain objects)
+  try {
+    const policy = new PiiRedactionPolicy();
+    const arr: any[] = ['contact jane@example.com'];
+    arr.push(arr);
+
+    const result = await policy.evaluateOutput(dummyCtx, 'getList', arr);
+    assert(result.decision === 'sanitize', 'Test 15a: circular array is processed without stack overflow');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as any[];
+      assert(sanitized[1] === sanitized, 'Test 15b: circular array reference points to the sanitized clone');
+      assert(!sanitized[0].includes('jane@example.com'), 'Test 15c: array content is still sanitized');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 15: circular array safety', err.message);
+  }
+
+  // TEST 16: A custom pattern with a sticky ('y') flag still matches text that
+  // doesn't start at offset 0, instead of being silently skipped.
+  try {
+    const policy = new PiiRedactionPolicy({
+      customPatterns: [/EMP-\d{6}/y],
+      redactEmail: false,
+      redactPhone: false,
+      redactCreditCard: false,
+      redactSsn: false,
+    });
+
+    const output = 'Employee record for EMP-482910 filed today.';
+    const result = await policy.evaluateOutput(dummyCtx, 'fetchEmployee', output);
+    assert(result.decision === 'sanitize', 'Test 16a: sticky-flag custom pattern still matches text preceded by other content');
+    if (result.decision === 'sanitize') {
+      const sanitized = result.sanitizedResult as string;
+      assert(!sanitized.includes('EMP-482910'), 'Test 16b: the match is redacted despite the original sticky flag');
+    }
+  } catch (err: any) {
+    assert(false, 'Test 16: sticky-flag custom pattern normalization', err.message);
+  }
+
   console.log(`\n  📊 PiiRedactionPolicy Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('PiiRedactionPolicy Unit Tests Failed');
