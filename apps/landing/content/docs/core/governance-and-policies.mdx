@@ -105,4 +105,6 @@ const safe = PromptInjectionSanitizer.wrapWithBoundary('untrusted_pr_diff', rawD
 // </untrusted_pr_diff>
 ```
 
-This is a mitigation, not a guarantee — a novel injection payload that doesn't match a known delimiter pattern will still pass through.
+`wrapWithBoundary` rejects tag names that aren't valid XML-name-like identifiers and neutralizes any occurrence of the boundary markup inside the content, so untrusted text can't close or forge its own boundary. When traversing structured tool output, `PromptInjectionSanitizationPolicy` only rewrites plain objects and arrays — `Date`, `Map`, `Set`, and class instances pass through unchanged — and denies output nested deeper than its configured `maxDepth` rather than returning an uninspected subtree.
+
+This is a mitigation, not a guarantee — a novel injection payload that doesn't match a known delimiter pattern will still pass through. Prefer provider-native structured message roles for isolating untrusted data where available.
