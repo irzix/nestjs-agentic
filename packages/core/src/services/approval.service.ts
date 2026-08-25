@@ -1,11 +1,22 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { APPROVAL_STORE } from '../constants';
-import { ApprovalExpiredError, ApprovalNotFoundError, ExecutionCancelledError } from '../errors';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { AGENTIC_OPTIONS, APPROVAL_AUTHORIZER, APPROVAL_STORE } from '../constants';
+import {
+  ApprovalExpiredError,
+  ApprovalNotAuthorizedError,
+  ApprovalNotFoundError,
+  ExecutionCancelledError,
+} from '../errors';
 import { auditEnvelope } from '../interfaces';
-import type { ApprovalStore, AuditActor, PendingApproval } from '../interfaces';
+import type {
+  ApprovalAuthorizer,
+  ApprovalGovernanceOptions,
+  ApprovalStore,
+  AuditActor,
+  PendingApproval,
+} from '../interfaces';
 import type { AgentResult } from '../interfaces';
 import type { ToolExecutionResult } from '../interfaces';
-import { AgentRunner } from './agent-runner.service';
+import { AgentRunner, type AgenticModuleOptions } from './agent-runner.service';
 import { AuditTrail } from './audit-trail.service';
 
 /** Who is resolving the approval, recorded on the audit trail. */
@@ -27,7 +38,48 @@ export class ApprovalService {
     @Inject(APPROVAL_STORE) private readonly store: ApprovalStore,
     private readonly runner: AgentRunner,
     private readonly audit?: AuditTrail,
+    @Optional() @Inject(APPROVAL_AUTHORIZER) private readonly authorizer?: ApprovalAuthorizer,
+    @Optional() @Inject(AGENTIC_OPTIONS) private readonly options?: AgenticModuleOptions,
   ) {}
+
+  private governanceOptions(): ApprovalGovernanceOptions {
+    return this.options?.approvals ?? {};
+  }
+
+  /**
+   * Runs the separation-of-duties check and any registered `ApprovalAuthorizer`.
+   *
+   * @returns A refusal reason, or `undefined` when the settlement may proceed.
+   */
+  private async checkAuthorization(
+    approval: PendingApproval,
+    actor?: AuditActor,
+  ): Promise<string | undefined> {
+    if (this.governanceOptions().enforceSeparationOfDuties) {
+      // Only a proven conflict refuses: both identities must be known and equal.
+      // An unknown identity on either side cannot be shown to be the same person,
+      // so it is not treated as a violation (an ApprovalAuthorizer is the right
+      // place to reject unidentified settlements outright).
+      const requesterId = approval.requestedBy?.userId ?? approval.context.security.userId;
+      const approverId = actor?.userId;
+
+      if (requesterId !== undefined && approverId !== undefined && requesterId === approverId) {
+        return `separation of duties: "${approverId}" requested this action and cannot also approve it`;
+      }
+    }
+
+    if (!this.authorizer) {
+      return undefined;
+    }
+
+    const verdict = await this.authorizer.canSettle(approval, actor);
+
+    if (verdict === true) return undefined;
+    if (verdict === false) return 'refused by the registered ApprovalAuthorizer';
+    if (verdict.allowed) return undefined;
+
+    return verdict.reason ?? 'refused by the registered ApprovalAuthorizer';
+  }
 
   /**
    * Executes the tool a pending approval withheld and removes it from the
@@ -98,6 +150,36 @@ export class ApprovalService {
       throw new ExecutionCancelledError();
     }
 
+    const outcome = decision.approved ? 'approved' : 'rejected';
+
+    // Authorization runs against a non-destructive read, before the claim.
+    // Claiming first would consume the approval on a refused attempt, letting an
+    // unauthorized caller destroy a pending decision. The read/claim race this
+    // introduces is harmless: `claim()` remains the exactly-once primitive, so a
+    // concurrent settlement still results in exactly one execution.
+    if (this.authorizer || this.governanceOptions().enforceSeparationOfDuties) {
+      const pending = await this.store.get(approvalId);
+      if (!pending) {
+        throw new ApprovalNotFoundError(approvalId);
+      }
+
+      const refusal = await this.checkAuthorization(pending, options?.actor);
+      if (refusal) {
+        await this.audit?.record({
+          ...auditEnvelope(pending.context),
+          type: 'approval_settlement_denied',
+          approvalId,
+          agentName: pending.agentName,
+          toolName: pending.toolName,
+          outcome,
+          reason: refusal,
+          actor: options?.actor,
+        });
+
+        throw new ApprovalNotAuthorizedError(approvalId, refusal);
+      }
+    }
+
     let abortHandler: (() => void) | undefined;
     let claimed: PendingApproval | null;
 
@@ -121,8 +203,6 @@ export class ApprovalService {
     if (!claimed) {
       throw new ApprovalNotFoundError(approvalId);
     }
-
-    const outcome = decision.approved ? 'approved' : 'rejected';
 
     if (claimed.expiresAt && Date.now() > new Date(claimed.expiresAt).getTime()) {
       const expiredAt = new Date(claimed.expiresAt);

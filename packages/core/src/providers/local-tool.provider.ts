@@ -15,6 +15,7 @@ import { scopeKey } from '../utils/scope-key';
 import type {
   AgentContext,
   ApprovalStore,
+  AuditActor,
   IdempotencyStore,
   ResolvedTool,
   ToolExecutionResult,
@@ -503,6 +504,7 @@ export class LocalToolProvider {
               createdAt,
               expiresAt,
               toolCallId,
+              requestedBy: requesterFrom(agentContext),
             });
 
             if (this.audit?.isEnabled()) {
@@ -607,6 +609,22 @@ export class LocalToolProvider {
  */
 function isErrorWrapper(value: unknown): value is { error: unknown } {
   return typeof value === 'object' && value !== null && 'error' in value;
+}
+
+/**
+ * Captures the identity that triggered a gated action, so a later
+ * separation-of-duties check can compare it against the approver.
+ *
+ * Returns `undefined` when the application supplied no identity at all, rather
+ * than an empty object, so "no identity was recorded" stays distinguishable
+ * from "an identity was recorded but had no userId".
+ */
+function requesterFrom(context: AgentContext): AuditActor | undefined {
+  const { userId, tenantId, roles } = context.security;
+  if (userId === undefined && tenantId === undefined && roles === undefined) {
+    return undefined;
+  }
+  return { userId, tenantId, roles };
 }
 
 /**

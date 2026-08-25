@@ -83,3 +83,66 @@ export class ApprovalsController {
   }
 }
 ```
+
+---
+
+## Approver Authorization
+
+By default the framework records *who* settled an approval but does not enforce that they were entitled to. Register an `ApprovalAuthorizer` through the `APPROVAL_AUTHORIZER` token to gate settlement:
+
+```typescript
+import { APPROVAL_AUTHORIZER } from '@nestjs-agentic/core';
+import type { ApprovalAuthorizer, AuditActor, PendingApproval } from '@nestjs-agentic/core';
+
+class MaintainerOnlyAuthorizer implements ApprovalAuthorizer {
+  async canSettle(approval: PendingApproval, actor?: AuditActor) {
+    if (!actor?.roles?.includes('finance_officer')) {
+      return { allowed: false, reason: 'approver lacks finance_officer entitlement' };
+    }
+    return true;
+  }
+}
+
+// providers: [{ provide: APPROVAL_AUTHORIZER, useClass: MaintainerOnlyAuthorizer }]
+```
+
+The check runs **before** the approval is claimed, so a refused attempt raises `ApprovalNotAuthorizedError` and leaves the approval pending for a properly authorized reviewer — an unauthorized caller cannot destroy a pending decision. Every refusal is recorded as an `approval_settlement_denied` audit event, so repeated attempts on one approval are visible.
+
+### Separation of duties
+
+Enable `approvals.enforceSeparationOfDuties` to stop the identity that triggered an action from also approving it:
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  approvals: { enforceSeparationOfDuties: true },
+});
+```
+
+The requester is captured on the approval as `requestedBy` when the approval is created. A settlement is only refused on a **proven** conflict — both identities known and equal. A missing identity on either side cannot be shown to be the same person, so it is not treated as a violation; use an `ApprovalAuthorizer` if unidentified settlements must be blocked outright.
+
+---
+
+## Tamper-Evident Audit Trail
+
+`HashChainAuditSink` wraps an audit destination and binds each event to its predecessor, so altering or deleting a stored entry becomes detectable:
+
+```typescript
+import { HashChainAuditSink, PostgresAuditSink, verifyAuditChain } from '@nestjs-agentic/core';
+
+const store = new PostgresAuditSink({ client: pool });
+// Resume the existing chain so restarts don't start a new one.
+const sink = new HashChainAuditSink(store, await store.head());
+
+// Later, verify what was persisted:
+const report = verifyAuditChain(await store.readChain());
+if (!report.valid) {
+  console.error(`audit chain broken at entry ${report.brokenAt}: ${report.reason}`);
+}
+```
+
+`verifyAuditChain` detects a modified event body, a rewritten hash, a re-linked `previousHash`, and a deleted or reordered entry (via the sequence gap). Events are canonically serialized (sorted keys, ISO dates) so identical content always hashes identically, and concurrent `record()` calls are serialized internally, since a chain linked out of order would not verify.
+
+`PostgresAuditSink` works standalone as an `AuditSink` or as the durable destination for a chain. It only ever inserts; enforce that at the database level by granting the application role `INSERT`/`SELECT` but not `UPDATE`/`DELETE`, so a compromised application cannot rewrite history even though the chain would reveal it.
+
+This makes tampering **evident**, not impossible: an attacker who can rewrite the entire chain can still produce a self-consistent history. Periodically publishing the latest `headHash()` outside the same trust domain (anchoring) is what closes that gap.

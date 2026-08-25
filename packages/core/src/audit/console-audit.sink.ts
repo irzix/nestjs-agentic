@@ -41,6 +41,10 @@ function summarize(event: AuditEvent): string {
       return `${event.toolName} approval ${event.approvalId} expired at ${event.expiredAt.toISOString()}`;
     case 'approval_settlement_failed':
       return `${event.toolName} approval ${event.approvalId} failed after claim: ${event.error}`;
+    case 'approval_settlement_denied':
+      return `${event.toolName} approval ${event.approvalId} ${event.outcome} attempt refused${
+        event.actor ? ` for ${describeActor(event.actor)}` : ''
+      }: ${event.reason}`;
   }
 }
 

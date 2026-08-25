@@ -28,6 +28,7 @@ import type {
   AgentResult,
   AgentStreamEvent,
   ApprovalDecision,
+  ApprovalGovernanceOptions,
   ApprovalStore,
   AuditOptions,
   AuditSink,
@@ -128,6 +129,12 @@ export interface AgenticModuleOptions {
    * method-level `@UsePolicies`, in array order.
    */
   defaultPolicies?: Type<ToolPolicy>[];
+  /**
+   * Governance behavior for settling pending approvals (e.g. enforcing
+   * separation of duties). Authorization itself is supplied by registering an
+   * `ApprovalAuthorizer` through the `APPROVAL_AUTHORIZER` token.
+   */
+  approvals?: ApprovalGovernanceOptions;
   /** Overrides for internal diagnostic logging (e.g. governance warnings). Defaults to `console`. */
   logger?: { warn?: (message: string) => void };
 }

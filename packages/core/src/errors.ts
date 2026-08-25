@@ -94,6 +94,24 @@ export class ApprovalExpiredError extends AgenticError {
 }
 
 /**
+ * Raised when a settlement attempt is refused before the approval is claimed —
+ * either by a registered `ApprovalAuthorizer` or by the built-in
+ * separation-of-duties check (the approver is the same identity that triggered
+ * the action).
+ *
+ * The approval is left pending so a properly authorized reviewer can still
+ * resolve it: an unauthorized attempt must not consume it.
+ */
+export class ApprovalNotAuthorizedError extends AgenticError {
+  constructor(
+    readonly approvalId: string,
+    readonly reason: string,
+  ) {
+    super(`Not authorized to settle approval "${approvalId}": ${reason}`);
+  }
+}
+
+/**
  * Raised when a pending approval is resumed but its tool can no longer be
  * found among the agent's current tool sets — for example the tool was
  * renamed or removed after the approval was created.

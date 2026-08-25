@@ -1,4 +1,5 @@
 import type { AgentContext } from './agent-context.interface';
+import type { AuditActor } from './audit.interface';
 import type { ModelMessage } from './model.interface';
 
 /** Checkpoint schema version written by this release. */
@@ -66,6 +67,66 @@ export interface PendingApproval {
    * Absent for approvals created outside the built-in runtime.
    */
   checkpoint?: ApprovalCheckpoint;
+  /**
+   * Identity that triggered the action being reviewed, derived from the
+   * execution context when the approval was created. Recorded so a
+   * separation-of-duties check can tell whether an approver is also the
+   * requester. Absent when the application supplied no identity.
+   */
+  requestedBy?: AuditActor;
+}
+
+/**
+ * Decides whether a caller may settle a pending approval.
+ *
+ * Register one through the `APPROVAL_AUTHORIZER` token. Without it, any caller
+ * holding a valid approval ID can settle it — the framework records *who*
+ * decided but does not, by itself, enforce that they were allowed to.
+ *
+ * Consulted *before* the approval is claimed, so a refused attempt leaves the
+ * approval pending for a properly authorized reviewer instead of consuming it.
+ *
+ * @example
+ * ```typescript
+ * class MaintainerOnlyAuthorizer implements ApprovalAuthorizer {
+ *   async canSettle(approval: PendingApproval, actor?: AuditActor) {
+ *     return actor?.roles?.includes('maintainer') ?? false;
+ *   }
+ * }
+ * ```
+ */
+export interface ApprovalAuthorizer {
+  /**
+   * @param approval The pending approval being settled.
+   * @param actor Identity supplied by the caller, when any.
+   * @returns `true` to allow the settlement. Returning `false` — or a
+   *   `{ allowed: false, reason }` object — refuses it with
+   *   `ApprovalNotAuthorizedError` and leaves the approval pending.
+   */
+  canSettle(
+    approval: PendingApproval,
+    actor?: AuditActor,
+  ): Promise<boolean | ApprovalAuthorizationDecision> | boolean | ApprovalAuthorizationDecision;
+}
+
+/** Explicit authorization outcome, allowing a human-readable refusal reason. */
+export type ApprovalAuthorizationDecision =
+  | { allowed: true }
+  | { allowed: false; reason?: string };
+
+/** Governance behavior for settling pending approvals. */
+export interface ApprovalGovernanceOptions {
+  /**
+   * Refuse a settlement when the approving actor is the same identity that
+   * triggered the action (compared by `userId`). Off by default, since not
+   * every deployment supplies identities on both sides.
+   *
+   * When enabled, a settlement is only refused if both identities are known
+   * and equal — a missing identity on either side cannot be proven to be a
+   * conflict, so it is not treated as one. Pair this with an
+   * `ApprovalAuthorizer` if unidentified settlements must also be blocked.
+   */
+  enforceSeparationOfDuties?: boolean;
 }
 
 export interface ApprovalStore {
