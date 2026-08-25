@@ -51,3 +51,29 @@ tracer.record('multi_agent', 'Concurrently ran 3 specialist reviewers', 12700);
 // Export as markdown log block
 const logMarkdown = tracer.toMarkdownAccordion();
 ```
+
+---
+
+## Tamper-Evident Audit Trail
+
+`HashChainAuditSink` wraps an audit destination and binds each event to its predecessor, so altering or deleting a stored entry becomes detectable:
+
+```typescript
+import { HashChainAuditSink, PostgresAuditSink, verifyAuditChain } from '@nestjs-agentic/core';
+
+const store = new PostgresAuditSink({ client: pool });
+// Resume the existing chain so restarts don't start a new one.
+const sink = new HashChainAuditSink(store, await store.head());
+
+// Later, verify what was persisted:
+const report = verifyAuditChain(await store.readChain());
+if (!report.valid) {
+  console.error(`audit chain broken at entry ${report.brokenAt}: ${report.reason}`);
+}
+```
+
+`verifyAuditChain` detects a modified event body, a rewritten hash, a re-linked `previousHash`, and a deleted or reordered entry (via the sequence gap). Events are canonically serialized (sorted keys, ISO dates) so identical content always hashes identically, and concurrent `record()` calls are serialized internally, since a chain linked out of order would not verify.
+
+`PostgresAuditSink` works standalone as an `AuditSink` or as the durable destination for a chain. It only ever inserts; enforce that at the database level by granting the application role `INSERT`/`SELECT` but not `UPDATE`/`DELETE`, so a compromised application cannot rewrite history even though the chain would reveal it.
+
+This makes tampering **evident**, not impossible: an attacker who can rewrite the entire chain can still produce a self-consistent history. Periodically publishing the latest `headHash()` outside the same trust domain (anchoring) is what closes that gap.
