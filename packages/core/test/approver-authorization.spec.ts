@@ -95,8 +95,11 @@ export async function runApproverAuthorizationTests() {
    */
   async function suspendTransfer(options?: {
     requesterId?: string;
+    requesterTenant?: string;
     authorizer?: ApprovalAuthorizer;
     enforceSeparationOfDuties?: boolean;
+    enforceTenantIsolation?: boolean;
+    requireAuthorizer?: boolean;
   }): Promise<{
     approvals: ApprovalService;
     approvalStore: InMemoryApprovalStore;
@@ -140,14 +143,23 @@ export async function runApproverAuthorizationTests() {
       options?.authorizer,
       {
         defaultModel: { provider: 'mock', model: 'deterministic' },
-        approvals: { enforceSeparationOfDuties: options?.enforceSeparationOfDuties },
+        approvals: {
+          enforceSeparationOfDuties: options?.enforceSeparationOfDuties,
+          enforceTenantIsolation: options?.enforceTenantIsolation,
+          requireAuthorizer: options?.requireAuthorizer,
+        },
       },
     );
+
+    const context =
+      options?.requesterId || options?.requesterTenant
+        ? { userId: options.requesterId, tenantId: options.requesterTenant }
+        : undefined;
 
     const suspended = await runner.run('banker', {
       sessionId: 'sess_authz',
       message: 'Transfer $5000',
-      context: options?.requesterId ? { userId: options.requesterId } : undefined,
+      context,
     });
 
     const pending = suspended.toolCalls[0]?.result as { approvalId?: string; status?: string };
@@ -357,6 +369,110 @@ export async function runApproverAuthorizationTests() {
     assert(seenActor?.userId === 'usr_reviewer', 'Test 9e: the authorizer receives the settling actor');
   } catch (err: unknown) {
     assert(false, 'Test 9: authorizer inputs', String(err));
+  }
+
+  // TEST 10: tenant isolation blocks cross-tenant settlement
+  try {
+    const { approvals, approvalId, tools, approvalStore } = await suspendTransfer({
+      requesterId: 'usr_a',
+      requesterTenant: 'acme',
+      enforceTenantIsolation: true,
+    });
+
+    let refused: ApprovalNotAuthorizedError | undefined;
+    try {
+      await approvals.approve(approvalId, { actor: { userId: 'usr_b', tenantId: 'evilcorp' } });
+    } catch (err) {
+      refused = err as ApprovalNotAuthorizedError;
+    }
+
+    assert(refused instanceof ApprovalNotAuthorizedError, 'Test 10a: an approver from another tenant is refused');
+    assert(Boolean(refused?.reason.includes('tenant isolation')), 'Test 10b: the refusal identifies the tenant mismatch');
+    assert(tools.transfers.length === 0, 'Test 10c: the side effect is not applied');
+    assert((await approvalStore.get(approvalId)) !== null, 'Test 10d: the approval remains pending');
+
+    // An approver in the right tenant succeeds.
+    await approvals.approve(approvalId, { actor: { userId: 'usr_b', tenantId: 'acme' } });
+    assert(tools.transfers.length === 1, 'Test 10e: an approver in the approval\'s tenant settles it');
+  } catch (err: unknown) {
+    assert(false, 'Test 10: tenant isolation', String(err));
+  }
+
+  // TEST 11: tenant isolation refuses an approver with no tenant, and is off by default
+  try {
+    const strict = await suspendTransfer({ requesterTenant: 'acme', enforceTenantIsolation: true });
+    let refused: ApprovalNotAuthorizedError | undefined;
+    try {
+      await strict.approvals.approve(strict.approvalId, { actor: { userId: 'usr_x' } });
+    } catch (err) {
+      refused = err as ApprovalNotAuthorizedError;
+    }
+    assert(refused instanceof ApprovalNotAuthorizedError, 'Test 11a: an approver with no tenant is refused when isolation is enforced');
+    assert(Boolean(refused?.reason.includes('no tenant')), 'Test 11b: the refusal says the approver supplied no tenant');
+
+    const off = await suspendTransfer({ requesterTenant: 'acme' });
+    await off.approvals.approve(off.approvalId, { actor: { userId: 'usr_x', tenantId: 'other' } });
+    assert(off.tools.transfers.length === 1, 'Test 11c: tenant isolation is off by default');
+  } catch (err: unknown) {
+    assert(false, 'Test 11: tenant isolation boundaries', String(err));
+  }
+
+  // TEST 12: SoD is tenant-scoped, so the same userId in two tenants is not a conflict
+  try {
+    const { approvals, approvalId, tools } = await suspendTransfer({
+      requesterId: 'admin',
+      requesterTenant: 'tenant_a',
+      enforceSeparationOfDuties: true,
+    });
+
+    // Same userId, different tenant: a different person, so not a conflict.
+    await approvals.approve(approvalId, { actor: { userId: 'admin', tenantId: 'tenant_b' } });
+    assert(tools.transfers.length === 1, 'Test 12a: an identical userId in a different tenant is not an SoD conflict');
+
+    // Same userId, same tenant: a real conflict.
+    const same = await suspendTransfer({
+      requesterId: 'admin',
+      requesterTenant: 'tenant_a',
+      enforceSeparationOfDuties: true,
+    });
+    let refused: unknown;
+    try {
+      await same.approvals.approve(same.approvalId, { actor: { userId: 'admin', tenantId: 'tenant_a' } });
+    } catch (err) {
+      refused = err;
+    }
+    assert(refused instanceof ApprovalNotAuthorizedError, 'Test 12b: the same userId in the same tenant is still refused');
+  } catch (err: unknown) {
+    assert(false, 'Test 12: tenant-scoped separation of duties', String(err));
+  }
+
+  // TEST 13: requireAuthorizer fails closed when no authorizer is registered
+  try {
+    const { approvals, approvalId, tools, approvalStore } = await suspendTransfer({
+      requireAuthorizer: true,
+    });
+
+    let refused: ApprovalNotAuthorizedError | undefined;
+    try {
+      await approvals.approve(approvalId, { actor: { userId: 'usr_x' } });
+    } catch (err) {
+      refused = err as ApprovalNotAuthorizedError;
+    }
+
+    assert(refused instanceof ApprovalNotAuthorizedError, 'Test 13a: requireAuthorizer refuses settlement with no authorizer registered');
+    assert(Boolean(refused?.reason.includes('requireAuthorizer')), 'Test 13b: the refusal names the enabled option');
+    assert(tools.transfers.length === 0, 'Test 13c: the side effect is not applied');
+    assert((await approvalStore.get(approvalId)) !== null, 'Test 13d: the approval remains pending');
+
+    // With an authorizer registered, the same strict mode permits it.
+    const withAuthorizer = await suspendTransfer({
+      requireAuthorizer: true,
+      authorizer: { canSettle: () => true },
+    });
+    await withAuthorizer.approvals.approve(withAuthorizer.approvalId, { actor: { userId: 'usr_x' } });
+    assert(withAuthorizer.tools.transfers.length === 1, 'Test 13e: strict mode passes once an authorizer is registered');
+  } catch (err: unknown) {
+    assert(false, 'Test 13: requireAuthorizer strict mode', String(err));
   }
 
   console.log(`\n  📊 Approver Authorization Test Results: ${passed} passed, ${failed} failed.\n`);

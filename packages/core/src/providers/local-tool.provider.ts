@@ -612,12 +612,9 @@ function isErrorWrapper(value: unknown): value is { error: unknown } {
 }
 
 /**
- * Captures the identity that triggered a gated action, so a later
- * separation-of-duties check can compare it against the approver.
- *
- * Returns `undefined` when the application supplied no identity at all, rather
- * than an empty object, so "no identity was recorded" stays distinguishable
- * from "an identity was recorded but had no userId".
+ * Captures the identity that triggered a gated action, for a later
+ * separation-of-duties check. Returns `undefined` rather than an empty object so
+ * "no identity recorded" stays distinguishable from "recorded without a userId".
  */
 function requesterFrom(context: AgentContext): AuditActor | undefined {
   const { userId, tenantId, roles } = context.security;

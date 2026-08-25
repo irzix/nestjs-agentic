@@ -47,7 +47,7 @@ export class ApprovalService {
   }
 
   /**
-   * Runs the separation-of-duties check and any registered `ApprovalAuthorizer`.
+   * Runs tenant isolation, separation of duties, and any registered authorizer.
    *
    * @returns A refusal reason, or `undefined` when the settlement may proceed.
    */
@@ -55,21 +55,39 @@ export class ApprovalService {
     approval: PendingApproval,
     actor?: AuditActor,
   ): Promise<string | undefined> {
-    if (this.governanceOptions().enforceSeparationOfDuties) {
-      // Only a proven conflict refuses: both identities must be known and equal.
-      // An unknown identity on either side cannot be shown to be the same person,
-      // so it is not treated as a violation (an ApprovalAuthorizer is the right
-      // place to reject unidentified settlements outright).
-      const requesterId = approval.requestedBy?.userId ?? approval.context.security.userId;
-      const approverId = actor?.userId;
+    const governance = this.governanceOptions();
+    const approvalTenant = approval.context.security.tenantId;
 
-      if (requesterId !== undefined && approverId !== undefined && requesterId === approverId) {
-        return `separation of duties: "${approverId}" requested this action and cannot also approve it`;
+    if (governance.enforceTenantIsolation && approvalTenant !== undefined) {
+      if (actor?.tenantId === undefined) {
+        return `tenant isolation: approval belongs to tenant "${approvalTenant}" and the approver supplied no tenant`;
+      }
+      if (actor.tenantId !== approvalTenant) {
+        return `tenant isolation: approval belongs to tenant "${approvalTenant}", not "${actor.tenantId}"`;
+      }
+    }
+
+    if (governance.enforceSeparationOfDuties) {
+      const requester = approval.requestedBy ?? approval.context.security;
+      // Scoped by tenant so the same userId in two tenants is not a conflict.
+      const sameTenant = (requester.tenantId ?? approvalTenant) === actor?.tenantId;
+      const conflict =
+        requester.userId !== undefined &&
+        actor?.userId !== undefined &&
+        requester.userId === actor.userId &&
+        sameTenant;
+
+      if (conflict) {
+        return `separation of duties: "${actor?.userId}" requested this action and cannot also approve it`;
       }
     }
 
     if (!this.authorizer) {
-      return undefined;
+      // Strict mode lets a deployment fail closed rather than allow any caller
+      // holding an approval ID to settle it.
+      return governance.requireAuthorizer
+        ? 'no ApprovalAuthorizer is registered and approvals.requireAuthorizer is enabled'
+        : undefined;
     }
 
     const verdict = await this.authorizer.canSettle(approval, actor);
@@ -152,12 +170,16 @@ export class ApprovalService {
 
     const outcome = decision.approved ? 'approved' : 'rejected';
 
-    // Authorization runs against a non-destructive read, before the claim.
-    // Claiming first would consume the approval on a refused attempt, letting an
-    // unauthorized caller destroy a pending decision. The read/claim race this
-    // introduces is harmless: `claim()` remains the exactly-once primitive, so a
-    // concurrent settlement still results in exactly one execution.
-    if (this.authorizer || this.governanceOptions().enforceSeparationOfDuties) {
+    // Checked against a non-destructive read, before the claim: claiming first
+    // would let a refused attempt consume the approval. The read/claim race is
+    // harmless since `claim()` still enforces exactly-once settlement.
+    const governance = this.governanceOptions();
+    if (
+      this.authorizer ||
+      governance.enforceSeparationOfDuties ||
+      governance.enforceTenantIsolation ||
+      governance.requireAuthorizer
+    ) {
       const pending = await this.store.get(approvalId);
       if (!pending) {
         throw new ApprovalNotFoundError(approvalId);

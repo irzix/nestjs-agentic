@@ -77,14 +77,12 @@ export interface PendingApproval {
 }
 
 /**
- * Decides whether a caller may settle a pending approval.
+ * Decides whether a caller may settle a pending approval. Register one through
+ * the `APPROVAL_AUTHORIZER` token; consulted before the approval is claimed, so
+ * a refusal leaves it pending.
  *
- * Register one through the `APPROVAL_AUTHORIZER` token. Without it, any caller
- * holding a valid approval ID can settle it — the framework records *who*
- * decided but does not, by itself, enforce that they were allowed to.
- *
- * Consulted *before* the approval is claimed, so a refused attempt leaves the
- * approval pending for a properly authorized reviewer instead of consuming it.
+ * `actor` is application-supplied and not authenticated by the framework — see
+ * `ApprovalGovernanceOptions`.
  *
  * @example
  * ```typescript
@@ -99,9 +97,8 @@ export interface ApprovalAuthorizer {
   /**
    * @param approval The pending approval being settled.
    * @param actor Identity supplied by the caller, when any.
-   * @returns `true` to allow the settlement. Returning `false` — or a
-   *   `{ allowed: false, reason }` object — refuses it with
-   *   `ApprovalNotAuthorizedError` and leaves the approval pending.
+   * @returns `true`, or `{ allowed: false, reason }` to refuse with
+   *   `ApprovalNotAuthorizedError`.
    */
   canSettle(
     approval: PendingApproval,
@@ -114,19 +111,41 @@ export type ApprovalAuthorizationDecision =
   | { allowed: true }
   | { allowed: false; reason?: string };
 
-/** Governance behavior for settling pending approvals. */
+/**
+ * Governance behavior for settling pending approvals.
+ *
+ * These checks run against the `actor` the application passes to
+ * `ApprovalService.approve()` / `.reject()`. That actor is **not** authenticated
+ * by the framework — it has no request context — so it must be derived from an
+ * already-authenticated principal (e.g. in a NestJS guard), never from
+ * client-supplied request data.
+ */
 export interface ApprovalGovernanceOptions {
   /**
-   * Refuse a settlement when the approving actor is the same identity that
-   * triggered the action (compared by `userId`). Off by default, since not
-   * every deployment supplies identities on both sides.
+   * Refuse a settlement when the approver is the identity that triggered the
+   * action. Off by default, since not every deployment supplies identities on
+   * both sides.
    *
-   * When enabled, a settlement is only refused if both identities are known
-   * and equal — a missing identity on either side cannot be proven to be a
-   * conflict, so it is not treated as one. Pair this with an
-   * `ApprovalAuthorizer` if unidentified settlements must also be blocked.
+   * Only a proven conflict refuses: both `userId`s known, equal, and in the same
+   * tenant. A missing identity cannot be shown to be the same person, so it is
+   * not treated as a violation — use `requireAuthorizer` to block unidentified
+   * settlements outright.
    */
   enforceSeparationOfDuties?: boolean;
+
+  /**
+   * Refuse a settlement whose approver is not in the approval's tenant. Off by
+   * default; enable it in multi-tenant deployments so a leaked approval ID
+   * cannot be settled from another tenant.
+   */
+  enforceTenantIsolation?: boolean;
+
+  /**
+   * Refuse every settlement unless an `ApprovalAuthorizer` is registered. Off by
+   * default for backward compatibility; enable it to fail closed rather than let
+   * any caller holding an approval ID settle it.
+   */
+  requireAuthorizer?: boolean;
 }
 
 export interface ApprovalStore {
