@@ -39,7 +39,17 @@ export interface PostgresAuditRow {
  * The table is treated as append-only: this class only ever inserts. Making that
  * a real guarantee is a database-level concern — grant the application role
  * `INSERT` and `SELECT` but not `UPDATE`/`DELETE`, so a compromised application
- * cannot rewrite history even though the chain would reveal it.
+ * cannot rewrite history even though the chain would reveal it. Those grants
+ * exclude `CREATE`, so pair them with `autoCreateTable: false` and create the
+ * table from a migration run by a privileged role.
+ *
+ * Row identity (`id`) is database-generated and independent of chain position
+ * (`chain_sequence`), so direct and chained writes can share one table without
+ * competing. `chain_sequence` is `UNIQUE`: if two writers ever compute the same
+ * position, the second insert fails loudly instead of silently forking the chain.
+ * A linear chain still assumes a single writer per chain — `HashChainAuditSink`
+ * only serializes within one instance, so coordinate at the database level (or
+ * keep one writer) in a horizontally-scaled deployment.
  *
  * @example
  * ```typescript
@@ -56,8 +66,6 @@ export class PostgresAuditSink implements AuditSink, ChainedAuditEntrySink {
   private readonly tableName: string;
   private readonly autoCreateTable: boolean;
   private tableInitPromise?: Promise<void>;
-  /** Fallback counter for direct `AuditSink` writes, which carry no sequence. */
-  private unchainedSequence = 0;
 
   constructor(options: PostgresAuditSinkOptions) {
     this.client = options.client;
@@ -68,33 +76,41 @@ export class PostgresAuditSink implements AuditSink, ChainedAuditEntrySink {
   private ensureTable(): Promise<void> {
     if (!this.autoCreateTable) return Promise.resolve();
     if (!this.tableInitPromise) {
-      this.tableInitPromise = (async () => {
-        try {
-          await this.client.query(`
-            CREATE TABLE IF NOT EXISTS ${this.tableName} (
-              sequence BIGINT PRIMARY KEY,
-              type VARCHAR(64) NOT NULL,
-              session_id VARCHAR(255) NOT NULL,
-              trace_id VARCHAR(255) NOT NULL,
-              tenant_id VARCHAR(255),
-              at TIMESTAMPTZ NOT NULL,
-              event JSONB NOT NULL,
-              previous_hash CHAR(64),
-              hash CHAR(64)
-            );
-            CREATE INDEX IF NOT EXISTS idx_${this.tableName}_session ON ${this.tableName} (session_id);
-            CREATE INDEX IF NOT EXISTS idx_${this.tableName}_tenant ON ${this.tableName} (tenant_id) WHERE tenant_id IS NOT NULL;
-          `);
-        } catch (err: unknown) {
-          // Ignore Postgres "already exists" errors (42P07 table, 42710 index).
-          const code = (err as { code?: string } | null)?.code;
-          if (code && !['42P07', '42710'].includes(code)) {
-            throw err;
-          }
-        }
-      })();
+      // A failure is not cached: a transient outage on the first write would
+      // otherwise leave the table uncreated for the lifetime of the instance.
+      this.tableInitPromise = this.createTable().catch((err: unknown) => {
+        this.tableInitPromise = undefined;
+        throw err;
+      });
     }
     return this.tableInitPromise;
+  }
+
+  private async createTable(): Promise<void> {
+    try {
+      await this.client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.tableName} (
+          id BIGSERIAL PRIMARY KEY,
+          chain_sequence BIGINT UNIQUE,
+          type VARCHAR(64) NOT NULL,
+          session_id VARCHAR(255) NOT NULL,
+          trace_id VARCHAR(255) NOT NULL,
+          tenant_id VARCHAR(255),
+          at TIMESTAMPTZ NOT NULL,
+          event JSONB NOT NULL,
+          previous_hash CHAR(64),
+          hash CHAR(64)
+        );
+        CREATE INDEX IF NOT EXISTS idx_${this.tableName}_session ON ${this.tableName} (session_id);
+        CREATE INDEX IF NOT EXISTS idx_${this.tableName}_tenant ON ${this.tableName} (tenant_id) WHERE tenant_id IS NOT NULL;
+      `);
+    } catch (err: unknown) {
+      // Tolerate a concurrent creator, but let every other failure surface —
+      // including errors that carry no `code` at all, such as a dropped connection.
+      const code = (err as { code?: string } | null)?.code;
+      if (code === '42P07' || code === '42710') return;
+      throw err;
+    }
   }
 
   /**
@@ -108,13 +124,14 @@ export class PostgresAuditSink implements AuditSink, ChainedAuditEntrySink {
       return;
     }
 
-    this.unchainedSequence += 1;
-    await this.insert(event, this.unchainedSequence);
+    // Row identity is database-generated, so an unchained write never competes
+    // with a chain position.
+    await this.insert(event, null);
   }
 
   private async insert(
     event: AuditEvent,
-    sequence: number,
+    chainSequence: number | null,
     previousHash?: string,
     hash?: string,
   ): Promise<void> {
@@ -122,10 +139,10 @@ export class PostgresAuditSink implements AuditSink, ChainedAuditEntrySink {
 
     await this.client.query(
       `INSERT INTO ${this.tableName}
-         (sequence, type, session_id, trace_id, tenant_id, at, event, previous_hash, hash)
+         (chain_sequence, type, session_id, trace_id, tenant_id, at, event, previous_hash, hash)
        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
       [
-        sequence,
+        chainSequence,
         event.type,
         event.sessionId,
         event.traceId,
@@ -147,14 +164,18 @@ export class PostgresAuditSink implements AuditSink, ChainedAuditEntrySink {
   async head(): Promise<{ previousHash?: string; startSequence?: number }> {
     await this.ensureTable();
 
-    const result = await this.client.query<{ hash: string | null; sequence: string | number }>(
-      `SELECT hash, sequence FROM ${this.tableName} ORDER BY sequence DESC LIMIT 1`,
+    // Restricted to chained rows: an unchained event written afterwards must not
+    // hide an existing chain and silently restart it from genesis.
+    const result = await this.client.query<{ hash: string | null; chain_sequence: string | number }>(
+      `SELECT hash, chain_sequence FROM ${this.tableName}
+       WHERE hash IS NOT NULL AND chain_sequence IS NOT NULL
+       ORDER BY chain_sequence DESC LIMIT 1`,
     );
 
     const row = result.rows[0];
     if (!row?.hash) return {};
 
-    return { previousHash: row.hash, startSequence: Number(row.sequence) };
+    return { previousHash: row.hash, startSequence: Number(row.chain_sequence) };
   }
 
   /**
@@ -166,24 +187,22 @@ export class PostgresAuditSink implements AuditSink, ChainedAuditEntrySink {
     await this.ensureTable();
 
     const result = await this.client.query<{
-      sequence: string | number;
+      chain_sequence: string | number;
       event: unknown;
       previous_hash: string | null;
       hash: string | null;
     }>(
-      `SELECT sequence, event, previous_hash, hash FROM ${this.tableName}
-       WHERE hash IS NOT NULL
-       ORDER BY sequence ASC${limit !== undefined ? ' LIMIT $1' : ''}`,
+      `SELECT chain_sequence, event, previous_hash, hash FROM ${this.tableName}
+       WHERE hash IS NOT NULL AND chain_sequence IS NOT NULL
+       ORDER BY chain_sequence ASC${limit !== undefined ? ' LIMIT $1' : ''}`,
       limit !== undefined ? [limit] : undefined,
     );
 
     return result.rows.map((row) => {
-      const event = safeDeserialize<AuditEvent>(row.event);
+      const event = reviveAuditEvent(row.event);
       return {
-        sequence: Number(row.sequence),
-        // Revived so a verification hash matches the one computed at write time,
-        // where `at` was a Date.
-        event: { ...event, at: new Date(event.at) } as AuditEvent,
+        sequence: Number(row.chain_sequence),
+        event,
         previousHash: row.previous_hash ?? '',
         hash: row.hash ?? '',
       };
@@ -194,4 +213,33 @@ export class PostgresAuditSink implements AuditSink, ChainedAuditEntrySink {
 /** Distinguishes a chained entry from a bare audit event. */
 function isChainedEntry(value: AuditEvent | ChainedAuditEntry): value is ChainedAuditEntry {
   return 'hash' in value && 'sequence' in value && 'event' in value;
+}
+
+/**
+ * Rebuilds a stored event, validating the fields verification depends on rather
+ * than trusting the row's shape. `at` is revived to a `Date` so a recomputed hash
+ * matches the one produced at write time.
+ *
+ * @throws {Error} If the row is not a well-formed audit event.
+ */
+function reviveAuditEvent(raw: unknown): AuditEvent {
+  const parsed: unknown = safeDeserialize(raw);
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error('PostgresAuditSink: stored audit row is not an object.');
+  }
+
+  const candidate = parsed as Record<string, unknown>;
+  for (const field of ['type', 'sessionId', 'traceId'] as const) {
+    if (typeof candidate[field] !== 'string') {
+      throw new Error(`PostgresAuditSink: stored audit row is missing a string "${field}".`);
+    }
+  }
+
+  const at = new Date(candidate.at as string);
+  if (Number.isNaN(at.getTime())) {
+    throw new Error('PostgresAuditSink: stored audit row has an invalid "at" timestamp.');
+  }
+
+  return { ...candidate, at } as AuditEvent;
 }

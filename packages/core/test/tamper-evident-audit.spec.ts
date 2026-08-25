@@ -265,27 +265,43 @@ export async function runTamperEvidentAuditTests() {
     const queries: { text: string; values?: unknown[] }[] = [];
     const rows: Record<string, unknown>[] = [];
 
+    let nextId = 0;
     const client = {
       async query<R = any>(text: string, values?: unknown[]): Promise<{ rows: R[] }> {
         queries.push({ text, values });
 
         if (/^\s*CREATE TABLE/i.test(text)) return { rows: [] as R[] };
         if (/^\s*INSERT INTO/i.test(text)) {
+          const chainSequence = values?.[0] ?? null;
+          // Mirrors the UNIQUE constraint on chain_sequence.
+          if (chainSequence !== null && rows.some((r) => r.chain_sequence === chainSequence)) {
+            throw Object.assign(new Error('duplicate key value violates unique constraint'), {
+              code: '23505',
+            });
+          }
+          nextId += 1;
           rows.push({
-            sequence: values?.[0],
+            id: nextId,
+            chain_sequence: chainSequence,
             type: values?.[1],
             event: values?.[6],
-            previous_hash: values?.[7],
-            hash: values?.[8],
+            previous_hash: values?.[7] ?? null,
+            hash: values?.[8] ?? null,
           });
           return { rows: [] as R[] };
         }
-        if (/ORDER BY sequence DESC/i.test(text)) {
-          const last = rows[rows.length - 1];
-          return { rows: (last ? [last] : []) as R[] };
+        if (/ORDER BY chain_sequence DESC/i.test(text)) {
+          const chained = rows
+            .filter((r) => r.hash != null && r.chain_sequence != null)
+            .sort((a, b) => Number(b.chain_sequence) - Number(a.chain_sequence));
+          return { rows: (chained[0] ? [chained[0]] : []) as R[] };
         }
-        if (/ORDER BY sequence ASC/i.test(text)) {
-          return { rows: rows.filter((r) => r.hash !== null && r.hash !== undefined) as R[] };
+        if (/ORDER BY chain_sequence ASC/i.test(text)) {
+          return {
+            rows: rows
+              .filter((r) => r.hash != null && r.chain_sequence != null)
+              .sort((a, b) => Number(a.chain_sequence) - Number(b.chain_sequence)) as R[],
+          };
         }
         return { rows: [] as R[] };
       },
@@ -297,6 +313,7 @@ export async function runTamperEvidentAuditTests() {
     await sink.record(event('appr_direct'));
     assert(rows.length === 1, 'Test 10a: a direct audit event is inserted');
     assert(rows[0].hash === null, 'Test 10b: a direct event carries no chain hash');
+    assert(rows[0].chain_sequence === null, 'Test 10b2: a direct event claims no chain position');
     assert(
       queries.some((q) => /CREATE TABLE IF NOT EXISTS agentic_audit_events/i.test(q.text)),
       'Test 10c: the audit table is auto-created',
@@ -326,6 +343,137 @@ export async function runTamperEvidentAuditTests() {
     );
   } catch (err: unknown) {
     assert(false, 'Test 10: PostgresAuditSink', String(err));
+  }
+
+  // TEST 12: direct and chained writes interleave without colliding, and an
+  // unchained write cannot hide the chain from head()/readChain()
+  try {
+    const rows: Record<string, unknown>[] = [];
+    let nextId = 0;
+    const client = {
+      async query<R = any>(text: string, values?: unknown[]): Promise<{ rows: R[] }> {
+        if (/^\s*CREATE TABLE/i.test(text)) return { rows: [] as R[] };
+        if (/^\s*INSERT INTO/i.test(text)) {
+          const chainSequence = values?.[0] ?? null;
+          if (chainSequence !== null && rows.some((r) => r.chain_sequence === chainSequence)) {
+            throw Object.assign(new Error('duplicate key'), { code: '23505' });
+          }
+          nextId += 1;
+          rows.push({
+            id: nextId,
+            chain_sequence: chainSequence,
+            event: values?.[6],
+            previous_hash: values?.[7] ?? null,
+            hash: values?.[8] ?? null,
+          });
+          return { rows: [] as R[] };
+        }
+        if (/ORDER BY chain_sequence DESC/i.test(text)) {
+          const chained = rows
+            .filter((r) => r.hash != null && r.chain_sequence != null)
+            .sort((a, b) => Number(b.chain_sequence) - Number(a.chain_sequence));
+          return { rows: (chained[0] ? [chained[0]] : []) as R[] };
+        }
+        if (/ORDER BY chain_sequence ASC/i.test(text)) {
+          return {
+            rows: rows
+              .filter((r) => r.hash != null && r.chain_sequence != null)
+              .sort((a, b) => Number(a.chain_sequence) - Number(b.chain_sequence)) as R[],
+          };
+        }
+        return { rows: [] as R[] };
+      },
+    };
+
+    const sink = new PostgresAuditSink({ client });
+    const chained = new HashChainAuditSink(sink);
+
+    // Interleave: direct, chained, direct, chained, direct.
+    await sink.record(event('direct_1'));
+    await chained.record(event('chained_1'));
+    await sink.record(event('direct_2'));
+    await chained.record(event('chained_2'));
+    await sink.record(event('direct_3'));
+
+    assert(rows.length === 5, 'Test 12a: mixed direct and chained writes all persist without a primary-key collision');
+
+    const readBack = await sink.readChain();
+    assert(readBack.length === 2, 'Test 12b: readChain() returns only the chained entries');
+    assert(
+      readBack.map((e) => e.sequence).join(',') === '1,2',
+      'Test 12c: chain sequences stay gap-free despite interleaved unchained rows',
+    );
+    assert(
+      verifyAuditChain(readBack).valid === true,
+      'Test 12d: the chain verifies even though unchained rows were written between its entries',
+    );
+
+    // The trailing direct write must not make resumption look like an empty chain.
+    const head = await sink.head();
+    assert(head.previousHash === chained.headHash(), 'Test 12e: head() ignores the later unchained row and returns the chain head');
+    assert(head.startSequence === 2, 'Test 12f: head() reports the chain position, not the table row count');
+  } catch (err: unknown) {
+    assert(false, 'Test 12: mixed direct/chained writes', String(err));
+  }
+
+  // TEST 13: a failed table creation is retried instead of being cached
+  try {
+    let attempts = 0;
+    const client = {
+      async query<R = any>(text: string): Promise<{ rows: R[] }> {
+        if (/^\s*CREATE TABLE/i.test(text)) {
+          attempts += 1;
+          // A dropped connection carries no Postgres `code`.
+          if (attempts === 1) throw new Error('connection terminated unexpectedly');
+          return { rows: [] as R[] };
+        }
+        return { rows: [] as R[] };
+      },
+    };
+
+    const sink = new PostgresAuditSink({ client });
+
+    let surfaced = false;
+    try {
+      await sink.record(event('appr_1'));
+    } catch {
+      surfaced = true;
+    }
+    assert(surfaced, 'Test 13a: a table-creation error with no Postgres code surfaces instead of being swallowed');
+
+    // The next write must retry the DDL rather than reuse the failed init.
+    await sink.record(event('appr_2'));
+    assert(attempts === 2, 'Test 13b: a failed initialization is retried on the next write, not cached for the process lifetime');
+  } catch (err: unknown) {
+    assert(false, 'Test 13: table initialization retry', String(err));
+  }
+
+  // TEST 14: a malformed stored row is rejected rather than trusted
+  try {
+    const client = {
+      async query<R = any>(text: string): Promise<{ rows: R[] }> {
+        if (/ORDER BY chain_sequence ASC/i.test(text)) {
+          return {
+            rows: [
+              { chain_sequence: 1, event: { type: 'approval_settled' }, previous_hash: 'a', hash: 'b' },
+            ] as R[],
+          };
+        }
+        return { rows: [] as R[] };
+      },
+    };
+
+    const sink = new PostgresAuditSink({ client, autoCreateTable: false });
+
+    let threw = false;
+    try {
+      await sink.readChain();
+    } catch {
+      threw = true;
+    }
+    assert(threw, 'Test 14: a stored row missing required fields is rejected rather than returned as a valid event');
+  } catch (err: unknown) {
+    assert(false, 'Test 14: stored row validation', String(err));
   }
 
   // TEST 11: PostgresAuditSink rejects a malicious table name

@@ -74,6 +74,27 @@ if (!report.valid) {
 
 `verifyAuditChain` detects a modified event body, a rewritten hash, a re-linked `previousHash`, and a deleted or reordered entry (via the sequence gap). Events are canonically serialized (sorted keys, ISO dates) so identical content always hashes identically, and concurrent `record()` calls are serialized internally, since a chain linked out of order would not verify.
 
-`PostgresAuditSink` works standalone as an `AuditSink` or as the durable destination for a chain. It only ever inserts; enforce that at the database level by granting the application role `INSERT`/`SELECT` but not `UPDATE`/`DELETE`, so a compromised application cannot rewrite history even though the chain would reveal it.
+`PostgresAuditSink` works standalone as an `AuditSink` or as the durable destination for a chain. Row identity is database-generated and independent of chain position, so both write modes can share one table; `chain_sequence` is `UNIQUE`, so a competing writer that computes an already-used position fails loudly rather than silently forking the chain.
+
+It only ever inserts. Enforce that at the database level by granting the application role `INSERT`/`SELECT` but not `UPDATE`/`DELETE`, so a compromised application cannot rewrite history even though the chain would reveal it. Those grants exclude `CREATE`, so pair them with `autoCreateTable: false` and create the table from a migration run by a privileged role:
+
+```sql
+CREATE TABLE agentic_audit_events (
+  id             BIGSERIAL PRIMARY KEY,
+  chain_sequence BIGINT UNIQUE,
+  type           VARCHAR(64)  NOT NULL,
+  session_id     VARCHAR(255) NOT NULL,
+  trace_id       VARCHAR(255) NOT NULL,
+  tenant_id      VARCHAR(255),
+  at             TIMESTAMPTZ  NOT NULL,
+  event          JSONB        NOT NULL,
+  previous_hash  CHAR(64),
+  hash           CHAR(64)
+);
+CREATE INDEX idx_agentic_audit_events_session ON agentic_audit_events (session_id);
+CREATE INDEX idx_agentic_audit_events_tenant  ON agentic_audit_events (tenant_id) WHERE tenant_id IS NOT NULL;
+```
+
+A linear chain assumes a **single writer** per chain: `HashChainAuditSink` serializes only within one instance, so in a horizontally-scaled deployment either keep one writer or coordinate sequence allocation in the database. `readChain()` is an operator-level verification primitive that returns every tenant's entries — verify with it from an admin path, don't expose it directly to tenant-facing callers.
 
 This makes tampering **evident**, not impossible: an attacker who can rewrite the entire chain can still produce a self-consistent history. Periodically publishing the latest `headHash()` outside the same trust domain (anchoring) is what closes that gap.
