@@ -3,6 +3,7 @@ import {
   AGENT_OBSERVERS,
   AGENT_PROVIDERS,
   AGENTIC_OPTIONS,
+  APPROVAL_AUTHORIZER,
   APPROVAL_STORE,
   AUDIT_SINKS,
   IDEMPOTENCY_STORE,
@@ -88,6 +89,12 @@ export class AgenticModule {
       ? [{ provide: AGENT_OBSERVERS, useValue: options.observers }]
       : [];
 
+    // Registered here because ApprovalService is instantiated inside this module:
+    // a provider declared in the importing module is not visible to it.
+    const approvalAuthorizerProviders: Provider[] = options.approvalAuthorizer
+      ? [{ provide: APPROVAL_AUTHORIZER, useValue: options.approvalAuthorizer }]
+      : [];
+
     return {
       module: AgenticModule,
       global: true,
@@ -100,6 +107,7 @@ export class AgenticModule {
         ...modelAdapterProviders,
         ...auditSinkProviders,
         ...observerProviders,
+        ...approvalAuthorizerProviders,
         ...CORE_PROVIDERS,
       ],
       exports: [

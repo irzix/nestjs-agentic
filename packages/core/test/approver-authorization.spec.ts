@@ -1,5 +1,6 @@
 import { ModuleRef } from '@nestjs/core';
 import {
+  APPROVAL_AUTHORIZER,
   Agent,
   AgentExecutor,
   AgentRunner,
@@ -398,52 +399,139 @@ export async function runApproverAuthorizationTests() {
     assert(false, 'Test 10: tenant isolation', String(err));
   }
 
-  // TEST 11: tenant isolation refuses an approver with no tenant, and is off by default
+  // TEST 11: tenant isolation fails closed on any unproven tenant, and is off by default
   try {
-    const strict = await suspendTransfer({ requesterTenant: 'acme', enforceTenantIsolation: true });
+    const noActorTenant = await suspendTransfer({ requesterTenant: 'acme', enforceTenantIsolation: true });
     let refused: ApprovalNotAuthorizedError | undefined;
     try {
-      await strict.approvals.approve(strict.approvalId, { actor: { userId: 'usr_x' } });
+      await noActorTenant.approvals.approve(noActorTenant.approvalId, { actor: { userId: 'usr_x' } });
     } catch (err) {
       refused = err as ApprovalNotAuthorizedError;
     }
     assert(refused instanceof ApprovalNotAuthorizedError, 'Test 11a: an approver with no tenant is refused when isolation is enforced');
     assert(Boolean(refused?.reason.includes('no tenant')), 'Test 11b: the refusal says the approver supplied no tenant');
 
+    // An untenanted approval must not become settleable from any tenant.
+    const untenanted = await suspendTransfer({ requesterId: 'usr_a', enforceTenantIsolation: true });
+    let untenantedRefusal: ApprovalNotAuthorizedError | undefined;
+    try {
+      await untenanted.approvals.approve(untenanted.approvalId, { actor: { userId: 'usr_b', tenantId: 'anything' } });
+    } catch (err) {
+      untenantedRefusal = err as ApprovalNotAuthorizedError;
+    }
+    assert(
+      untenantedRefusal instanceof ApprovalNotAuthorizedError,
+      'Test 11c: an approval carrying no tenant is refused under isolation rather than settleable from any tenant',
+    );
+    assert(untenanted.tools.transfers.length === 0, 'Test 11d: the untenanted approval was not settled');
+
     const off = await suspendTransfer({ requesterTenant: 'acme' });
     await off.approvals.approve(off.approvalId, { actor: { userId: 'usr_x', tenantId: 'other' } });
-    assert(off.tools.transfers.length === 1, 'Test 11c: tenant isolation is off by default');
+    assert(off.tools.transfers.length === 1, 'Test 11e: tenant isolation is off by default');
   } catch (err: unknown) {
     assert(false, 'Test 11: tenant isolation boundaries', String(err));
   }
 
-  // TEST 12: SoD is tenant-scoped, so the same userId in two tenants is not a conflict
+  // TEST 12: SoD is tenant-scoped but only a *proven* different tenant clears a conflict
   try {
-    const { approvals, approvalId, tools } = await suspendTransfer({
+    // Same userId, provably different tenant: a different person, so not a conflict.
+    const crossTenant = await suspendTransfer({
       requesterId: 'admin',
       requesterTenant: 'tenant_a',
       enforceSeparationOfDuties: true,
     });
-
-    // Same userId, different tenant: a different person, so not a conflict.
-    await approvals.approve(approvalId, { actor: { userId: 'admin', tenantId: 'tenant_b' } });
-    assert(tools.transfers.length === 1, 'Test 12a: an identical userId in a different tenant is not an SoD conflict');
+    await crossTenant.approvals.approve(crossTenant.approvalId, { actor: { userId: 'admin', tenantId: 'tenant_b' } });
+    assert(crossTenant.tools.transfers.length === 1, 'Test 12a: an identical userId in a provably different tenant is not an SoD conflict');
 
     // Same userId, same tenant: a real conflict.
-    const same = await suspendTransfer({
+    const sameTenant = await suspendTransfer({
       requesterId: 'admin',
       requesterTenant: 'tenant_a',
       enforceSeparationOfDuties: true,
     });
     let refused: unknown;
     try {
-      await same.approvals.approve(same.approvalId, { actor: { userId: 'admin', tenantId: 'tenant_a' } });
+      await sameTenant.approvals.approve(sameTenant.approvalId, { actor: { userId: 'admin', tenantId: 'tenant_a' } });
     } catch (err) {
       refused = err;
     }
-    assert(refused instanceof ApprovalNotAuthorizedError, 'Test 12b: the same userId in the same tenant is still refused');
+    assert(refused instanceof ApprovalNotAuthorizedError, 'Test 12b: the same userId in the same tenant is refused');
+
+    // Approval has no tenant, approver supplies one: the tenants are NOT provably
+    // different, so a matching userId must still be refused (previously fail-open).
+    const requesterNoTenant = await suspendTransfer({
+      requesterId: 'admin',
+      enforceSeparationOfDuties: true,
+    });
+    let noTenantRefusal: unknown;
+    try {
+      await requesterNoTenant.approvals.approve(requesterNoTenant.approvalId, {
+        actor: { userId: 'admin', tenantId: 'tenant_a' },
+      });
+    } catch (err) {
+      noTenantRefusal = err;
+    }
+    assert(
+      noTenantRefusal instanceof ApprovalNotAuthorizedError,
+      'Test 12c: an untenanted approval with a matching userId is still an SoD conflict, not fail-open',
+    );
+
+    // Reverse: approval is tenant-scoped, approver omits the tenant.
+    const approverNoTenant = await suspendTransfer({
+      requesterId: 'admin',
+      requesterTenant: 'tenant_a',
+      enforceSeparationOfDuties: true,
+    });
+    let approverRefusal: unknown;
+    try {
+      await approverNoTenant.approvals.approve(approverNoTenant.approvalId, { actor: { userId: 'admin' } });
+    } catch (err) {
+      approverRefusal = err;
+    }
+    assert(
+      approverRefusal instanceof ApprovalNotAuthorizedError,
+      'Test 12d: omitting the approver tenant does not defeat SoD on a tenant-scoped approval',
+    );
   } catch (err: unknown) {
     assert(false, 'Test 12: tenant-scoped separation of duties', String(err));
+  }
+
+  // TEST 14: the authorizer is registerable through AgenticModule.forRoot
+  try {
+    const { AgenticModule } = await import('../src');
+    const authorizer: ApprovalAuthorizer = { canSettle: () => false };
+
+    const dynamicModule = AgenticModule.forRoot({
+      defaultModel: { provider: 'mock', model: 'deterministic' },
+      approvalAuthorizer: authorizer,
+    });
+
+    const registered = (dynamicModule.providers ?? []).some(
+      (provider) =>
+        typeof provider === 'object' &&
+        provider !== null &&
+        'provide' in provider &&
+        provider.provide === APPROVAL_AUTHORIZER &&
+        'useValue' in provider &&
+        provider.useValue === authorizer,
+    );
+
+    assert(
+      registered,
+      'Test 14a: forRoot({ approvalAuthorizer }) registers the APPROVAL_AUTHORIZER token inside AgenticModule',
+    );
+
+    // Without the option the token stays unprovided, so behavior is unchanged.
+    const withoutAuthorizer = AgenticModule.forRoot({
+      defaultModel: { provider: 'mock', model: 'deterministic' },
+    });
+    const absent = (withoutAuthorizer.providers ?? []).every(
+      (provider) =>
+        !(typeof provider === 'object' && provider !== null && 'provide' in provider && provider.provide === APPROVAL_AUTHORIZER),
+    );
+    assert(absent, 'Test 14b: the token is left unprovided when no authorizer is configured');
+  } catch (err: unknown) {
+    assert(false, 'Test 14: authorizer registration through forRoot', String(err));
   }
 
   // TEST 13: requireAuthorizer fails closed when no authorizer is registered

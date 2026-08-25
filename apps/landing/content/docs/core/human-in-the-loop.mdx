@@ -88,10 +88,9 @@ export class ApprovalsController {
 
 ## Approver Authorization
 
-By default the framework records *who* settled an approval but does not enforce that they were entitled to. Register an `ApprovalAuthorizer` through the `APPROVAL_AUTHORIZER` token to gate settlement:
+By default the framework records *who* settled an approval but does not enforce that they were entitled to. Supply an `ApprovalAuthorizer` to gate settlement:
 
 ```typescript
-import { APPROVAL_AUTHORIZER } from '@nestjs-agentic/core';
 import type { ApprovalAuthorizer, AuditActor, PendingApproval } from '@nestjs-agentic/core';
 
 class MaintainerOnlyAuthorizer implements ApprovalAuthorizer {
@@ -105,20 +104,22 @@ class MaintainerOnlyAuthorizer implements ApprovalAuthorizer {
 
 ```
 
-Register it as a provider in the module that also imports `AgenticModule`. The token is resolved by `ApprovalService` through the root injector, so a root-level provider is enough:
+Register it through `forRoot`. `ApprovalService` is instantiated inside `AgenticModule`, so a provider declared in your own module's `providers` array is **not** visible to it — pass the authorizer as an option instead:
 
 ```typescript
 @Module({
   imports: [
     AgenticModule.forRoot({
       defaultModel: { provider: 'openai', model: 'gpt-4o' },
+      approvalAuthorizer: new MaintainerOnlyAuthorizer(),
       approvals: { enforceSeparationOfDuties: true, enforceTenantIsolation: true },
     }),
   ],
-  providers: [{ provide: APPROVAL_AUTHORIZER, useClass: MaintainerOnlyAuthorizer }],
 })
 export class AppModule {}
 ```
+
+If your authorizer needs its own injected dependencies, construct it in a factory module and pass the instance here, the same way `approvalStore` and `auditSinks` are supplied.
 
 The check runs **before** the approval is claimed, so a refused attempt raises `ApprovalNotAuthorizedError` and leaves the approval pending for a properly authorized reviewer — an unauthorized caller cannot destroy a pending decision. Every refusal is recorded as an `approval_settlement_denied` audit event, so repeated attempts on one approval are visible.
 
@@ -155,7 +156,10 @@ In a multi-tenant deployment, enable `approvals.enforceTenantIsolation` so a lea
 approvals: { enforceTenantIsolation: true }
 ```
 
-A settlement is refused when the approver's `tenantId` differs from the approval's — or is absent entirely, since an unscoped approver cannot be shown to belong to the tenant.
+Both checks fail closed on an unknown tenant, in opposite directions — an unproven match is never read as permission, and an unproven difference is never read as separation:
+
+- **Tenant isolation** refuses when the approver's `tenantId` differs from the approval's, when the approver supplies none, or when the *approval itself* carries none (an untenanted approval cannot be shown to belong to the caller's tenant).
+- **Separation of duties** clears a matching `userId` only when the two tenants are *provably different*. If either side's tenant is unknown, a matching `userId` is still treated as the same person.
 
 ### Failing closed
 

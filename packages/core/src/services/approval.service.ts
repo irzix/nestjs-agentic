@@ -58,7 +58,13 @@ export class ApprovalService {
     const governance = this.governanceOptions();
     const approvalTenant = approval.context.security.tenantId;
 
-    if (governance.enforceTenantIsolation && approvalTenant !== undefined) {
+    // Both checks fail closed on an unknown tenant: an unproven match is not
+    // treated as permission, and an unproven difference is not treated as
+    // separation.
+    if (governance.enforceTenantIsolation) {
+      if (approvalTenant === undefined) {
+        return 'tenant isolation: approval carries no tenant, so the approver cannot be shown to belong to it';
+      }
       if (actor?.tenantId === undefined) {
         return `tenant isolation: approval belongs to tenant "${approvalTenant}" and the approver supplied no tenant`;
       }
@@ -69,13 +75,18 @@ export class ApprovalService {
 
     if (governance.enforceSeparationOfDuties) {
       const requester = approval.requestedBy ?? approval.context.security;
-      // Scoped by tenant so the same userId in two tenants is not a conflict.
-      const sameTenant = (requester.tenantId ?? approvalTenant) === actor?.tenantId;
+      const requesterTenant = requester.tenantId ?? approvalTenant;
+      // Only a *proven* difference clears the conflict, so an unknown tenant on
+      // either side still counts as the same person.
+      const differentTenant =
+        requesterTenant !== undefined &&
+        actor?.tenantId !== undefined &&
+        requesterTenant !== actor.tenantId;
       const conflict =
         requester.userId !== undefined &&
         actor?.userId !== undefined &&
         requester.userId === actor.userId &&
-        sameTenant;
+        !differentTenant;
 
       if (conflict) {
         return `separation of duties: "${actor?.userId}" requested this action and cannot also approve it`;

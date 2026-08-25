@@ -27,6 +27,7 @@ import type {
   AgentProvider,
   AgentResult,
   AgentStreamEvent,
+  ApprovalAuthorizer,
   ApprovalDecision,
   ApprovalGovernanceOptions,
   ApprovalStore,
@@ -135,6 +136,12 @@ export interface AgenticModuleOptions {
    * `ApprovalAuthorizer` through the `APPROVAL_AUTHORIZER` token.
    */
   approvals?: ApprovalGovernanceOptions;
+  /**
+   * Decides who may settle a pending approval. Equivalent to providing the
+   * `APPROVAL_AUTHORIZER` token directly — register it here rather than in the
+   * importing module, since `ApprovalService` resolves from this module's scope.
+   */
+  approvalAuthorizer?: ApprovalAuthorizer;
   /** Overrides for internal diagnostic logging (e.g. governance warnings). Defaults to `console`. */
   logger?: { warn?: (message: string) => void };
 }
