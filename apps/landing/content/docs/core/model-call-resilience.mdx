@@ -3,72 +3,32 @@ title: Model Call Resilience
 description: Retry with backoff and jitter, plus a circuit breaker that fails fast when a provider is down.
 ---
 
-## Why the framework retries
+Provider SDKs retry internally, but that retry is invisible to the framework, applies only to that one adapter, and cannot be tuned per deployment. It also does nothing about a sustained outage: every request keeps waiting for its own timeout while a provider is down.
 
-Provider SDKs retry internally, but that retry is invisible to the framework, applies only to that one adapter, and cannot be tuned per deployment. It also does nothing about a sustained outage: every request keeps waiting for its own timeout while a provider is down, and one degraded dependency slows every agent that uses it.
-
-`resilience` adds a framework-level layer on top of whatever an adapter's SDK already does:
-
-- **Retry with exponential backoff and jitter** for transient faults.
-- **A circuit breaker** that stops dispatching to a provider that has failed repeatedly, and probes for recovery.
-
-Both are opt-in. With `resilience` unset, model calls are dispatched exactly as before.
-
----
-
-## Configuration
+`resilience` adds a framework-level layer on top. Both halves are opt-in — with `resilience` unset, model calls are dispatched exactly as before.
 
 ```typescript
 AgenticModule.forRoot({
   defaultModel: { provider: 'openai', model: 'gpt-4o' },
   resilience: {
-    retry: {
-      maxAttempts: 3,
-      initialDelayMs: 250,
-      maxDelayMs: 10_000,
-      jitter: 0.5,
-    },
-    circuitBreaker: {
-      failureThreshold: 5,
-      cooldownMs: 30_000,
-      successThreshold: 1,
-    },
+    retry: { maxAttempts: 3, initialDelayMs: 250, maxDelayMs: 10_000, jitter: 0.5 },
+    circuitBreaker: { failureThreshold: 5, cooldownMs: 30_000, successThreshold: 1 },
   },
 });
 ```
 
-Omit `retry` to run a single attempt. Omit `circuitBreaker` to dispatch without a circuit.
-
----
-
-## Retry semantics
+## Retry
 
 | Failure | Retried |
 | --- | --- |
-| `429 Too Many Requests` | Yes |
-| `5xx` | Yes |
-| Network / timeout (no status) | Yes |
-| Other `4xx` | No, a malformed request fails identically on every attempt |
+| `429`, `5xx`, network/timeout (no status) | Yes |
+| Other `4xx` | No, a malformed request fails identically every attempt |
 | `AgenticError` | No, it signals misconfiguration or an exceeded budget |
 | `AbortError` | No, the caller cancelled |
 
-### Backoff and jitter
+Delay `n` is `initialDelayMs × 2^(n-1)`, capped at `maxDelayMs`, then randomized downward by up to `jitter`. At the default `0.5`, a computed 1000&nbsp;ms delay lands in 500–1000&nbsp;ms. Without jitter, every caller that failed in the same instant retries in the same instant, re-creating the spike that caused the failure.
 
-Delay `n` is `initialDelayMs × 2^(n-1)`, capped at `maxDelayMs`, then randomized downward by up to `jitter`. At the default `jitter: 0.5`, a computed 1000&nbsp;ms delay lands somewhere in 500–1000&nbsp;ms.
-
-Jitter matters more than it looks. Without it, every caller that failed in the same instant retries in the same instant, re-creating the spike that caused the failure.
-
-### Provider `Retry-After`
-
-When an error carries a back-off hint, it wins over the computed delay, since the provider knows when its own quota resets. Any of these shapes is read, and the result is still capped by `maxDelayMs`:
-
-```typescript
-{ retryAfterMs: 1500 }
-{ retryAfterSeconds: 2 }
-{ retryAfter: '3' }   // seconds, matching the HTTP header
-```
-
----
+A provider back-off hint wins over the computed delay, since the provider knows when its own quota resets. `retryAfterMs`, `retryAfterSeconds`, and the header-shaped `retryAfter` (seconds) are all read, and the result is still capped by `maxDelayMs`.
 
 ## Circuit breaker
 
@@ -79,17 +39,13 @@ half_open ──[successThreshold successes]──> closed
 half_open ──[any failure]──> open   (cooldown restarts)
 ```
 
-While the circuit is open, calls are rejected with `CircuitOpenError` without being dispatched. The error carries `retryAfterMs`, the time until a probe is allowed.
+While open, calls are rejected with `CircuitOpenError` — carrying `retryAfterMs` — without being dispatched.
 
-The breaker sits **outside** the retry. Exhausting retries counts as one failure against the threshold, so `failureThreshold: 5` means five genuinely failed calls, not five attempts inside one call.
+The breaker sits **outside** the retry, so exhausting retries counts as one failure against the threshold: `failureThreshold: 5` means five genuinely failed calls, not five attempts inside one call.
 
 State is per-process. Each replica detects an outage independently rather than paying a network round trip on the fail-fast path.
 
----
-
 ## Observability
-
-Both surface through `AgentObserver`:
 
 ```typescript
 export class ResilienceObserver implements AgentObserver {
@@ -98,44 +54,17 @@ export class ResilienceObserver implements AgentObserver {
   }
 
   onCircuitStateChange(event: CircuitBreakerEvent) {
-    if (event.to === 'open') {
-      alerts.page(`Provider ${event.circuitName} circuit opened: ${event.reason}`);
-    }
+    if (event.to === 'open') alerts.page(`${event.circuitName} opened: ${event.reason}`);
   }
 }
 ```
 
-Register it with the `AGENT_OBSERVERS` token. Both hooks are optional, so existing observers need no changes.
+Register with the `AGENT_OBSERVERS` token. Both hooks are optional, so existing observers need no changes.
 
----
+## Notes
 
-## Streaming
+**Streaming.** A stream is retried only while nothing has reached the caller — the attempt covers opening it and pulling the first chunk. Past that, a retry would replay emitted tokens, so the error propagates.
 
-A stream is retried only while nothing has reached the caller. The attempt covers opening the stream and pulling its first chunk; once a token has been emitted, a retry would duplicate output, so the error propagates instead.
+**Cascading.** Resilience wraps the base adapter, so the cascade sits outside it. A retry re-attempts the failing tier rather than replaying the whole cascade and paying for its cheaper tiers again.
 
----
-
-## Using the primitives directly
-
-The pieces are exported for use outside the agent loop:
-
-```typescript
-import {
-  CircuitBreaker,
-  ResilientModelAdapter,
-  retryWithBackoff,
-} from '@nestjs-agentic/core';
-
-const resilient = new ResilientModelAdapter(myAdapter, {
-  retry: { maxAttempts: 3 },
-  circuitBreaker: { failureThreshold: 5 },
-});
-
-await retryWithBackoff(() => fetchSomething(), { maxAttempts: 4 });
-```
-
----
-
-## Interaction with model cascading
-
-Resilience wraps the base adapter, so the cascade sits outside it. A retry re-attempts the failing tier rather than replaying the whole cascade and paying for its cheaper tiers again.
+**Standalone use.** `retryWithBackoff`, `CircuitBreaker`, and `ResilientModelAdapter` are all exported for use outside the agent loop.

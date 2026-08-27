@@ -125,14 +125,6 @@ export class CircuitBreaker {
     }
   }
 
-  reset(): void {
-    this.failures = 0;
-    this.successes = 0;
-    if (this.state !== 'closed') {
-      this.transition('closed', 'manually reset');
-    }
-  }
-
   private remainingCooldownMs(): number {
     return Math.max(0, this.openedAt + this.cooldownMs - this.now());
   }
