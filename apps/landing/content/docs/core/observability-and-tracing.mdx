@@ -51,3 +51,61 @@ tracer.record('multi_agent', 'Concurrently ran 3 specialist reviewers', 12700);
 // Export as markdown log block
 const logMarkdown = tracer.toMarkdownAccordion();
 ```
+
+---
+
+## Tamper-Evident Audit Trail
+
+`HashChainAuditSink` wraps an audit destination and binds each event to its predecessor, so altering or deleting a stored entry becomes detectable:
+
+```typescript
+import { HashChainAuditSink, PostgresAuditSink, verifyAuditChain } from '@nestjs-agentic/core';
+
+const store = new PostgresAuditSink({ client: pool });
+// Resume the existing chain so restarts don't start a new one.
+const sink = new HashChainAuditSink(store, await store.head());
+
+// Later, verify what was persisted:
+const report = verifyAuditChain(await store.readChain());
+if (!report.valid) {
+  console.error(`audit chain broken at entry ${report.brokenAt}: ${report.reason}`);
+}
+```
+
+`verifyAuditChain` detects a modified event body, a rewritten hash, a re-linked `previousHash`, and a deleted or reordered entry (via the sequence gap). Events are canonically serialized (sorted keys, ISO dates) so identical content always hashes identically, and concurrent `record()` calls are serialized internally, since a chain linked out of order would not verify.
+
+`PostgresAuditSink` works standalone as an `AuditSink` or as the durable destination for a chain. Row identity is database-generated and independent of chain position, so both write modes can share one table.
+
+It only ever inserts. Enforce that at the database level by granting the application role `INSERT`/`SELECT` but not `UPDATE`/`DELETE`, so a compromised application cannot rewrite history even though the chain would reveal it. Those grants exclude `CREATE`, so pair them with `autoCreateTable: false` and create the table from a migration run by a privileged role:
+
+```sql
+CREATE TABLE agentic_audit_events (
+  id             BIGSERIAL PRIMARY KEY,
+  chain_sequence BIGINT UNIQUE,
+  type           VARCHAR(64)  NOT NULL,
+  session_id     VARCHAR(255) NOT NULL,
+  trace_id       VARCHAR(255) NOT NULL,
+  tenant_id      VARCHAR(255),
+  at             TIMESTAMPTZ  NOT NULL,
+  event          JSONB        NOT NULL,
+  previous_hash  CHAR(64),
+  hash           CHAR(64)
+);
+CREATE INDEX idx_agentic_audit_events_session ON agentic_audit_events (session_id);
+CREATE INDEX idx_agentic_audit_events_tenant  ON agentic_audit_events (tenant_id) WHERE tenant_id IS NOT NULL;
+```
+
+### One append authority per chain
+
+A chain requires a **single append authority**. `HashChainAuditSink` serializes `record()` calls within one instance, but it computes `chain_sequence` and `previousHash` from its own in-memory head — so two instances that resumed from the same stored head will both extend it.
+
+The `UNIQUE` constraint on `chain_sequence` only catches the case where both writers pick the *same* position; the second insert then fails loudly. It does **not** catch divergence: if the writers pick different positions, both rows insert successfully and the break only surfaces later, when `verifyAuditChain` reports a predecessor mismatch.
+
+So in a horizontally-scaled deployment, either:
+
+- keep exactly one writer per chain (a leader, a single worker, or a dedicated audit service), or
+- allocate positions in the database — take a transaction that locks the current head row, then assign `chain_sequence` and `previousHash` from it within that same transaction.
+
+`readChain()` is an operator-level verification primitive that returns every tenant's entries — verify with it from an admin path, don't expose it directly to tenant-facing callers.
+
+This makes tampering **evident**, not impossible: an attacker who can rewrite the entire chain can still produce a self-consistent history. Periodically publishing the latest `headHash()` outside the same trust domain (anchoring) is what closes that gap.
