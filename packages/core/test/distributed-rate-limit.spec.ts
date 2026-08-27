@@ -18,10 +18,12 @@ function createFakeRedis() {
   const sets = new Map<string, { member: string; score: number }[]>();
   const expiries = new Map<string, number>();
   let evalCalls = 0;
+  /** Server-side clock, so the script's own TIME call is what drives the window. */
+  let serverNow = 1_800_000_000_000;
 
   function entries(key: string): { member: string; score: number }[] {
     const expiresAt = expiries.get(key);
-    if (expiresAt !== undefined && Date.now() > expiresAt) {
+    if (expiresAt !== undefined && serverNow > expiresAt) {
       sets.delete(key);
       expiries.delete(key);
     }
@@ -41,17 +43,18 @@ function createFakeRedis() {
     async keys() {
       return [...sets.keys()];
     },
-    async eval(_script, _numKeys, ...args) {
+    async eval(_script, numKeys, ...args) {
       evalCalls += 1;
 
-      const [key, nowRaw, windowRaw, maxRaw, member] = args;
-      const now = Number(nowRaw);
+      const key = String(args[Number(numKeys) - 1]);
+      const [windowRaw, maxRaw, member] = args.slice(Number(numKeys));
       const windowMs = Number(windowRaw);
       const maxCalls = Number(maxRaw);
+      const now = serverNow;
 
       // ZREMRANGEBYSCORE key 0 (now - windowMs)
-      const kept = entries(String(key)).filter((entry) => entry.score > now - windowMs);
-      sets.set(String(key), kept);
+      const kept = entries(key).filter((entry) => entry.score > now - windowMs);
+      sets.set(key, kept);
 
       // ZCARD
       if (kept.length >= maxCalls) {
@@ -61,10 +64,15 @@ function createFakeRedis() {
         return [0, retryAfterMs];
       }
 
-      // ZADD + PEXPIRE
-      kept.push({ member: String(member), score: now });
-      sets.set(String(key), kept);
-      expiries.set(String(key), now + windowMs);
+      // ZADD replaces an identical member rather than appending.
+      const existing = kept.find((entry) => entry.member === String(member));
+      if (existing) {
+        existing.score = now;
+      } else {
+        kept.push({ member: String(member), score: now });
+      }
+      sets.set(key, kept);
+      expiries.set(key, now + windowMs);
 
       return [1, 0];
     },
@@ -79,17 +87,15 @@ function createFakeRedis() {
     get evalCalls() {
       return evalCalls;
     },
-    keyCount() {
-      return sets.size;
+    membersOf(key: string) {
+      return [...(sets.get(key) ?? [])];
     },
-    /** Ages every recorded call, standing in for the window elapsing. */
+    keysOf() {
+      return [...sets.keys()];
+    },
+    /** Moves the server clock forward, standing in for the window elapsing. */
     advance(ms: number) {
-      for (const [key, list] of sets) {
-        sets.set(
-          key,
-          list.map((entry) => ({ ...entry, score: entry.score - ms })),
-        );
-      }
+      serverNow += ms;
     },
   };
 }
@@ -181,10 +187,11 @@ export async function runDistributedRateLimitTests() {
     assert(false, 'Test 3: atomic evaluation', String(err));
   }
 
-  // TEST 4: two calls in the same millisecond both occupy a slot
+  // TEST 4: every call takes its own slot, even on the same clock tick
   //
-  // A sorted set keys by member, so timestamp-only members would collapse into
-  // one entry and silently undercount bursts.
+  // A sorted set treats an identical member as an update. Members derived from
+  // pid/timestamp/counter collide across pods -- containers commonly share PID 1
+  // and per-instance counters both start at zero -- which silently undercounts.
   try {
     const redis = createFakeRedis();
     const policy = new DistributedRateLimitPolicy({
@@ -192,23 +199,65 @@ export async function runDistributedRateLimitTests() {
       maxCallsPerWindow: 2,
     });
 
-    const originalNow = Date.now;
-    Date.now = () => 1_800_000_000_000;
-    try {
-      const first = await policy.evaluate(ctx, 'burst_tool', {});
-      const second = await policy.evaluate(ctx, 'burst_tool', {});
-      const third = await policy.evaluate(ctx, 'burst_tool', {});
+    const first = await policy.evaluate(ctx, 'burst_tool', {});
+    const second = await policy.evaluate(ctx, 'burst_tool', {});
+    const third = await policy.evaluate(ctx, 'burst_tool', {});
 
-      assert(
-        first.decision === 'allow' && second.decision === 'allow',
-        'Test 4a: two calls on the same millisecond both consume a slot',
-      );
-      assert(third.decision === 'deny', 'Test 4b: the burst still hits the limit rather than being undercounted');
+    assert(
+      first.decision === 'allow' && second.decision === 'allow',
+      'Test 4a: two calls on the same server tick both consume a slot',
+    );
+    assert(third.decision === 'deny', 'Test 4b: the burst hits the limit rather than being undercounted');
+
+    const key = redis.keysOf()[0];
+    const members = redis.membersOf(key).map((entry) => entry.member);
+    assert(
+      new Set(members).size === members.length && members.length === 2,
+      'Test 4c: each admitted call holds a distinct member, so none overwrote another',
+      members.join(', '),
+    );
+
+    // Two policies standing in for two pods must not produce colliding members.
+    const podA = new DistributedRateLimitPolicy({ client: redis.client, maxCallsPerWindow: 10 });
+    const podB = new DistributedRateLimitPolicy({ client: redis.client, maxCallsPerWindow: 10 });
+    await podA.evaluate(ctx, 'cross_pod_tool', {});
+    await podB.evaluate(ctx, 'cross_pod_tool', {});
+
+    const crossKey = redis.keysOf().find((k) => k.includes('cross_pod_tool'))!;
+    assert(
+      redis.membersOf(crossKey).length === 2,
+      'Test 4d: two freshly-constructed instances produce distinct members, not one shared slot',
+      String(redis.membersOf(crossKey).length),
+    );
+  } catch (err: unknown) {
+    assert(false, 'Test 4: per-call member uniqueness', String(err));
+  }
+
+  // TEST 4B: the window is driven by Redis TIME, not the caller's clock
+  //
+  // Clock skew between pods would otherwise let one instance evict entries
+  // another just wrote, widening the effective limit.
+  try {
+    const redis = createFakeRedis();
+    const policy = new DistributedRateLimitPolicy({
+      client: redis.client,
+      maxCallsPerWindow: 1,
+      windowMs: 60_000,
+    });
+
+    await policy.evaluate(ctx, 'skew_tool', {});
+
+    // A wildly wrong local clock must not affect the decision.
+    const originalNow = Date.now;
+    Date.now = () => 0;
+    try {
+      const denied = await policy.evaluate(ctx, 'skew_tool', {});
+      assert(denied.decision === 'deny', 'Test 4B: a skewed local clock does not widen the window');
     } finally {
       Date.now = originalNow;
     }
   } catch (err: unknown) {
-    assert(false, 'Test 4: same-millisecond bursts', String(err));
+    assert(false, 'Test 4B: server-authoritative clock', String(err));
   }
 
   // TEST 5: the window slides — capacity returns once old calls age out
@@ -330,8 +379,44 @@ export async function runDistributedRateLimitTests() {
       'Test 8b: the error explains why an atomic script is required',
       threw?.message,
     );
+    assert(
+      Boolean(threw?.message.includes('node-redis v4')),
+      'Test 8c: the error points at the evalFn adapter for clients with a different signature',
+    );
   } catch (err: unknown) {
     assert(false, 'Test 8: eval capability requirement', String(err));
+  }
+
+  // TEST 8B: a client with a different eval signature works through evalFn
+  //
+  // node-redis v4 uses eval(script, { keys, arguments }), which would pass a bare
+  // typeof check and then fail at runtime against the positional form.
+  try {
+    const redis = createFakeRedis();
+    const calls: { keys: string[]; args: string[] }[] = [];
+
+    const nodeRedisV4Style = {
+      async eval(script: string, opts: { keys: string[]; arguments: string[] }) {
+        calls.push({ keys: opts.keys, args: opts.arguments });
+        // Delegate to the positional fake so the real algorithm still runs.
+        return redis.client.eval!(script, opts.keys.length, ...opts.keys, ...opts.arguments);
+      },
+    };
+
+    const policy = new DistributedRateLimitPolicy({
+      maxCallsPerWindow: 1,
+      evalFn: (script, keys, args) =>
+        nodeRedisV4Style.eval(script, { keys, arguments: args.map(String) }),
+    });
+
+    const allowed = await policy.evaluate(ctx, 'v4_tool', {});
+    const denied = await policy.evaluate(ctx, 'v4_tool', {});
+
+    assert(allowed.decision === 'allow', 'Test 8B-a: the evalFn adapter drives a successful evaluation');
+    assert(denied.decision === 'deny', 'Test 8B-b: the limit is still enforced through the adapter');
+    assert(calls.length === 2 && calls[0].keys.length === 1, 'Test 8B-c: the adapter receives keys and args separately');
+  } catch (err: unknown) {
+    assert(false, 'Test 8B: evalFn adapter', String(err));
   }
 
   // TEST 9: invalid configuration is rejected at construction

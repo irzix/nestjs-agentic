@@ -15,31 +15,21 @@ export interface RateLimiterContractOptions {
   maxCalls: number;
 
   /**
-   * Builds a limiter. Called more than once per group: `createLimiter()` twice in
-   * the same group must produce two limiters that *share* their backend, standing
-   * in for two pods of one deployment.
+   * Builds a limiter. Called twice within a group, and the two must *share* a
+   * backend — they stand in for two pods of one deployment.
    */
   createLimiter(): ToolPolicy | Promise<ToolPolicy>;
 
-  /**
-   * Discards all recorded state, so each group starts from a clean window.
-   * Required because a limiter's state usually outlives the instance.
-   */
+  /** Discards recorded state, since a limiter's window usually outlives the instance. */
   reset(): void | Promise<void>;
 
   /**
-   * Set false for a limiter whose state is process-local, so N instances each
-   * admit `maxCalls` independently. The combined-limit assertions are then
-   * skipped rather than reported as failures.
-   *
-   * Default: true
+   * Set false for a process-local limiter, so the combined-limit assertions are
+   * skipped rather than reported as failures. Default: true
    */
   enforcesCombinedLimit?: boolean;
 
-  /**
-   * Set false when the limiter does not report back-off timing on a denial.
-   * Default: true
-   */
+  /** Set false when denials carry no back-off timing. Default: true */
   reportsRetryAfter?: boolean;
 
   /** Set false to keep the report quiet. Default: true */
@@ -57,14 +47,11 @@ export interface RateLimiterContractResult {
 /**
  * Behavioral contract for a rate-limit `ToolPolicy`.
  *
- * A compliant limiter admits up to its configured limit within a window, denies
- * beyond it, keys windows independently per tenant/user/tool, and — when it claims
- * to be distributed — enforces one *combined* limit across instances sharing a
- * backend rather than one limit each.
- *
- * That last property is the one a naive test misses: a limiter holding its window
- * in process memory passes every single-instance assertion and then silently
- * multiplies the limit by the pod count in production.
+ * A compliant limiter admits up to its limit within a window, denies beyond it,
+ * keys windows per tenant/user/tool, and — when it claims to be distributed —
+ * enforces one *combined* limit across instances sharing a backend. That last
+ * property is what a naive test misses: a process-local limiter passes every
+ * single-instance assertion and then multiplies the limit by the pod count.
  *
  * @example
  * const result = await runRateLimiterContract({
@@ -209,9 +196,6 @@ export async function runRateLimiterContract(
   }
 
   // GROUP 4: instances sharing a backend enforce one combined limit
-  //
-  // This is the assertion that separates a distributed limiter from a
-  // process-local one: two pods must not each get the full allowance.
   if (!enforcesCombinedLimit) {
     skip('instances sharing a backend enforce a combined limit');
   } else {
@@ -221,7 +205,7 @@ export async function runRateLimiterContract(
       const podB = await options.createLimiter();
       const ctx = buildContext('tenant_1', 'user_1');
 
-      // Alternate between pods so neither one alone reaches the limit.
+      // Alternate pods so neither alone reaches the limit.
       const decisions: string[] = [];
       for (let i = 0; i < maxCalls * 2; i++) {
         const pod = i % 2 === 0 ? podA : podB;
@@ -239,7 +223,6 @@ export async function runRateLimiterContract(
         'the shared allowance is consumed in call order',
       );
 
-      // A fresh instance must see the exhausted window too, not start over.
       const podC = await options.createLimiter();
       check(
         (await podC.evaluate(ctx, CONTRACT_RATE_LIMITED_TOOL, {})).decision === 'deny',

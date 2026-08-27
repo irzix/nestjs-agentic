@@ -1,11 +1,35 @@
+import { randomUUID } from 'crypto';
+
 import type { AgentContext, PolicyResult, ToolPolicy } from '../interfaces';
 import type { GenericRedisClient } from '../stores/redis/redis-state.store';
 import { scopeKey } from '../utils/scope-key';
 
+/** Runs a Lua script server-side. */
+export type RateLimitEvalFn = (
+  script: string,
+  keys: string[],
+  args: (string | number)[],
+) => Promise<unknown>;
+
 /** Options for configuring DistributedRateLimitPolicy. */
 export interface DistributedRateLimitOptions {
-  /** Redis client. Must expose `eval`, since the limiter needs a server-side script. */
-  client: GenericRedisClient;
+  /**
+   * Redis client exposing `eval` in the positional ioredis form. Omit when
+   * supplying `evalFn` instead.
+   */
+  client?: GenericRedisClient;
+
+  /**
+   * Adapter for clients whose `eval` signature differs, such as node-redis v4:
+   *
+   * ```typescript
+   * evalFn: (script, keys, args) =>
+   *   client.eval(script, { keys, arguments: args.map(String) })
+   * ```
+   *
+   * Takes precedence over `client`.
+   */
+  evalFn?: RateLimitEvalFn;
 
   /** Maximum allowed tool executions per window. Default: `10` */
   maxCallsPerWindow?: number;
@@ -18,19 +42,20 @@ export interface DistributedRateLimitOptions {
 }
 
 /**
- * Evicts timestamps outside the window, counts what remains, and admits the call
- * only if there is room — all in one `EVAL`, so concurrent callers on different
- * pods cannot both pass a check that only one of them should.
+ * Evict, count, and admit in one `EVAL`, so concurrent callers on different pods
+ * cannot both pass a check only one should. Time comes from Redis `TIME` rather
+ * than the caller, so clock skew cannot widen the window.
  *
- * `ARGV`: now (ms), window (ms), max calls, member id.
- * Returns `{ allowed, retryAfterMs }`.
+ * `ARGV`: window (ms), max calls, member id. Returns `{ allowed, retryAfterMs }`.
  */
 const SLIDING_WINDOW_SCRIPT = `
 local key = KEYS[1]
-local now = tonumber(ARGV[1])
-local windowMs = tonumber(ARGV[2])
-local maxCalls = tonumber(ARGV[3])
-local member = ARGV[4]
+local windowMs = tonumber(ARGV[1])
+local maxCalls = tonumber(ARGV[2])
+local member = ARGV[3]
+
+local clock = redis.call('TIME')
+local now = (tonumber(clock[1]) * 1000) + math.floor(tonumber(clock[2]) / 1000)
 
 redis.call('ZREMRANGEBYSCORE', key, 0, now - windowMs)
 local used = redis.call('ZCARD', key)
@@ -56,12 +81,9 @@ return { 1, 0 }
  *
  * Unlike `RateLimitPolicy`, which keeps its window in a process-local map and so
  * lets N pods each admit the configured limit independently, this holds a single
- * combined limit and survives a restart. Each window is a Redis sorted set with a
- * `PEXPIRE` matching the window, so keys for idle callers expire on their own
- * rather than accumulating.
- *
- * A denial reports how long to wait, both in the reason text the model sees and as
- * `retryAfterSeconds` on the result.
+ * combined limit and survives a restart. Each window is a sorted set with a
+ * `PEXPIRE` matching it, so idle callers' keys expire on their own. A denial
+ * reports `retryAfterSeconds`.
  *
  * @example
  * ```typescript
@@ -69,22 +91,31 @@ return { 1, 0 }
  * ```
  */
 export class DistributedRateLimitPolicy implements ToolPolicy {
-  private readonly client: GenericRedisClient;
+  private readonly evalFn: RateLimitEvalFn;
   private readonly maxCalls: number;
   private readonly windowMs: number;
   private readonly keyPrefix: string;
-  private callCounter = 0;
 
   /**
-   * @param options Redis client plus window/limit configuration.
-   * @throws {TypeError} If the client cannot run `EVAL`, or the limit/window is invalid.
+   * @param options Redis client (or `evalFn` adapter) plus window/limit configuration.
+   * @throws {TypeError} If no way to run `EVAL` is supplied, or the limit/window is invalid.
    */
   constructor(options: DistributedRateLimitOptions) {
-    if (typeof options.client?.eval !== 'function') {
+    const clientEval = options.client?.eval;
+    const evalFn =
+      options.evalFn ??
+      (typeof clientEval === 'function'
+        ? (script: string, keys: string[], args: (string | number)[]) =>
+            clientEval.call(options.client, script, keys.length, ...keys, ...args)
+        : undefined);
+
+    if (!evalFn) {
       throw new TypeError(
-        'DistributedRateLimitPolicy requires a Redis client exposing eval(). Without a ' +
-          'server-side script the check-then-admit step is not atomic, so the limit would ' +
-          'leak across concurrent callers — use RateLimitPolicy if a per-process limit is enough.',
+        'DistributedRateLimitPolicy requires a Redis client exposing eval(), or an evalFn ' +
+          'adapter. Without a server-side script the check-then-admit step is not atomic, so ' +
+          'the limit would leak across concurrent callers — use RateLimitPolicy if a ' +
+          'per-process limit is enough. For node-redis v4, pass evalFn: (script, keys, args) => ' +
+          'client.eval(script, { keys, arguments: args.map(String) }).',
       );
     }
 
@@ -102,15 +133,13 @@ export class DistributedRateLimitPolicy implements ToolPolicy {
       );
     }
 
-    this.client = options.client;
+    this.evalFn = evalFn;
     this.keyPrefix = options.keyPrefix ?? 'agentic:ratelimit:';
   }
 
   /**
-   * Admits or denies the call against the shared window.
-   *
-   * @param ctx Execution context, supplying the tenant and user the window is keyed by.
-   * @param toolName Tool being invoked, also part of the key.
+   * @param ctx Supplies the tenant and user the window is keyed by.
+   * @param toolName Also part of the key.
    * @returns `allow`, or `deny` carrying `retryAfterSeconds`.
    */
   async evaluate(
@@ -119,20 +148,15 @@ export class DistributedRateLimitPolicy implements ToolPolicy {
     _args?: Record<string, unknown>,
   ): Promise<PolicyResult> {
     const key = `${this.keyPrefix}${scopeKey(ctx.security.tenantId, ctx.security.userId, toolName)}`;
-    const now = Date.now();
-    // Distinct per call so two calls landing on the same millisecond both occupy a
-    // slot: a sorted set would otherwise treat them as one member and undercount.
-    const member = `${now}-${process.pid}-${this.callCounter++}`;
 
-    const raw = await this.client.eval!(
-      SLIDING_WINDOW_SCRIPT,
-      1,
-      key,
-      now,
+    // A sorted set treats an identical member as an update, so a per-call UUID is
+    // what keeps two calls from collapsing into one slot. Anything derived from
+    // pid/timestamp/counter collides across pods, which silently undercounts.
+    const raw = await this.evalFn(SLIDING_WINDOW_SCRIPT, [key], [
       this.windowMs,
       this.maxCalls,
-      member,
-    );
+      randomUUID(),
+    ]);
 
     const [allowed, retryAfterMs] = normalizeScriptResult(raw);
 
@@ -140,8 +164,7 @@ export class DistributedRateLimitPolicy implements ToolPolicy {
       return { decision: 'allow' };
     }
 
-    // Rounded up, and never below 1: reporting "retry after 0 seconds" would
-    // invite an immediate retry that is guaranteed to be denied again.
+    // Never below 1: "retry after 0 seconds" invites a guaranteed-denied retry.
     const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
 
     return {
@@ -154,12 +177,7 @@ export class DistributedRateLimitPolicy implements ToolPolicy {
   }
 }
 
-/**
- * Reads the `{ allowed, retryAfterMs }` pair back from a driver.
- *
- * Clients disagree on how Lua numbers surface — ioredis yields numbers, some
- * wrappers yield strings — so both are accepted rather than trusting one shape.
- */
+/** Reads the `{ allowed, retryAfterMs }` pair back, tolerating string-typed Lua numbers. */
 function normalizeScriptResult(raw: unknown): [boolean, number] {
   if (!Array.isArray(raw)) {
     throw new TypeError(
