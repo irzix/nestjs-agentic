@@ -1,5 +1,37 @@
 # @nestjs-agentic/core
 
+## 1.3.0
+
+### Minor Changes
+
+- 0bd14be: Add approver authorization for pending approvals. `ApprovalService` now consults an optional `ApprovalAuthorizer` (registered through the new `APPROVAL_AUTHORIZER` token) before an approval is claimed, so a refused attempt leaves the approval pending instead of consuming it. Refusals raise `ApprovalNotAuthorizedError` and are recorded as a new `approval_settlement_denied` audit event.
+
+  Three opt-in governance flags under `AgenticModuleOptions.approvals`:
+
+  - `enforceSeparationOfDuties` — refuses a settlement when the approver is the identity that triggered the action. Tenant-scoped, so the same `userId` in two tenants is not treated as a conflict.
+  - `enforceTenantIsolation` — refuses a settlement whose approver is not in the approval's tenant, so a leaked approval ID cannot be settled cross-tenant.
+  - `requireAuthorizer` — refuses every settlement unless an authorizer is registered, letting a deployment fail closed.
+
+  `PendingApproval` now carries `requestedBy`, stamped from the execution context at creation. All flags default to off, so settlement behavior is unchanged without configuration.
+
+  Part of #139.
+
+- eb84976: Add `AgenticModuleOptions.defaultPolicies`, a module-wide policy chain applied to every discovered tool that doesn't opt out via the new `@ExemptFromDefaultPolicies()` decorator — enabling deny-by-default governance instead of purely per-tool opt-in via `@UsePolicies`. Default policies evaluate before class-level and method-level `@UsePolicies`. Closes #135.
+- 7f6ab34: Add `PiiRedactionPolicy`, a built-in Output Rail that detects and redacts email addresses, phone numbers (NANP and international), Luhn-validated credit card numbers, and US Social Security Numbers from tool output. Configurable per category, with custom patterns and sensitive-key masking (applied wholesale regardless of value type), mirroring `SecretRedactionPolicy`.
+
+  Extracted the shared circular-reference-safe object traversal into `traverseAndRedact` (`packages/core/src/utils/redaction-traversal.ts`), now used by both policies, with an explicit supported boundary that fails closed outside it: strings/arrays/plain objects are rebuilt with matches redacted; `Map`/`Set` are rebuilt with keys and values redacted and **deny** if redaction would collapse two distinct entries into one; `Date`/`RegExp` are preserved as-is; class instances and platform built-ins (`URL`, `Error`, `Buffer`, typed arrays) are **inspected but never rewritten** — including symbol-keyed properties and `toJSON()` output — and **deny** when they hold sensitive data, since rebuilding them would lose internal state or trigger inherited setters; anything nested deeper than `maxDepth` is denied. Prototype-polluting keys (`__proto__`/`prototype`/`constructor`) are dropped and counted as a redaction. `PiiRedactionPolicy` validates `maxDepth` at construction and normalizes custom patterns once (stripping a sticky `y` flag that would otherwise skip matches not at the start of the input).
+
+  Closes #138.
+
+- ca8518f: Add `PromptInjectionSanitizer` (`@nestjs-agentic/core`), a utility that strips known chat-template/role-delimiter injection vectors (`<|im_start|>`, `[INST]`, `<system>`, `Human:`, etc.) and wraps untrusted content in explicit XML boundary tags, plus `PromptInjectionSanitizationPolicy`, a built-in Output Rail applying it to tool output automatically.
+
+  `@nestjs-agentic/rag`'s `UShapedContextStrategy` and `ContextualCompressionStrategy` now wrap retrieved chunk content in a `<retrieved_chunk>` boundary and sanitize it before writing `compressedContext`, mitigating indirect prompt injection via poisoned documents. Closes #136.
+
+- ad4fcaf: Add optional provenance/trust labels (`Provenance` / `ProvenanceSource`, `'model' | 'tool' | 'external' | 'user'`) to distinguish where content originated. `ToolExecutionResult` (all branches), the `{ role: 'tool' }` `ModelMessage`, and `DocumentChunk` now carry an optional `provenance` field. `LocalToolProvider` stamps successful tool results with `{ source: 'tool', origin: <toolName> }` and `AgentExecutor` stamps failed tool payloads and the resulting tool message the same way. `KnowledgeBase` retrieval always stamps chunks with `{ source: 'external', origin: <parentId> }` — retrieval is a trust boundary, so a store cannot launder external content under a trusted label. `ToolPolicy.evaluateOutput` receives the label as an optional fourth argument for trust-aware decisions. Fully additive — no behavior change for code that ignores it. Closes #137.
+- 1a355a7: Add a tamper-evident audit trail. `HashChainAuditSink` wraps an audit destination and binds every event to its predecessor (`hash_n = H(hash_{n-1} || canonical(event_n))`), with `verifyAuditChain` detecting altered, deleted, reordered, and re-linked entries. Events are canonically serialized (sorted keys, ISO dates) so equal content always hashes equally; chaining is serialized so concurrent records still verify, and a chain can be resumed across restarts. `PostgresAuditSink` ships as a real, append-only `AuditSink` that also implements `ChainedAuditEntrySink`, persisting the chain columns and exposing `head()`/`readChain()` for resumption and verification.
+
+  Part of #139.
+
 ## 1.2.0
 
 ## 1.1.0
