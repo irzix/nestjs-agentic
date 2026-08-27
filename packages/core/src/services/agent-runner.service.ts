@@ -27,7 +27,7 @@ import type {
   AgentProvider,
   AgentResult,
   AgentStreamEvent,
-  ApprovalAuthorizer,
+  ApprovalAuthorizerRegistration,
   ApprovalDecision,
   ApprovalGovernanceOptions,
   ApprovalStore,
@@ -137,11 +137,15 @@ export interface AgenticModuleOptions {
    */
   approvals?: ApprovalGovernanceOptions;
   /**
-   * Decides who may settle a pending approval. Equivalent to providing the
-   * `APPROVAL_AUTHORIZER` token directly — register it here rather than in the
-   * importing module, since `ApprovalService` resolves from this module's scope.
+   * Decides who may settle a pending approval. Register it here rather than in
+   * the importing module: `ApprovalService` is constructed inside `AgenticModule`,
+   * so a provider declared outside it is not visible.
+   *
+   * Accepts `{ useClass }` or `{ useFactory, inject }` so the authorizer is built
+   * by Nest and can inject its own dependencies, or a bare instance when it needs
+   * nothing injected.
    */
-  approvalAuthorizer?: ApprovalAuthorizer;
+  approvalAuthorizer?: ApprovalAuthorizerRegistration;
   /** Overrides for internal diagnostic logging (e.g. governance warnings). Defaults to `console`. */
   logger?: { warn?: (message: string) => void };
 }

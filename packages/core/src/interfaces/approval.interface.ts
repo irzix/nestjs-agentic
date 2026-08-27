@@ -1,4 +1,6 @@
 import type { AgentContext } from './agent-context.interface';
+import type { FactoryProvider } from '@nestjs/common';
+
 import type { AuditActor } from './audit.interface';
 import type { ModelMessage } from './model.interface';
 
@@ -112,6 +114,23 @@ export type ApprovalAuthorizationDecision =
   | { allowed: false; reason?: string };
 
 /**
+ * How to register an `ApprovalAuthorizer`.
+ *
+ * Prefer `useClass` or `useFactory` in production: the authorizer is then
+ * constructed by Nest, so it can inject its own dependencies (a user directory,
+ * a repository) and participate in the normal provider lifecycle. A bare
+ * instance is only appropriate for an authorizer that needs nothing injected.
+ */
+export type ApprovalAuthorizerRegistration =
+  | ApprovalAuthorizer
+  | { useClass: new (...args: never[]) => ApprovalAuthorizer }
+  | {
+      useFactory: (...args: never[]) => ApprovalAuthorizer | Promise<ApprovalAuthorizer>;
+      /** Tokens injected into `useFactory`, in parameter order. */
+      inject?: FactoryProvider['inject'];
+    };
+
+/**
  * Governance behavior for settling pending approvals.
  *
  * These checks run against the `actor` the application passes to
@@ -126,9 +145,10 @@ export interface ApprovalGovernanceOptions {
    * action. Off by default, since not every deployment supplies identities on
    * both sides.
    *
-   * Only a proven conflict refuses: both `userId`s known, equal, and in the same
-   * tenant. A missing identity cannot be shown to be the same person, so it is
-   * not treated as a violation — use `requireAuthorizer` to block unidentified
+   * Matching `userId`s are refused unless both tenants are present and provably
+   * different — an unknown tenant on either side is not proof of a different
+   * person. A missing `userId` cannot be shown to be the same person, so it is
+   * not treated as a violation; use `requireAuthorizer` to block unidentified
    * settlements outright.
    */
   enforceSeparationOfDuties?: boolean;
@@ -161,6 +181,13 @@ export interface ApprovalStore {
    * given approval can be settled at most once even under concurrent calls or
    * a restart-triggered retry. Implementations MUST perform the read and
    * removal as a single atomic step (e.g. Redis `GETDEL`).
+   *
+   * A pending record MUST also be treated as immutable once saved: `save()` is
+   * for creating an approval, not for mutating one that is awaiting a decision.
+   * `ApprovalService` authorizes against a non-destructive read before claiming,
+   * and rejects the settlement if the claimed record no longer matches the one it
+   * authorized, so a store that mutates records in place will surface as refused
+   * settlements rather than decisions applied to the wrong version.
    */
   claim(id: string): Promise<PendingApproval | null>;
 }

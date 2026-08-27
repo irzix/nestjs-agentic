@@ -11,7 +11,12 @@ import {
   SESSION_STORE,
 } from './constants';
 import { ToolDiscoveryService } from './discovery/tool-discovery.service';
-import type { AgentProvider, ToolPolicy, StateStore } from './interfaces';
+import type {
+  AgentProvider,
+  ApprovalAuthorizerRegistration,
+  ToolPolicy,
+  StateStore,
+} from './interfaces';
 import { MODEL_ADAPTER } from './interfaces/model.interface';
 import { STATE_STORE } from './interfaces/state-store.interface';
 import { LocalToolProvider } from './providers/local-tool.provider';
@@ -92,7 +97,7 @@ export class AgenticModule {
     // Registered here because ApprovalService is instantiated inside this module:
     // a provider declared in the importing module is not visible to it.
     const approvalAuthorizerProviders: Provider[] = options.approvalAuthorizer
-      ? [{ provide: APPROVAL_AUTHORIZER, useValue: options.approvalAuthorizer }]
+      ? [toApprovalAuthorizerProvider(options.approvalAuthorizer)]
       : [];
 
     return {
@@ -170,4 +175,27 @@ export class AgenticModule {
       exports: [...exportedTokens, AgenticModule],
     };
   }
+}
+
+/**
+ * Translates an authorizer registration into a Nest provider, so `useClass` and
+ * `useFactory` forms are constructed by the container and can inject their own
+ * dependencies. A bare instance is registered as a value.
+ */
+function toApprovalAuthorizerProvider(
+  registration: ApprovalAuthorizerRegistration,
+): Provider {
+  if (typeof registration === 'object' && registration !== null) {
+    if ('useClass' in registration) {
+      return { provide: APPROVAL_AUTHORIZER, useClass: registration.useClass };
+    }
+    if ('useFactory' in registration) {
+      return {
+        provide: APPROVAL_AUTHORIZER,
+        useFactory: registration.useFactory,
+        inject: registration.inject,
+      };
+    }
+  }
+  return { provide: APPROVAL_AUTHORIZER, useValue: registration };
 }

@@ -104,14 +104,14 @@ class MaintainerOnlyAuthorizer implements ApprovalAuthorizer {
 
 ```
 
-Register it through `forRoot`. `ApprovalService` is instantiated inside `AgenticModule`, so a provider declared in your own module's `providers` array is **not** visible to it — pass the authorizer as an option instead:
+Register it through `forRoot`. `ApprovalService` is instantiated inside `AgenticModule`, so a provider declared in your own module's `providers` array is **not** visible to it — pass the authorizer as an option instead. Use `useClass` so Nest constructs it and its own dependencies are injected normally:
 
 ```typescript
 @Module({
   imports: [
     AgenticModule.forRoot({
       defaultModel: { provider: 'openai', model: 'gpt-4o' },
-      approvalAuthorizer: new MaintainerOnlyAuthorizer(),
+      approvalAuthorizer: { useClass: MaintainerOnlyAuthorizer },
       approvals: { enforceSeparationOfDuties: true, enforceTenantIsolation: true },
     }),
   ],
@@ -119,7 +119,16 @@ Register it through `forRoot`. `ApprovalService` is instantiated inside `Agentic
 export class AppModule {}
 ```
 
-If your authorizer needs its own injected dependencies, construct it in a factory module and pass the instance here, the same way `approvalStore` and `auditSinks` are supplied.
+`useFactory` is available when the authorizer needs explicit wiring:
+
+```typescript
+approvalAuthorizer: {
+  useFactory: (users: UserDirectory) => new MaintainerOnlyAuthorizer(users),
+  inject: [UserDirectory],
+}
+```
+
+A bare instance (`approvalAuthorizer: new MaintainerOnlyAuthorizer()`) is also accepted, but it is constructed outside the container — use it only for an authorizer that needs nothing injected.
 
 The check runs **before** the approval is claimed, so a refused attempt raises `ApprovalNotAuthorizedError` and leaves the approval pending for a properly authorized reviewer — an unauthorized caller cannot destroy a pending decision.
 

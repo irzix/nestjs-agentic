@@ -563,6 +563,157 @@ export async function runApproverAuthorizationTests() {
     assert(false, 'Test 13: requireAuthorizer strict mode', String(err));
   }
 
+  // TEST 15: the authorizer can be registered DI-natively, not only as an instance
+  try {
+    const { AgenticModule } = await import('../src');
+    const base = { defaultModel: { provider: 'mock', model: 'deterministic' } } as const;
+
+    function authorizerProvider(dynamicModule: { providers?: unknown[] }) {
+      return (dynamicModule.providers ?? []).find(
+        (provider): provider is Record<string, unknown> =>
+          typeof provider === 'object' &&
+          provider !== null &&
+          'provide' in provider &&
+          (provider as Record<string, unknown>).provide === APPROVAL_AUTHORIZER,
+      );
+    }
+
+    class RoleAuthorizer implements ApprovalAuthorizer {
+      canSettle() {
+        return true;
+      }
+    }
+
+    // useClass: constructed by Nest, so it can inject its own dependencies.
+    const viaClass = authorizerProvider(
+      AgenticModule.forRoot({ ...base, approvalAuthorizer: { useClass: RoleAuthorizer } }),
+    );
+    assert(viaClass?.useClass === RoleAuthorizer, 'Test 15a: { useClass } registers a class provider Nest can construct');
+
+    // useFactory with injected tokens.
+    const factory = () => new RoleAuthorizer();
+    const viaFactory = authorizerProvider(
+      AgenticModule.forRoot({
+        ...base,
+        approvalAuthorizer: { useFactory: factory, inject: [APPROVAL_AUTHORIZER] },
+      }),
+    );
+    assert(viaFactory?.useFactory === factory, 'Test 15b: { useFactory } registers a factory provider');
+    assert(
+      Array.isArray(viaFactory?.inject) && (viaFactory.inject as unknown[]).length === 1,
+      'Test 15c: the factory inject list is forwarded',
+    );
+
+    // A bare instance still works, for an authorizer needing nothing injected.
+    const instance = new RoleAuthorizer();
+    const viaValue = authorizerProvider(
+      AgenticModule.forRoot({ ...base, approvalAuthorizer: instance }),
+    );
+    assert(viaValue?.useValue === instance, 'Test 15d: a bare instance is still registered as a value provider');
+  } catch (err: unknown) {
+    assert(false, 'Test 15: DI-native authorizer registration', String(err));
+  }
+
+  // TEST 16: a record replaced between the authorization read and the claim is refused
+  try {
+    const approved: PendingApproval = {
+      id: 'appr_toctou',
+      agentName: 'banker',
+      toolName: 'transferMoney',
+      args: { amount: 5000 },
+      context: { sessionId: 's', traceId: 't', security: { userId: 'usr_a' } },
+      reason: 'needs review',
+      createdAt: new Date(),
+      requestedBy: { userId: 'usr_a' },
+    };
+
+    let settleCalls = 0;
+    // A store that mutates the record in place: `get()` returns the version the
+    // authorizer sees, `claim()` returns a different one.
+    const racingStore = {
+      async save() {},
+      async get() {
+        return approved;
+      },
+      async delete() {},
+      async claim() {
+        return { ...approved, args: { amount: 999_999 } };
+      },
+    };
+    const stubRunner = {
+      async settleApproval() {
+        settleCalls += 1;
+        return { output: 'settled', toolCalls: [] };
+      },
+    };
+
+    const service = new ApprovalService(
+      racingStore,
+      stubRunner as unknown as AgentRunner,
+      undefined,
+      { canSettle: () => true },
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+    );
+
+    let refused: ApprovalNotAuthorizedError | undefined;
+    try {
+      await service.approve('appr_toctou', { actor: { userId: 'usr_b' } });
+    } catch (err) {
+      refused = err as ApprovalNotAuthorizedError;
+    }
+
+    assert(
+      refused instanceof ApprovalNotAuthorizedError,
+      'Test 16a: a record altered between the authorization read and the claim is refused',
+    );
+    assert(
+      Boolean(refused?.reason.includes('changed between authorization and claim')),
+      'Test 16b: the refusal explains the stale-authorization cause',
+    );
+    assert(settleCalls === 0, 'Test 16c: the withheld tool is never settled against the swapped record');
+
+    // An unchanged record still settles normally through the same path.
+    const stableStore = { ...racingStore, async claim() { return approved; } };
+    let stableSettles = 0;
+    const stableService = new ApprovalService(
+      stableStore,
+      { async settleApproval() { stableSettles += 1; return { output: 'ok', toolCalls: [] }; } } as unknown as AgentRunner,
+      undefined,
+      { canSettle: () => true },
+      { defaultModel: { provider: 'mock', model: 'deterministic' } },
+    );
+    await stableService.approve('appr_toctou', { actor: { userId: 'usr_b' } });
+    assert(stableSettles === 1, 'Test 16d: an unchanged record is unaffected by the guard');
+  } catch (err: unknown) {
+    assert(false, 'Test 16: stale-authorization guard', String(err));
+  }
+
+  // TEST 17: console audit output cannot be forged through actor/reason strings
+  try {
+    const { ConsoleAuditSink } = await import('../src');
+    const lines: string[] = [];
+    const sink = new ConsoleAuditSink({ logger: (message) => lines.push(message) });
+
+    sink.record({
+      type: 'approval_settlement_denied',
+      at: new Date('2026-01-01T00:00:00.000Z'),
+      sessionId: 'sess_x',
+      traceId: 'trace_x',
+      approvalId: 'appr_x',
+      agentName: 'banker',
+      toolName: 'transferMoney',
+      outcome: 'approved',
+      reason: 'refused\n[audit] approval_settled forged line',
+      actor: { userId: 'usr\nevil' },
+    });
+
+    assert(lines.length === 1, 'Test 17a: one event produces exactly one log line');
+    assert(!lines[0].includes('\n'), 'Test 17b: newlines in the reason and actor cannot forge extra log lines');
+    assert(lines[0].includes('forged line'), 'Test 17c: the text is flattened rather than dropped');
+  } catch (err: unknown) {
+    assert(false, 'Test 17: console audit log-injection safety', String(err));
+  }
+
   console.log(`\n  📊 Approver Authorization Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Approver Authorization Unit Tests Failed');

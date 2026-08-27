@@ -185,12 +185,15 @@ export class ApprovalService {
     // would let a refused attempt consume the approval. The read/claim race is
     // harmless since `claim()` still enforces exactly-once settlement.
     const governance = this.governanceOptions();
-    if (
-      this.authorizer ||
-      governance.enforceSeparationOfDuties ||
-      governance.enforceTenantIsolation ||
-      governance.requireAuthorizer
-    ) {
+    const governed =
+      Boolean(this.authorizer) ||
+      Boolean(governance.enforceSeparationOfDuties) ||
+      Boolean(governance.enforceTenantIsolation) ||
+      Boolean(governance.requireAuthorizer);
+
+    let authorizedFingerprint: string | undefined;
+
+    if (governed) {
       const pending = await this.store.get(approvalId);
       if (!pending) {
         throw new ApprovalNotFoundError(approvalId);
@@ -211,6 +214,8 @@ export class ApprovalService {
 
         throw new ApprovalNotAuthorizedError(approvalId, refusal);
       }
+
+      authorizedFingerprint = fingerprint(pending);
     }
 
     let abortHandler: (() => void) | undefined;
@@ -235,6 +240,16 @@ export class ApprovalService {
 
     if (!claimed) {
       throw new ApprovalNotFoundError(approvalId);
+    }
+
+    // Closes the read/claim window: a store whose `save()` replaced the record
+    // between the authorization read and the claim would otherwise have its new
+    // version settled against a decision made about the old one.
+    if (authorizedFingerprint !== undefined && fingerprint(claimed) !== authorizedFingerprint) {
+      throw new ApprovalNotAuthorizedError(
+        approvalId,
+        'the approval changed between authorization and claim, so the decision no longer applies to it',
+      );
     }
 
     if (claimed.expiresAt && Date.now() > new Date(claimed.expiresAt).getTime()) {
@@ -287,4 +302,21 @@ export class ApprovalService {
 
     return result;
   }
+}
+
+/**
+ * Identifies the version of an approval that an authorization decision was made
+ * about, covering every field the governance checks read.
+ */
+function fingerprint(approval: PendingApproval): string {
+  return JSON.stringify([
+    approval.id,
+    approval.agentName,
+    approval.toolName,
+    approval.requestedBy?.userId ?? null,
+    approval.requestedBy?.tenantId ?? null,
+    approval.context.security.userId ?? null,
+    approval.context.security.tenantId ?? null,
+    approval.args,
+  ]);
 }
