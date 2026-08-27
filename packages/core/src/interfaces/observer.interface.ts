@@ -114,6 +114,36 @@ export interface AgentErrorEvent {
 }
 
 /**
+ * Event dispatched when a failed model call is about to be retried.
+ */
+export interface ModelRetryEvent {
+  agentName?: string;
+  sessionId?: string;
+  traceId?: string;
+  /** 1-based number of the attempt that failed. */
+  attempt: number;
+  maxAttempts: number;
+  /** Delay before the next attempt, after jitter. */
+  delayMs: number;
+  error: unknown;
+  timestamp: Date;
+}
+
+/**
+ * Event dispatched when a model call's circuit breaker changes state.
+ */
+export interface CircuitBreakerEvent {
+  /** Identifies the guarded dependency. */
+  circuitName: string;
+  from: 'closed' | 'open' | 'half_open';
+  to: 'closed' | 'open' | 'half_open';
+  /** Consecutive failures recorded at the transition. */
+  failures: number;
+  reason: string;
+  timestamp: Date;
+}
+
+/**
  * Observer contract for runtime telemetry, OpenTelemetry tracing, and metric collection.
  * All methods are optional and error-isolated.
  */
@@ -122,6 +152,8 @@ export interface AgentObserver {
   onAgentEnd?(event: AgentEndEvent): void | Promise<void>;
   onModelRequest?(event: ModelRequestEvent): void | Promise<void>;
   onModelResponse?(event: ModelResponseEvent): void | Promise<void>;
+  onModelRetry?(event: ModelRetryEvent): void | Promise<void>;
+  onCircuitStateChange?(event: CircuitBreakerEvent): void | Promise<void>;
   onToolCall?(event: ToolCallEvent): void | Promise<void>;
   onToolResult?(event: ToolResultEvent): void | Promise<void>;
   onError?(event: AgentErrorEvent): void | Promise<void>;

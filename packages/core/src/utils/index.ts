@@ -10,3 +10,11 @@ export type {
 } from './u-curve-context.formatter';
 export { PromptInjectionSanitizer } from './prompt-injection-sanitizer';
 export type { PromptInjectionSanitizerOptions } from './prompt-injection-sanitizer';
+export { CircuitBreaker, CircuitOpenError } from './circuit-breaker';
+export type {
+  CircuitBreakerOptions,
+  CircuitState,
+  CircuitStateChangeEvent,
+} from './circuit-breaker';
+export { isRetryableModelError, readRetryAfterMs, retryWithBackoff } from './retry';
+export type { RetryAfterCarrier, RetryAttemptEvent, RetryOptions } from './retry';
