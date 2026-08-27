@@ -74,7 +74,7 @@ if (!report.valid) {
 
 `verifyAuditChain` detects a modified event body, a rewritten hash, a re-linked `previousHash`, and a deleted or reordered entry (via the sequence gap). Events are canonically serialized (sorted keys, ISO dates) so identical content always hashes identically, and concurrent `record()` calls are serialized internally, since a chain linked out of order would not verify.
 
-`PostgresAuditSink` works standalone as an `AuditSink` or as the durable destination for a chain. Row identity is database-generated and independent of chain position, so both write modes can share one table; `chain_sequence` is `UNIQUE`, so a competing writer that computes an already-used position fails loudly rather than silently forking the chain.
+`PostgresAuditSink` works standalone as an `AuditSink` or as the durable destination for a chain. Row identity is database-generated and independent of chain position, so both write modes can share one table.
 
 It only ever inserts. Enforce that at the database level by granting the application role `INSERT`/`SELECT` but not `UPDATE`/`DELETE`, so a compromised application cannot rewrite history even though the chain would reveal it. Those grants exclude `CREATE`, so pair them with `autoCreateTable: false` and create the table from a migration run by a privileged role:
 
@@ -95,6 +95,17 @@ CREATE INDEX idx_agentic_audit_events_session ON agentic_audit_events (session_i
 CREATE INDEX idx_agentic_audit_events_tenant  ON agentic_audit_events (tenant_id) WHERE tenant_id IS NOT NULL;
 ```
 
-A linear chain assumes a **single writer** per chain: `HashChainAuditSink` serializes only within one instance, so in a horizontally-scaled deployment either keep one writer or coordinate sequence allocation in the database. `readChain()` is an operator-level verification primitive that returns every tenant's entries — verify with it from an admin path, don't expose it directly to tenant-facing callers.
+### One append authority per chain
+
+A chain requires a **single append authority**. `HashChainAuditSink` serializes `record()` calls within one instance, but it computes `chain_sequence` and `previousHash` from its own in-memory head — so two instances that resumed from the same stored head will both extend it.
+
+The `UNIQUE` constraint on `chain_sequence` only catches the case where both writers pick the *same* position; the second insert then fails loudly. It does **not** catch divergence: if the writers pick different positions, both rows insert successfully and the break only surfaces later, when `verifyAuditChain` reports a predecessor mismatch.
+
+So in a horizontally-scaled deployment, either:
+
+- keep exactly one writer per chain (a leader, a single worker, or a dedicated audit service), or
+- allocate positions in the database — take a transaction that locks the current head row, then assign `chain_sequence` and `previousHash` from it within that same transaction.
+
+`readChain()` is an operator-level verification primitive that returns every tenant's entries — verify with it from an admin path, don't expose it directly to tenant-facing callers.
 
 This makes tampering **evident**, not impossible: an attacker who can rewrite the entire chain can still produce a self-consistent history. Periodically publishing the latest `headHash()` outside the same trust domain (anchoring) is what closes that gap.

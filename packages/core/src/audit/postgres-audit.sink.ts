@@ -45,11 +45,14 @@ export interface PostgresAuditRow {
  *
  * Row identity (`id`) is database-generated and independent of chain position
  * (`chain_sequence`), so direct and chained writes can share one table without
- * competing. `chain_sequence` is `UNIQUE`: if two writers ever compute the same
- * position, the second insert fails loudly instead of silently forking the chain.
- * A linear chain still assumes a single writer per chain — `HashChainAuditSink`
- * only serializes within one instance, so coordinate at the database level (or
- * keep one writer) in a horizontally-scaled deployment.
+ * competing.
+ *
+ * A chain requires a single append authority. `chain_sequence` is `UNIQUE`, which
+ * catches two writers picking the *same* position, but not divergence: writers
+ * that resumed from the same head and picked different positions both insert
+ * successfully, and the break only surfaces when `verifyAuditChain` reports a
+ * predecessor mismatch. Either keep one writer per chain, or assign
+ * `chain_sequence` and `previousHash` inside a transaction that locks the head.
  *
  * @example
  * ```typescript
