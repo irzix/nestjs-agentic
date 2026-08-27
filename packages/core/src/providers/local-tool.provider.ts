@@ -478,6 +478,9 @@ export class LocalToolProvider {
               policyName: Constructor.name,
               decision: 'deny',
               reason: result.reason,
+              ...(result.retryAfterSeconds !== undefined
+                ? { retryAfterSeconds: result.retryAfterSeconds }
+                : {}),
               args,
             });
 

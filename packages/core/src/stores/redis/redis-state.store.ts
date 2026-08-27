@@ -18,6 +18,15 @@ export interface GenericRedisClient {
    * claiming when present and falls back to a non-atomic get+del otherwise.
    */
   getdel?(key: string): Promise<string | null>;
+  /**
+   * Runs a Lua script server-side (`EVAL`), in the positional form used by
+   * ioredis and node-redis' legacy mode: `eval(script, numKeys, ...keys, ...args)`.
+   *
+   * Optional because not every client exposes it, but required by
+   * `DistributedRateLimitPolicy`: a rate limiter needs its read, evict, count,
+   * and write to be one atomic step, which no single Redis command provides.
+   */
+  eval?(script: string, numKeys: number, ...args: (string | number)[]): Promise<unknown>;
 }
 
 export interface RedisStateStoreOptions {
