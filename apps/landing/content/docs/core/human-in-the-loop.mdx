@@ -146,7 +146,7 @@ Passing client-supplied values here would let a caller claim any identity and de
 
 Enable `approvals.enforceSeparationOfDuties` to stop the identity that triggered an action from also approving it. The requester is captured on the approval as `requestedBy` at creation.
 
-A settlement is refused only on a **proven** conflict: both `userId`s known, equal, and in the same tenant. The tenant scoping matters — an `admin` in two different tenants is two different people. A missing identity cannot be shown to be the same person, so it is not treated as a violation.
+Matching `userId`s are treated as a conflict **unless the two tenants are provably different** — an `admin` in two different tenants is two different people, but an unknown tenant on either side is not proof of that. A settlement is only refused when both `userId`s are known and equal; a missing `userId` cannot be shown to be the same person, so it is not treated as a violation.
 
 ### Tenant isolation
 
