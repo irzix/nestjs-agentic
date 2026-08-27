@@ -21,10 +21,14 @@ AgenticModule.forRoot({
 
 | Failure | Retried |
 | --- | --- |
-| `429`, `5xx`, network/timeout (no status) | Yes |
+| `429`, `5xx` | Yes |
+| Recognized transport faults with no status | Yes, by `code` (`ECONNRESET`, `ETIMEDOUT`, …), error name (`APIConnectionError`, …), or a nested `cause` |
+| Other status-less errors | No, including programming errors like `TypeError` that fail identically every attempt |
 | Other `4xx` | No, a malformed request fails identically every attempt |
 | `AgenticError` | No, it signals misconfiguration or an exceeded budget |
 | `AbortError` | No, the caller cancelled |
+
+Pass your own `isRetryable` predicate to widen this. Cancelling through `signal` stops both dispatch and any backoff already in progress.
 
 Delay `n` is `initialDelayMs × 2^(n-1)`, capped at `maxDelayMs`, then randomized downward by up to `jitter`. At the default `0.5`, a computed 1000&nbsp;ms delay lands in 500–1000&nbsp;ms. Without jitter, every caller that failed in the same instant retries in the same instant, re-creating the spike that caused the failure.
 
@@ -39,7 +43,7 @@ half_open ──[successThreshold successes]──> closed
 half_open ──[any failure]──> open   (cooldown restarts)
 ```
 
-While open, calls are rejected with `CircuitOpenError` — carrying `retryAfterMs` — without being dispatched.
+While open, calls are rejected with `CircuitOpenError` — carrying `retryAfterMs` — without being dispatched. `half_open` admits exactly one probe; concurrent callers are rejected until it settles, so a recovering provider is not flooded the instant its cooldown expires.
 
 The breaker sits **outside** the retry, so exhausting retries counts as one failure against the threshold: `failureThreshold: 5` means five genuinely failed calls, not five attempts inside one call.
 
@@ -59,11 +63,13 @@ export class ResilienceObserver implements AgentObserver {
 }
 ```
 
-Register with the `AGENT_OBSERVERS` token. Both hooks are optional, so existing observers need no changes.
+Both hooks are optional, so existing observers need no changes. A hook that throws or rejects is contained: it never changes whether a retry proceeds or how breaker state is recorded.
+
+Retries reach the observers of the request that triggered them, per-run and module-level alike. Circuit transitions are process-scoped rather than caused by any one request, so they go to observers registered with the `AGENT_OBSERVERS` token.
 
 ## Notes
 
-**Streaming.** A stream is retried only while nothing has reached the caller — the attempt covers opening it and pulling the first chunk. Past that, a retry would replay emitted tokens, so the error propagates.
+**Streaming.** A stream is retried only while nothing has reached the caller — the attempt covers opening it and pulling the first chunk. Past that, a retry would replay emitted tokens, so the error propagates. It still counts against the circuit: a stream scores as a success only once it drains, so a provider that consistently dies mid-stream does trip the breaker. Abandoning the loop early closes the provider stream.
 
 **Cascading.** Resilience wraps the base adapter, so the cascade sits outside it. A retry re-attempts the failing tier rather than replaying the whole cascade and paying for its cheaper tiers again.
 

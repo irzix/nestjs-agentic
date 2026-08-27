@@ -50,6 +50,7 @@ export class CircuitBreaker {
   private failures = 0;
   private successes = 0;
   private openedAt = 0;
+  private probeInFlight = false;
 
   private readonly failureThreshold: number;
   private readonly cooldownMs: number;
@@ -81,17 +82,34 @@ export class CircuitBreaker {
     return this.failures;
   }
 
-  /** @throws {CircuitOpenError} If the circuit is open and its cooldown has not elapsed. */
-  async execute<T>(operation: () => Promise<T>): Promise<T> {
+  /**
+   * @param options `deferSuccess` leaves the outcome for the caller to record,
+   *   for operations like a stream whose success is not known when `operation`
+   *   resolves. The caller must then call `recordSuccess` or `recordFailure`.
+   * @throws {CircuitOpenError} If the circuit is open, or a probe is already in flight.
+   */
+  async execute<T>(
+    operation: () => Promise<T>,
+    options?: { deferSuccess?: boolean },
+  ): Promise<T> {
     this.promoteIfCooledDown();
 
     if (this.state === 'open') {
       throw new CircuitOpenError(this.name, this.remainingCooldownMs());
     }
 
+    // Half-open admits exactly one probe. Without this, every caller waiting on
+    // the cooldown would be released at once and flood a recovering provider.
+    if (this.state === 'half_open') {
+      if (this.probeInFlight) {
+        throw new CircuitOpenError(this.name, this.remainingCooldownMs());
+      }
+      this.probeInFlight = true;
+    }
+
     try {
       const result = await operation();
-      this.recordSuccess();
+      if (!options?.deferSuccess) this.recordSuccess();
       return result;
     } catch (err) {
       this.recordFailure(describeError(err));
@@ -100,6 +118,8 @@ export class CircuitBreaker {
   }
 
   recordSuccess(): void {
+    this.probeInFlight = false;
+
     if (this.state === 'half_open') {
       this.successes += 1;
       if (this.successes >= this.successThreshold) {
@@ -112,6 +132,7 @@ export class CircuitBreaker {
   }
 
   recordFailure(reason = 'operation failed'): void {
+    this.probeInFlight = false;
     this.failures += 1;
 
     // A failed probe restarts the cooldown rather than allowing another probe.
@@ -151,14 +172,19 @@ export class CircuitBreaker {
       this.successes = 0;
     }
 
-    this.onStateChange?.({
-      name: this.name,
-      from,
-      to,
-      failures: this.failures,
-      reason,
-      at: new Date(this.now()),
-    });
+    try {
+      this.onStateChange?.({
+        name: this.name,
+        from,
+        to,
+        failures: this.failures,
+        reason,
+        at: new Date(this.now()),
+      });
+    } catch {
+      // A listener throwing must not corrupt breaker state or replace the error
+      // that triggered the transition.
+    }
   }
 }
 

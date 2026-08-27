@@ -23,8 +23,8 @@ export interface RetryOptions {
 
   onRetry?: (event: RetryAttemptEvent) => void | Promise<void>;
 
-  /** Injectable sleep, for tests. */
-  sleep?: (ms: number) => Promise<void>;
+  /** Injectable sleep, for tests. Receives the signal so waits can be cut short. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 
   signal?: AbortSignal;
 }
@@ -48,19 +48,61 @@ export interface RetryAfterCarrier {
   statusCode?: number;
 }
 
+const TRANSPORT_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'ESOCKETTIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENETRESET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+const TRANSPORT_NAMES = new Set([
+  'APIConnectionError',
+  'APIConnectionTimeoutError',
+  'ConnectTimeoutError',
+  'FetchError',
+  'TimeoutError',
+]);
+
 /**
- * Retries `429`, `5xx`, and status-less errors (network/timeout). Refuses other
- * `4xx`, which fail identically on every attempt, and refuses `AgenticError`,
- * which signals misconfiguration or an exceeded budget rather than a fault.
+ * Retries `429` and `5xx`. For errors with no status, retries only recognized
+ * transport faults, by `code`, error name, or a nested `cause` — a `TypeError`
+ * from a bug in an adapter would fail identically on every attempt, and retrying
+ * it just delays the report. Pass `isRetryable` to widen this.
+ *
+ * Never retries `AgenticError`, which signals misconfiguration or an exceeded
+ * budget rather than a fault, nor an aborted call.
  */
 export function isRetryableModelError(err: unknown): boolean {
   if (err instanceof AgenticError) return false;
   if (isAbortError(err)) return false;
 
   const status = readStatus(err);
-  if (status === undefined) return true;
-  if (status === 429) return true;
-  return status >= 500;
+  if (status !== undefined) return status === 429 || status >= 500;
+  return isTransportError(err);
+}
+
+function isTransportError(err: unknown, depth = 0): boolean {
+  if (typeof err !== 'object' || err === null || depth > 3) return false;
+  const carrier = err as { name?: string; code?: string; cause?: unknown };
+
+  if (carrier.name === 'AbortError') return false;
+  if (typeof carrier.code === 'string' && TRANSPORT_CODES.has(carrier.code)) return true;
+  if (typeof carrier.name === 'string' && TRANSPORT_NAMES.has(carrier.name)) return true;
+
+  // undici surfaces connection faults as `TypeError: fetch failed` with the real
+  // cause nested underneath.
+  return isTransportError(carrier.cause, depth + 1);
 }
 
 export function readRetryAfterMs(err: unknown): number | undefined {
@@ -109,10 +151,14 @@ export async function retryWithBackoff<T>(
       `retryWithBackoff: jitter must be between 0 and 1, received ${String(jitter)}.`,
     );
   }
+  assertFiniteDelay('initialDelayMs', initialDelayMs);
+  assertFiniteDelay('maxDelayMs', maxDelayMs);
 
-  let lastError: unknown;
+  let lastError: unknown = abortError();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (options?.signal?.aborted) throw lastError;
+
     try {
       return await operation();
     } catch (err) {
@@ -124,15 +170,33 @@ export async function retryWithBackoff<T>(
 
       const delayMs = computeDelayMs({ attempt, initialDelayMs, maxDelayMs, jitter, err });
 
-      await options?.onRetry?.({ attempt, maxAttempts, delayMs, error: err });
+      try {
+        await options?.onRetry?.({ attempt, maxAttempts, delayMs, error: err });
+      } catch {
+        // A telemetry hook must not turn a retryable failure into a hard one.
+      }
 
       if (options?.signal?.aborted) throw err;
-      await sleep(delayMs);
+      await sleep(delayMs, options?.signal);
       if (options?.signal?.aborted) throw err;
     }
   }
 
   throw lastError;
+}
+
+function assertFiniteDelay(field: string, value: number): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new TypeError(
+      `retryWithBackoff: ${field} must be a finite non-negative number, received ${String(value)}.`,
+    );
+  }
+}
+
+function abortError(): Error {
+  return Object.assign(new Error('Retry aborted before any attempt was made.'), {
+    name: 'AbortError',
+  });
 }
 
 function computeDelayMs(input: {
@@ -153,8 +217,19 @@ function computeDelayMs(input: {
   return Math.max(0, Math.round(exponential * (1 - input.jitter * Math.random())));
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Resolves early on abort, so cancelling does not wait out the remaining backoff. */
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal?.aborted) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const settle = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', settle);
+      resolve();
+    };
+    const timer = setTimeout(settle, ms);
+    signal?.addEventListener('abort', settle, { once: true });
+  });
 }
 
 function isAbortError(err: unknown): boolean {

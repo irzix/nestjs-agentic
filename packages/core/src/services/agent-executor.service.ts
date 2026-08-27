@@ -43,6 +43,8 @@ import type { AgentObserver } from '../interfaces/observer.interface';
 import { ObserverNotifier } from '../observers/observer-notifier';
 import { AGENT_OBSERVERS, AGENTIC_OPTIONS } from '../constants';
 import { ResilientModelAdapter } from '../adapters/resilient-model.adapter';
+import { CircuitBreaker } from '../utils/circuit-breaker';
+import type { CircuitBreakerOptions } from '../utils/circuit-breaker';
 import type { AgenticModuleOptions } from './agent-runner.service';
 
 /** Input for one governed agent turn executed by the framework runtime. */
@@ -186,8 +188,8 @@ interface ExecutionState {
  */
 @Injectable()
 export class AgentExecutor {
-  private resilientAdapter?: ModelAdapter;
-  private resilienceNotifier?: ObserverNotifier;
+  private breaker?: CircuitBreaker;
+  private moduleNotifier?: ObserverNotifier;
 
   constructor(
     @Optional() @Inject(MODEL_ADAPTER) private readonly modelAdapter?: ModelAdapter,
@@ -200,51 +202,76 @@ export class AgentExecutor {
     return Boolean(this.modelAdapter);
   }
 
-  private resolveEffectiveAdapter(cascade?: CascadeConfig): ModelAdapter {
+  private resolveEffectiveAdapter(
+    cascade?: CascadeConfig,
+    notifier?: ObserverNotifier,
+  ): ModelAdapter {
     // Resilience wraps the base adapter rather than the cascade, so a retry
     // re-attempts the failing tier instead of replaying the whole cascade and
     // paying for its cheaper tiers again.
-    const baseAdapter = this.withResilience(this.requireAdapter());
+    const baseAdapter = this.withResilience(this.requireAdapter(), notifier);
     if (cascade) {
       return new ModelCascadeAdapter(baseAdapter, cascade);
     }
     return baseAdapter;
   }
 
-  /**
-   * Wraps the adapter once and reuses it, so circuit-breaker state accumulates
-   * across requests instead of resetting on every turn.
-   */
-  private withResilience(adapter: ModelAdapter): ModelAdapter {
+  private withResilience(adapter: ModelAdapter, notifier?: ObserverNotifier): ModelAdapter {
     const resilience = this.options?.resilience;
     if (!resilience?.retry && !resilience?.circuitBreaker) return adapter;
 
-    if (!this.resilientAdapter) {
-      this.resilienceNotifier ??= new ObserverNotifier(this.injectedObservers ?? []);
-      const notifier = this.resilienceNotifier;
-
-      this.resilientAdapter = new ResilientModelAdapter(adapter, resilience, {
+    // The wrapper is per-request so retries reach that request's observers, while
+    // the breaker it shares is long-lived so its state survives across requests.
+    return new ResilientModelAdapter(
+      adapter,
+      {
+        retry: resilience.retry,
+        circuitBreaker: resilience.circuitBreaker
+          ? this.sharedBreaker(resilience.circuitBreaker)
+          : undefined,
+      },
+      {
         onRetry: (event) =>
-          notifier.notifyModelRetry({
+          notifier?.notifyModelRetry({
             attempt: event.attempt,
             maxAttempts: event.maxAttempts,
             delayMs: event.delayMs,
             error: event.error,
             timestamp: new Date(),
           }),
-        onCircuitStateChange: (event) =>
-          notifier.notifyCircuitStateChange({
+      },
+    );
+  }
+
+  /**
+   * Circuit transitions are process-scoped rather than tied to the request that
+   * happened to trip them, so they go to module-level observers.
+   */
+  private sharedBreaker(
+    options: CircuitBreakerOptions | CircuitBreaker,
+  ): CircuitBreaker {
+    if (options instanceof CircuitBreaker) return options;
+
+    if (!this.breaker) {
+      this.moduleNotifier ??= new ObserverNotifier(this.injectedObservers ?? []);
+      const notifier = this.moduleNotifier;
+
+      this.breaker = new CircuitBreaker(this.requireAdapter().constructor?.name ?? 'model', {
+        ...options,
+        onStateChange: (event) => {
+          void notifier.notifyCircuitStateChange({
             circuitName: event.name,
             from: event.from,
             to: event.to,
             failures: event.failures,
             reason: event.reason,
             timestamp: event.at,
-          }),
+          });
+        },
       });
     }
 
-    return this.resilientAdapter;
+    return this.breaker;
   }
 
   private createRequestContext(
@@ -269,11 +296,11 @@ export class AgentExecutor {
   }
 
   async execute(input: AgentExecutionInput): Promise<AgentResult> {
-    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
     const requestCtx = this.createRequestContext(input);
+    const adapter = this.resolveEffectiveAdapter(input.cascade, requestCtx.observerNotifier);
 
     return this.runToCompletion(
       adapter,
@@ -288,11 +315,11 @@ export class AgentExecutor {
   }
 
   async *stream(input: AgentExecutionInput): AsyncIterable<AgentStreamEvent> {
-    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createState(input);
     const requestCtx = this.createRequestContext(input);
+    const adapter = this.resolveEffectiveAdapter(input.cascade, requestCtx.observerNotifier);
 
     yield* this.streamToCompletion(
       adapter,
@@ -314,11 +341,11 @@ export class AgentExecutor {
    * result, until it produces a final answer or suspends again.
    */
   async resume(input: AgentResumeInput): Promise<AgentResult> {
-    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createResumedState(input);
     const requestCtx = this.createRequestContext(input);
+    const adapter = this.resolveEffectiveAdapter(input.cascade, requestCtx.observerNotifier);
 
     return this.runToCompletion(
       adapter,
@@ -334,11 +361,11 @@ export class AgentExecutor {
 
   /** Streaming counterpart of {@link resume}. */
   async *resumeStream(input: AgentResumeInput): AsyncIterable<AgentStreamEvent> {
-    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createResumedState(input);
     const requestCtx = this.createRequestContext(input);
+    const adapter = this.resolveEffectiveAdapter(input.cascade, requestCtx.observerNotifier);
 
     yield* this.streamToCompletion(
       adapter,
@@ -356,11 +383,11 @@ export class AgentExecutor {
    * Resumes an execution turn directly from an InFlightCheckpoint snapshot.
    */
   async resumeCheckpoint(input: AgentResumeCheckpointInput): Promise<AgentResult> {
-    const adapter = this.resolveEffectiveAdapter(input.cascade);
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createCheckpointState(input);
     const requestCtx = this.createRequestContext(input);
+    const adapter = this.resolveEffectiveAdapter(input.cascade, requestCtx.observerNotifier);
 
     return this.runToCompletion(
       adapter,
@@ -378,11 +405,11 @@ export class AgentExecutor {
   async *resumeCheckpointStream(
     input: AgentResumeCheckpointInput,
   ): AsyncIterable<AgentStreamEvent> {
-    const adapter = this.requireAdapter();
     const limits = this.resolveLimits(input.limits);
     const toolErrorHandling = input.toolErrorHandling ?? DEFAULT_TOOL_ERROR_HANDLING;
     const state = this.createCheckpointState(input);
     const requestCtx = this.createRequestContext(input);
+    const adapter = this.resolveEffectiveAdapter(input.cascade, requestCtx.observerNotifier);
 
     yield* this.streamToCompletion(
       adapter,

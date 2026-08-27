@@ -17,8 +17,12 @@ export interface ModelResilienceOptions {
   /** Omit to disable retrying. */
   retry?: Omit<RetryOptions, 'onRetry' | 'signal'>;
 
-  /** Omit to disable the breaker. */
-  circuitBreaker?: Omit<CircuitBreakerOptions, 'onStateChange'>;
+  /**
+   * Omit to disable the breaker. Pass an existing `CircuitBreaker` to share one
+   * across adapter instances, which is how long-lived state survives per-request
+   * wrappers.
+   */
+  circuitBreaker?: Omit<CircuitBreakerOptions, 'onStateChange'> | CircuitBreaker;
 }
 
 export interface ModelResilienceHooks {
@@ -53,11 +57,13 @@ export class ResilientModelAdapter implements ModelAdapter {
   ) {
     this.retryOptions = options.retry;
 
-    if (options.circuitBreaker) {
+    if (options.circuitBreaker instanceof CircuitBreaker) {
+      this.breaker = options.circuitBreaker;
+    } else if (options.circuitBreaker) {
       this.breaker = new CircuitBreaker(breakerName, {
         ...options.circuitBreaker,
         onStateChange: (event) => {
-          void this.hooks?.onCircuitStateChange?.(event);
+          void Promise.resolve(this.hooks?.onCircuitStateChange?.(event)).catch(() => undefined);
         },
       });
     }
@@ -80,7 +86,9 @@ export class ResilientModelAdapter implements ModelAdapter {
 
   stream?(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
     const inner = this.inner;
-    const guard = <T>(operation: () => Promise<T>) => this.guard(operation);
+    const breaker = this.breaker;
+    const guard = <T>(operation: () => Promise<T>, options?: { deferSuccess?: boolean }) =>
+      this.guard(operation, options);
     const withRetry = <T>(operation: () => Promise<T>) => this.withRetry(operation, request.signal);
 
     return {
@@ -88,26 +96,58 @@ export class ResilientModelAdapter implements ModelAdapter {
         // Retrying is only safe until the first chunk escapes, so an attempt
         // covers opening the stream and pulling its first chunk. Past that a
         // retry would duplicate emitted output, so failures propagate.
-        const opened = await guard(() =>
-          withRetry(async () => {
-            const iterator = inner.stream!(request)[Symbol.asyncIterator]();
-            const first = await iterator.next();
-            return { iterator, first };
-          }),
+        // Success is deferred to a full drain. Scoring the open as a success
+        // would reset the failure count, so a provider that always dies
+        // mid-stream could never trip the circuit.
+        const opened = await guard(
+          () =>
+            withRetry(async () => {
+              const iterator = inner.stream!(request)[Symbol.asyncIterator]();
+              const first = await iterator.next();
+              return { iterator, first };
+            }),
+          { deferSuccess: true },
         );
 
-        if (opened.first.done) return;
-        yield opened.first.value;
+        if (opened.first.done) {
+          breaker?.recordSuccess();
+          return;
+        }
 
-        for (let next = await opened.iterator.next(); !next.done; next = await opened.iterator.next()) {
-          yield next.value;
+        let settled = false;
+        try {
+          yield opened.first.value;
+
+          for (
+            let next = await opened.iterator.next();
+            !next.done;
+            next = await opened.iterator.next()
+          ) {
+            yield next.value;
+          }
+          settled = true;
+          breaker?.recordSuccess();
+        } catch (err) {
+          settled = true;
+          breaker?.recordFailure(err instanceof Error ? err.message : String(err));
+          throw err;
+        } finally {
+          if (!settled) {
+            // The caller abandoned the loop. Chunks did arrive, so the provider
+            // is healthy, but its stream still has to be closed.
+            breaker?.recordSuccess();
+            await opened.iterator.return?.();
+          }
         }
       },
     };
   }
 
-  private guard<T>(operation: () => Promise<T>): Promise<T> {
-    return this.breaker ? this.breaker.execute(operation) : operation();
+  private guard<T>(
+    operation: () => Promise<T>,
+    options?: { deferSuccess?: boolean },
+  ): Promise<T> {
+    return this.breaker ? this.breaker.execute(operation, options) : operation();
   }
 
   private withRetry<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -116,7 +156,13 @@ export class ResilientModelAdapter implements ModelAdapter {
     return retryWithBackoff(operation, {
       ...this.retryOptions,
       signal,
-      onRetry: (event) => this.hooks?.onRetry?.(event),
+      onRetry: async (event) => {
+        try {
+          await this.hooks?.onRetry?.(event);
+        } catch {
+          // Telemetry must not decide whether a retry proceeds.
+        }
+      },
     });
   }
 }

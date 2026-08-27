@@ -99,10 +99,21 @@ export async function runModelResilienceTests() {
     ['429 is retryable', err(429), true],
     ['400 is not retryable', err(400), false],
     ['401 is not retryable', err(401), false],
-    ['status-less network error is retryable', new Error('socket hang up'), true],
     ['AgenticError is never retried', new AgenticError('bad config'), false],
     ['AbortError is never retried', Object.assign(new Error('x'), { name: 'AbortError' }), false],
     ['statusCode is read as well as status', { statusCode: 502 }, true],
+    ['ECONNRESET is retryable', Object.assign(new Error('reset'), { code: 'ECONNRESET' }), true],
+    ['ETIMEDOUT is retryable', Object.assign(new Error('t/o'), { code: 'ETIMEDOUT' }), true],
+    ['SDK connection errors are retryable by name', { name: 'APIConnectionError' }, true],
+    [
+      'undici fetch failures are retryable through their cause',
+      Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('x'), { code: 'ECONNREFUSED' }),
+      }),
+      true,
+    ],
+    ['a bare status-less error is not retried', new Error('something went wrong'), false],
+    ['a programming error is not retried', new TypeError('x is not a function'), false],
   ];
   for (const [name, input, expected] of retryable) {
     assert(isRetryableModelError(input) === expected, name);
@@ -210,12 +221,90 @@ export async function runModelResilienceTests() {
   for (const [name, options] of [
     ['maxAttempts', { maxAttempts: 0 }],
     ['jitter', { jitter: 1.5 }],
+    ['initialDelayMs', { initialDelayMs: -1 }],
+    ['maxDelayMs', { maxDelayMs: Number.NaN }],
   ] as const) {
     let threw = false;
     await retryWithBackoff(async () => 'ok', options).catch((e) => {
       threw = e instanceof TypeError;
     });
     assert(threw, `rejects an out-of-range ${name}`);
+  }
+
+  {
+    const hookErrors = await recordDelays(1, {
+      maxAttempts: 2,
+      initialDelayMs: 1,
+      onRetry: () => {
+        throw new Error('telemetry exploded');
+      },
+    });
+    assert(
+      hookErrors.thrown === undefined && hookErrors.calls === 2,
+      'an onRetry hook that throws does not abort the retry',
+      `calls=${hookErrors.calls}`,
+    );
+  }
+
+  {
+    const controller = new AbortController();
+    const flaky = flakyAdapter(99);
+    let sleptFor = 0;
+    const outcome = await retryWithBackoff(() => flaky.adapter.generate(), {
+      maxAttempts: 5,
+      initialDelayMs: 10_000,
+      jitter: 0,
+      signal: controller.signal,
+      sleep: async (ms, signal) => {
+        sleptFor = ms;
+        controller.abort();
+        if (signal?.aborted) return;
+      },
+    }).catch((e: unknown) => e);
+
+    assert(
+      outcome instanceof Error && flaky.calls() === 1 && sleptFor === 10_000,
+      'aborting during backoff stops further attempts',
+      `calls=${flaky.calls()}`,
+    );
+  }
+
+  {
+    const controller = new AbortController();
+    controller.abort();
+    const flaky = flakyAdapter(0);
+    const outcome = await retryWithBackoff(() => flaky.adapter.generate(), {
+      signal: controller.signal,
+    }).catch((e: unknown) => e);
+
+    assert(
+      (outcome as Error).name === 'AbortError' && flaky.calls() === 0,
+      'a pre-aborted signal dispatches nothing',
+      `calls=${flaky.calls()}`,
+    );
+  }
+
+  {
+    const start = Date.now();
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    await retryWithBackoff(
+      (() => {
+        let calls = 0;
+        return async () => {
+          calls += 1;
+          if (calls === 1) throw err(503);
+          return 'ok';
+        };
+      })(),
+      { maxAttempts: 2, initialDelayMs: 5_000, jitter: 0, signal: controller.signal },
+    ).catch(() => undefined);
+
+    assert(
+      Date.now() - start < 1_000,
+      'the default sleep observes the abort signal instead of waiting out the delay',
+      `${Date.now() - start}ms`,
+    );
   }
 
   // -------------------------------------------------------------- circuit breaker
@@ -312,6 +401,62 @@ export async function runModelResilienceTests() {
     );
     await breaker.execute(async () => 'second');
     assert(breaker.currentState() === 'closed', 'closes after sustained recovery');
+  }
+
+  {
+    const breaker = new CircuitBreaker('provider', {
+      failureThreshold: 1,
+      onStateChange: () => {
+        throw new Error('listener exploded');
+      },
+    });
+
+    const caught = await breaker
+      .execute(async () => {
+        throw err(503);
+      })
+      .catch((e: unknown) => e);
+
+    assert(
+      (caught as { status?: number }).status === 503,
+      'a throwing listener does not replace the error that tripped the circuit',
+    );
+    assert(breaker.currentState() === 'open', 'a throwing listener does not corrupt breaker state');
+  }
+
+  {
+    let clock = 4_000_000;
+    const breaker = new CircuitBreaker('provider', {
+      failureThreshold: 1,
+      cooldownMs: 1_000,
+      now: () => clock,
+    });
+
+    breaker.recordFailure();
+    clock += 1_000;
+
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const probe = () =>
+      breaker.execute(async () => {
+        started += 1;
+        await gate;
+        return 'ok';
+      });
+
+    const first = probe();
+    const second = await probe().catch((e: unknown) => e);
+    release();
+    await first;
+
+    assert(started === 1, 'half-open admits exactly one probe', `started=${started}`);
+    assert(
+      second instanceof CircuitOpenError,
+      'a concurrent probe is rejected while one is in flight',
+    );
   }
 
   for (const field of ['failureThreshold', 'cooldownMs', 'successThreshold'] as const) {
@@ -447,6 +592,85 @@ export async function runModelResilienceTests() {
       caught !== undefined && attempts === 1 && tokens.join('') === 'partial',
       'a failure after the first chunk propagates instead of duplicating output',
       `attempts=${attempts} tokens=${tokens.join('')}`,
+    );
+  }
+
+  {
+    const adapter: ModelAdapter = {
+      async generate() {
+        return response('unused');
+      },
+      async *stream(): AsyncIterable<ModelStreamChunk> {
+        yield { type: 'token', text: 'partial' };
+        throw err(503);
+      },
+    };
+
+    const resilient = new ResilientModelAdapter(adapter, {
+      circuitBreaker: { failureThreshold: 2, cooldownMs: 60_000 },
+    });
+
+    for (let i = 0; i < 2; i++) {
+      try {
+        for await (const _ of resilient.stream!(request)) {
+          // drain until it throws
+        }
+      } catch {
+        // expected
+      }
+    }
+
+    assert(
+      resilient.circuitState() === 'open',
+      'mid-stream failures count toward the circuit threshold',
+      String(resilient.circuitState()),
+    );
+  }
+
+  {
+    let returned = false;
+    const adapter: ModelAdapter = {
+      async generate() {
+        return response('unused');
+      },
+      stream() {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                return { done: false, value: { type: 'token', text: 'x' } as ModelStreamChunk };
+              },
+              async return() {
+                returned = true;
+                return { done: true, value: undefined };
+              },
+            } as AsyncIterator<ModelStreamChunk>;
+          },
+        };
+      },
+    };
+
+    const resilient = new ResilientModelAdapter(adapter, { retry: fastRetry });
+    for await (const _ of resilient.stream!(request)) {
+      break;
+    }
+
+    assert(returned, 'abandoning the stream closes the provider iterator');
+  }
+
+  {
+    const shared = new CircuitBreaker('shared', { failureThreshold: 2, cooldownMs: 60_000 });
+    const failing = flakyAdapter(Number.POSITIVE_INFINITY);
+
+    for (let i = 0; i < 2; i++) {
+      const perRequest = new ResilientModelAdapter(failing.adapter, { circuitBreaker: shared });
+      await perRequest.generate(request).catch(() => undefined);
+    }
+
+    assert(
+      shared.currentState() === 'open',
+      'a shared breaker accumulates state across per-request wrappers',
+      String(shared.currentState()),
     );
   }
 
