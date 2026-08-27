@@ -121,7 +121,16 @@ export class AppModule {}
 
 If your authorizer needs its own injected dependencies, construct it in a factory module and pass the instance here, the same way `approvalStore` and `auditSinks` are supplied.
 
-The check runs **before** the approval is claimed, so a refused attempt raises `ApprovalNotAuthorizedError` and leaves the approval pending for a properly authorized reviewer — an unauthorized caller cannot destroy a pending decision. Every refusal is recorded as an `approval_settlement_denied` audit event, so repeated attempts on one approval are visible.
+The check runs **before** the approval is claimed, so a refused attempt raises `ApprovalNotAuthorizedError` and leaves the approval pending for a properly authorized reviewer — an unauthorized caller cannot destroy a pending decision.
+
+Each refusal is recorded as an `approval_settlement_denied` audit event, which makes repeated attempts on one approval visible — but only when auditing is configured. Auditing is opt-in: with no sink registered, `AuditTrail` records nothing. Register at least one to keep the trail:
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  auditSinks: [new ConsoleAuditSink()],
+});
+```
 
 ### The `actor` is not authenticated by the framework
 
@@ -163,7 +172,7 @@ Both checks fail closed on an unknown tenant, in opposite directions — an unpr
 
 ### Failing closed
 
-Both checks above are opt-in, and with no authorizer registered any caller holding an approval ID can settle it — the pre-existing behavior, kept for backward compatibility. To require an authorization boundary instead, enable strict mode:
+Both checks above are opt-in. Without an authorizer, a caller holding an approval ID can settle it as long as every *enabled* governance check passes — with none enabled, that is the pre-existing behavior, kept for backward compatibility. To require an authorization boundary instead, enable strict mode:
 
 ```typescript
 approvals: { requireAuthorizer: true }
