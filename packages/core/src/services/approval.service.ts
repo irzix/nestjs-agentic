@@ -16,6 +16,7 @@ import type {
 } from '../interfaces';
 import type { AgentResult } from '../interfaces';
 import type { ToolExecutionResult } from '../interfaces';
+import { canonicalize } from '../audit/hash-chain-audit.sink';
 import { AgentRunner, type AgenticModuleOptions } from './agent-runner.service';
 import { AuditTrail } from './audit-trail.service';
 
@@ -246,10 +247,32 @@ export class ApprovalService {
     // between the authorization read and the claim would otherwise have its new
     // version settled against a decision made about the old one.
     if (authorizedFingerprint !== undefined && fingerprint(claimed) !== authorizedFingerprint) {
-      throw new ApprovalNotAuthorizedError(
+      const reason =
+        'the approval changed between authorization and claim, so the decision no longer applies to it';
+
+      // The claim already removed it, so restore the version that was actually
+      // stored: a refused settlement must never destroy a pending decision.
+      // Restoration is best-effort — if it fails, the refusal still stands, and
+      // the audit event below is the record that the approval was lost.
+      let restored = true;
+      try {
+        await this.store.save(claimed);
+      } catch {
+        restored = false;
+      }
+
+      await this.audit?.record({
+        ...auditEnvelope(claimed.context),
+        type: 'approval_settlement_denied',
         approvalId,
-        'the approval changed between authorization and claim, so the decision no longer applies to it',
-      );
+        agentName: claimed.agentName,
+        toolName: claimed.toolName,
+        outcome,
+        reason: restored ? reason : `${reason} (and could not be restored to the store)`,
+        actor: options?.actor,
+      });
+
+      throw new ApprovalNotAuthorizedError(approvalId, reason);
     }
 
     if (claimed.expiresAt && Date.now() > new Date(claimed.expiresAt).getTime()) {
@@ -306,17 +329,14 @@ export class ApprovalService {
 
 /**
  * Identifies the version of an approval that an authorization decision was made
- * about, covering every field the governance checks read.
+ * about.
+ *
+ * Covers the whole record rather than the fields the built-in checks happen to
+ * read, since a custom `ApprovalAuthorizer` may base its decision on any of them
+ * — `reason`, `context.security.roles`, `expiresAt`. Canonical serialization
+ * makes the comparison independent of key order and of a store round-trip that
+ * revives dates.
  */
 function fingerprint(approval: PendingApproval): string {
-  return JSON.stringify([
-    approval.id,
-    approval.agentName,
-    approval.toolName,
-    approval.requestedBy?.userId ?? null,
-    approval.requestedBy?.tenantId ?? null,
-    approval.context.security.userId ?? null,
-    approval.context.security.tenantId ?? null,
-    approval.args,
-  ]);
+  return canonicalize(approval);
 }

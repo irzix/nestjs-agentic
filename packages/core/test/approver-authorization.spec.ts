@@ -628,10 +628,13 @@ export async function runApproverAuthorizationTests() {
     };
 
     let settleCalls = 0;
+    let restoredAfterRefusal: PendingApproval | undefined;
     // A store that mutates the record in place: `get()` returns the version the
     // authorizer sees, `claim()` returns a different one.
     const racingStore = {
-      async save() {},
+      async save(approval: PendingApproval) {
+        restoredAfterRefusal = approval;
+      },
       async get() {
         return approved;
       },
@@ -647,10 +650,11 @@ export async function runApproverAuthorizationTests() {
       },
     };
 
+    const raceAuditSink = new InMemoryAuditSink();
     const service = new ApprovalService(
       racingStore,
       stubRunner as unknown as AgentRunner,
-      undefined,
+      new AuditTrail([raceAuditSink]),
       { canSettle: () => true },
       { defaultModel: { provider: 'mock', model: 'deterministic' } },
     );
@@ -671,6 +675,17 @@ export async function runApproverAuthorizationTests() {
       'Test 16b: the refusal explains the stale-authorization cause',
     );
     assert(settleCalls === 0, 'Test 16c: the withheld tool is never settled against the swapped record');
+    assert(
+      restoredAfterRefusal !== undefined,
+      'Test 16c2: the claimed approval is restored to the store, so a refusal does not destroy a pending decision',
+    );
+    assert(
+      Number((restoredAfterRefusal?.args as { amount?: number })?.amount) === 999_999,
+      'Test 16c3: the version actually present in the store is what gets restored',
+    );
+
+    const raceDenials = raceAuditSink.ofType('approval_settlement_denied');
+    assert(raceDenials.length === 1, 'Test 16c4: the stale-authorization refusal is recorded on the audit trail');
 
     // An unchanged record still settles normally through the same path.
     const stableStore = { ...racingStore, async claim() { return approved; } };

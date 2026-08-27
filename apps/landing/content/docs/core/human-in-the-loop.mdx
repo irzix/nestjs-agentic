@@ -128,6 +128,16 @@ approvalAuthorizer: {
 }
 ```
 
+The factory runs inside `AgenticModule`, so each `inject` token must be resolvable **from that module's scope** — a provider declared only in your `AppModule` is not. Export it from a `@Global()` module (or one `AgenticModule` can see) before injecting it:
+
+```typescript
+@Global()
+@Module({ providers: [UserDirectory], exports: [UserDirectory] })
+export class IdentityModule {}
+```
+
+The same applies to `useClass`: the authorizer's own constructor dependencies are resolved in `AgenticModule`'s scope. If wiring it that way is awkward, construct the authorizer yourself in your module and pass the instance instead — it is the one form with no scope requirement.
+
 A bare instance (`approvalAuthorizer: new MaintainerOnlyAuthorizer()`) is also accepted, but it is constructed outside the container — use it only for an authorizer that needs nothing injected.
 
 The check runs **before** the approval is claimed, so a refused attempt raises `ApprovalNotAuthorizedError` and leaves the approval pending for a properly authorized reviewer — an unauthorized caller cannot destroy a pending decision.
