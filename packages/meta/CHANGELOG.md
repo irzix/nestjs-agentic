@@ -1,5 +1,12 @@
 # nestjs-agentic
 
+## 1.4.0
+
+### Patch Changes
+
+- Updated dependencies [482d6d6]
+  - @nestjs-agentic/core@1.4.0
+
 ## 1.3.0
 
 ### Patch Changes

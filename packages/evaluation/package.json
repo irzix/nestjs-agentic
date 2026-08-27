@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/evaluation",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Automated agent benchmarking, trajectory scoring, and LLM-as-a-Judge evaluation framework for nestjs-agentic.",
   "repository": {
     "type": "git",
@@ -20,7 +20,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@nestjs-agentic/core": "^1.3.0"
+    "@nestjs-agentic/core": "^1.4.0"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",
