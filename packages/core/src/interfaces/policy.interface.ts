@@ -9,7 +9,17 @@ import type { Provenance } from './provenance.interface';
  */
 export type PolicyResult =
   | { decision: 'allow' }
-  | { decision: 'deny'; reason: string }
+  | {
+      decision: 'deny';
+      reason: string;
+      /**
+       * Seconds after which the call could succeed, when the denial is transient —
+       * a rate limit rather than a permanent refusal. Recorded on the audit trail
+       * so operators can see back-off pressure; the same figure is included in
+       * `reason`, which is what reaches the model.
+       */
+      retryAfterSeconds?: number;
+    }
   | {
       decision: 'require_approval';
       reason: string;

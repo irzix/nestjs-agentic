@@ -18,6 +18,14 @@ export type {
   ApprovalStoreContractOptions,
   ApprovalStoreContractResult,
 } from './approval-store-contract';
+export {
+  CONTRACT_RATE_LIMITED_TOOL,
+  runRateLimiterContract,
+} from './rate-limiter-contract';
+export type {
+  RateLimiterContractOptions,
+  RateLimiterContractResult,
+} from './rate-limiter-contract';
 export { runSessionStoreContract } from './session-store-contract';
 export type {
   SessionStoreContractOptions,

@@ -73,9 +73,18 @@ export class RateLimitPolicy implements ToolPolicy {
       // Keep the pruned (but still-full) window even on denial, so a
       // caller retrying immediately doesn't re-grow a stale array.
       RateLimitPolicy.history.set(key, timestamps);
+
+      // A slot frees up once the oldest call in the window ages out. Never
+      // below 1s, so the hint can't invite an immediate guaranteed-denied retry.
+      const oldest = timestamps[0] ?? now;
+      const retryAfterSeconds = Math.max(1, Math.ceil((oldest + this.windowMs - now) / 1000));
+
       return {
         decision: 'deny',
-        reason: `Rate limit exceeded for tool "${toolName}". Max allowed: ${this.maxCalls} calls per minute.`,
+        reason:
+          `Rate limit exceeded for tool "${toolName}". Max allowed: ${this.maxCalls} calls ` +
+          `per minute. Retry after ${retryAfterSeconds}s.`,
+        retryAfterSeconds,
       };
     }
 

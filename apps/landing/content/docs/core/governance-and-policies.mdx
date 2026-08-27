@@ -186,3 +186,68 @@ The shared traversal has an explicit supported boundary rather than best-effort 
 Detection inside unrewritable values covers symbol-keyed properties (via `Reflect.ownKeys`) and `toJSON()` output, so data held in internal slots — a `URL`'s query string, for example — can't bypass inspection. Getters are not invoked during inspection. Prototype-polluting keys (`__proto__`, `prototype`, `constructor`) are dropped, which itself counts as a redaction so the sanitized clone is always what's returned.
 
 If a tool needs its output redacted rather than denied, return plain JSON-compatible data from it.
+
+---
+
+## Rate Limiting
+
+Two rate-limit policies ship, differing only in where the window lives:
+
+| | `RateLimitPolicy` | `DistributedRateLimitPolicy` |
+|---|---|---|
+| State | process-local map | Redis sorted set |
+| Across N instances | N × the limit | one combined limit |
+| Survives restart | no | yes |
+| Requires | nothing | a Redis client with `eval` |
+
+`RateLimitPolicy` is fine for a single instance or for coarse protection. Anything horizontally scaled needs the distributed one, because N pods each enforcing the configured limit independently means a caller gets N times their allowance:
+
+```typescript
+import { DistributedRateLimitPolicy } from '@nestjs-agentic/core';
+
+@Tool({ name: 'send_invoice' })
+@UsePolicies(new DistributedRateLimitPolicy({
+  client: redis,
+  maxCallsPerWindow: 5,
+  windowMs: 60_000,
+}))
+async sendInvoice() { ... }
+```
+
+Windows are keyed per tenant, user, and tool, so exhausting one caller's allowance leaves everyone else unaffected.
+
+### Why it needs `eval`
+
+The limiter evicts expired timestamps, counts what remains, and admits the call in a **single Lua script**. That is not an optimization — it is the correctness requirement. Splitting it into read-then-write lets two concurrent callers both observe room for one more call and both take it, which is precisely the leak the policy exists to close. A client without `eval` is rejected at construction rather than silently degraded to a racy path.
+
+Each window key carries a `PEXPIRE` matching the window length, so keys for callers who stop calling expire on their own instead of accumulating.
+
+### Backing off
+
+A denial reports when a slot frees up, computed from the oldest call still inside the window rather than assuming a full window:
+
+```typescript
+const result = await policy.evaluate(ctx, 'send_invoice', {});
+if (result.decision === 'deny') {
+  result.retryAfterSeconds; // e.g. 20
+}
+```
+
+The same figure is included in `reason`, which is what reaches the model, and recorded on the `tool_policy_decision` audit event so operators can see back-off pressure. It is never below `1`, so it cannot invite an immediate retry that is guaranteed to be denied again.
+
+### Verifying a custom limiter
+
+`runRateLimiterContract` checks any rate-limit policy, including a third-party one:
+
+```typescript
+import { runRateLimiterContract } from '@nestjs-agentic/core';
+
+const result = await runRateLimiterContract({
+  name: 'MyLimiter',
+  maxCalls: 3,
+  createLimiter: () => new MyLimiter({ client: redis, maxCallsPerWindow: 3 }),
+  reset: () => redis.flushall(),
+});
+```
+
+Two of its groups create *two* limiters over the same backend and assert they share one allowance — including a race for the final slot. Set `enforcesCombinedLimit: false` for a deliberately process-local limiter and those groups are skipped rather than reported as failures.

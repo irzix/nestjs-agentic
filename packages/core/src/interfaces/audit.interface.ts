@@ -45,6 +45,8 @@ export interface ToolPolicyDecisionAuditEvent extends AuditEventBase {
   reason?: string;
   /** Set when the decision created a pending approval. */
   approvalId?: string;
+  /** Set when a `deny` is transient, e.g. a rate limit, and reports when to retry. */
+  retryAfterSeconds?: number;
   /** Present only when `audit.includeArgs` is enabled, with sensitive fields masked. */
   args?: Record<string, unknown>;
 }
