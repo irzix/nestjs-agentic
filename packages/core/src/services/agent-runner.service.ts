@@ -61,6 +61,7 @@ import { trimHistory, withoutSystemMessages } from '../utils/session-history';
 import { scopeKey } from '../utils/scope-key';
 import type { ModelAdapter, ModelMessage, ModelUsage } from '../interfaces/model.interface';
 import { ObserverNotifier } from '../observers/observer-notifier';
+import type { ModelResilienceOptions } from '../adapters/resilient-model.adapter';
 
 import { STATE_STORE, type StateStore } from '../interfaces/state-store.interface';
 import { AgentExecutor } from './agent-executor.service';
@@ -106,6 +107,12 @@ export interface AgenticModuleOptions {
    * `AuditSink` is registered through the `AUDIT_SINKS` token.
    */
   audit?: AuditOptions;
+  /**
+   * Retry-with-backoff and circuit-breaker behavior for model calls, applied on
+   * top of whatever retrying an adapter's own SDK performs. Unset leaves model
+   * calls unwrapped.
+   */
+  resilience?: ModelResilienceOptions;
   /**
    * Destinations for audit events. Equivalent to providing the `AUDIT_SINKS`
    * token directly. Auditing is opt-in: with no sink the framework records

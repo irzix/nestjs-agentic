@@ -41,6 +41,9 @@ import type { Provenance } from '../interfaces/provenance.interface';
 import { validateToolArgs } from '../utils/tool-args.validator';
 import type { AgentObserver } from '../interfaces/observer.interface';
 import { ObserverNotifier } from '../observers/observer-notifier';
+import { AGENT_OBSERVERS, AGENTIC_OPTIONS } from '../constants';
+import { ResilientModelAdapter } from '../adapters/resilient-model.adapter';
+import type { AgenticModuleOptions } from './agent-runner.service';
 
 /** Input for one governed agent turn executed by the framework runtime. */
 export interface AgentExecutionInput {
@@ -183,8 +186,13 @@ interface ExecutionState {
  */
 @Injectable()
 export class AgentExecutor {
+  private resilientAdapter?: ModelAdapter;
+  private resilienceNotifier?: ObserverNotifier;
+
   constructor(
     @Optional() @Inject(MODEL_ADAPTER) private readonly modelAdapter?: ModelAdapter,
+    @Optional() @Inject(AGENTIC_OPTIONS) private readonly options?: AgenticModuleOptions,
+    @Optional() @Inject(AGENT_OBSERVERS) private readonly injectedObservers?: AgentObserver[],
   ) {}
 
   /** Whether a ModelAdapter is registered and the built-in runtime can be used. */
@@ -193,11 +201,50 @@ export class AgentExecutor {
   }
 
   private resolveEffectiveAdapter(cascade?: CascadeConfig): ModelAdapter {
-    const baseAdapter = this.requireAdapter();
+    // Resilience wraps the base adapter rather than the cascade, so a retry
+    // re-attempts the failing tier instead of replaying the whole cascade and
+    // paying for its cheaper tiers again.
+    const baseAdapter = this.withResilience(this.requireAdapter());
     if (cascade) {
       return new ModelCascadeAdapter(baseAdapter, cascade);
     }
     return baseAdapter;
+  }
+
+  /**
+   * Wraps the adapter once and reuses it, so circuit-breaker state accumulates
+   * across requests instead of resetting on every turn.
+   */
+  private withResilience(adapter: ModelAdapter): ModelAdapter {
+    const resilience = this.options?.resilience;
+    if (!resilience?.retry && !resilience?.circuitBreaker) return adapter;
+
+    if (!this.resilientAdapter) {
+      this.resilienceNotifier ??= new ObserverNotifier(this.injectedObservers ?? []);
+      const notifier = this.resilienceNotifier;
+
+      this.resilientAdapter = new ResilientModelAdapter(adapter, resilience, {
+        onRetry: (event) =>
+          notifier.notifyModelRetry({
+            attempt: event.attempt,
+            maxAttempts: event.maxAttempts,
+            delayMs: event.delayMs,
+            error: event.error,
+            timestamp: new Date(),
+          }),
+        onCircuitStateChange: (event) =>
+          notifier.notifyCircuitStateChange({
+            circuitName: event.name,
+            from: event.from,
+            to: event.to,
+            failures: event.failures,
+            reason: event.reason,
+            timestamp: event.at,
+          }),
+      });
+    }
+
+    return this.resilientAdapter;
   }
 
   private createRequestContext(
