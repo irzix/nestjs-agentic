@@ -103,6 +103,27 @@ export interface ApprovalSettlementFailedAuditEvent extends AuditEventBase {
 }
 
 /**
+ * A settlement attempt was refused before the approval was claimed, either by a
+ * registered `ApprovalAuthorizer` or by the separation-of-duties check.
+ *
+ * The approval remains pending, so this records an attempt rather than a
+ * terminal state — repeated entries for one approval are the signal that
+ * someone is trying to resolve a decision they are not entitled to.
+ */
+export interface ApprovalSettlementDeniedAuditEvent extends AuditEventBase {
+  type: 'approval_settlement_denied';
+  approvalId: string;
+  agentName: string;
+  toolName: string;
+  /** Intended outcome of the refused attempt. */
+  outcome: 'approved' | 'rejected';
+  /** Why the attempt was refused. */
+  reason: string;
+  /** Who attempted the decision, when the application supplied it. */
+  actor?: AuditActor;
+}
+
+/**
  * A governed tool call's output crossed the output policy boundary (Output Rail).
  */
 export interface ToolOutputPolicyDecisionAuditEvent extends AuditEventBase {
@@ -123,7 +144,8 @@ export type AuditEvent =
   | ApprovalRequestedAuditEvent
   | ApprovalSettledAuditEvent
   | ApprovalExpiredAuditEvent
-  | ApprovalSettlementFailedAuditEvent;
+  | ApprovalSettlementFailedAuditEvent
+  | ApprovalSettlementDeniedAuditEvent;
 
 /**
  * Destination for audit events.

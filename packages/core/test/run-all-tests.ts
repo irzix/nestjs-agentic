@@ -21,6 +21,7 @@ import { runPromptInjectionSanitizerTests } from './prompt-injection-sanitizer.s
 import { runPiiRedactionTests } from './pii-redaction.spec';
 import { runRedactionTraversalTests } from './redaction-traversal.spec';
 import { runTamperEvidentAuditTests } from './tamper-evident-audit.spec';
+import { runApproverAuthorizationTests } from './approver-authorization.spec';
 
 async function runAllCoreTests() {
   console.log('====================================================');
@@ -51,9 +52,10 @@ async function runAllCoreTests() {
     await runPiiRedactionTests();
     await runRedactionTraversalTests();
     await runTamperEvidentAuditTests();
+    await runApproverAuthorizationTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 23 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 24 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

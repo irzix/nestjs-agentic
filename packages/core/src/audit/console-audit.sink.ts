@@ -24,6 +24,18 @@ export class ConsoleAuditSink implements AuditSink {
   }
 }
 
+/**
+ * Strips control characters so an application-supplied actor label or a policy's
+ * refusal reason cannot forge extra log lines or corrupt terminal output. Only
+ * the formatted text is sanitized; the structured `event` is passed through
+ * untouched for machine-readable sinks.
+ */
+function oneLine(value: string, maxLength = 200): string {
+  /* eslint-disable-next-line no-control-regex */
+  const flattened = value.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').trim();
+  return flattened.length > maxLength ? `${flattened.slice(0, maxLength)}…` : flattened;
+}
+
 /** Builds a short, greppable description of the decision. */
 function summarize(event: AuditEvent): string {
   switch (event.type) {
@@ -40,10 +52,14 @@ function summarize(event: AuditEvent): string {
     case 'approval_expired':
       return `${event.toolName} approval ${event.approvalId} expired at ${event.expiredAt.toISOString()}`;
     case 'approval_settlement_failed':
-      return `${event.toolName} approval ${event.approvalId} failed after claim: ${event.error}`;
+      return `${event.toolName} approval ${event.approvalId} failed after claim: ${oneLine(event.error)}`;
+    case 'approval_settlement_denied':
+      return `${event.toolName} approval ${event.approvalId} ${event.outcome} attempt refused${
+        event.actor ? ` for ${describeActor(event.actor)}` : ''
+      }: ${oneLine(event.reason)}`;
   }
 }
 
 function describeActor(actor: { userId?: string; label?: string }): string {
-  return actor.userId ?? actor.label ?? 'unknown actor';
+  return oneLine(actor.userId ?? actor.label ?? 'unknown actor', 64);
 }

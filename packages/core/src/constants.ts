@@ -42,6 +42,14 @@ export const AGENT_OBSERVERS = Symbol('AGENT_OBSERVERS');
 export const AUDIT_SINKS = Symbol('AUDIT_SINKS');
 
 /**
+ * Injection token for an optional ApprovalAuthorizer, consulted before a
+ * pending approval is claimed. Without one, any caller holding a valid approval
+ * ID can settle it.
+ * @example { provide: APPROVAL_AUTHORIZER, useClass: MaintainerOnlyAuthorizer }
+ */
+export const APPROVAL_AUTHORIZER = Symbol('APPROVAL_AUTHORIZER');
+
+/**
  * Multi-provider token for all registered ToolPolicy instances.
  * Populated automatically by AgenticModule.forFeature() for each policy
  * listed in the `policies` array. LocalToolProvider uses this to build

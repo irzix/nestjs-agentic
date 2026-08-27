@@ -83,3 +83,118 @@ export class ApprovalsController {
   }
 }
 ```
+
+---
+
+## Approver Authorization
+
+By default the framework records *who* settled an approval but does not enforce that they were entitled to. Supply an `ApprovalAuthorizer` to gate settlement:
+
+```typescript
+import type { ApprovalAuthorizer, AuditActor, PendingApproval } from '@nestjs-agentic/core';
+
+class MaintainerOnlyAuthorizer implements ApprovalAuthorizer {
+  async canSettle(approval: PendingApproval, actor?: AuditActor) {
+    if (!actor?.roles?.includes('finance_officer')) {
+      return { allowed: false, reason: 'approver lacks finance_officer entitlement' };
+    }
+    return true;
+  }
+}
+
+```
+
+Register it through `forRoot`. `ApprovalService` is instantiated inside `AgenticModule`, so a provider declared in your own module's `providers` array is **not** visible to it — pass the authorizer as an option instead. Use `useClass` so Nest constructs it and its own dependencies are injected normally:
+
+```typescript
+@Module({
+  imports: [
+    AgenticModule.forRoot({
+      defaultModel: { provider: 'openai', model: 'gpt-4o' },
+      approvalAuthorizer: { useClass: MaintainerOnlyAuthorizer },
+      approvals: { enforceSeparationOfDuties: true, enforceTenantIsolation: true },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+`useFactory` is available when the authorizer needs explicit wiring:
+
+```typescript
+approvalAuthorizer: {
+  useFactory: (users: UserDirectory) => new MaintainerOnlyAuthorizer(users),
+  inject: [UserDirectory],
+}
+```
+
+The factory runs inside `AgenticModule`, so each `inject` token must be resolvable **from that module's scope** — a provider declared only in your `AppModule` is not. Export it from a `@Global()` module (or one `AgenticModule` can see) before injecting it:
+
+```typescript
+@Global()
+@Module({ providers: [UserDirectory], exports: [UserDirectory] })
+export class IdentityModule {}
+```
+
+The same applies to `useClass`: the authorizer's own constructor dependencies are resolved in `AgenticModule`'s scope. If wiring it that way is awkward, construct the authorizer yourself in your module and pass the instance instead — it is the one form with no scope requirement.
+
+A bare instance (`approvalAuthorizer: new MaintainerOnlyAuthorizer()`) is also accepted, but it is constructed outside the container — use it only for an authorizer that needs nothing injected.
+
+The check runs **before** the approval is claimed, so a refused attempt raises `ApprovalNotAuthorizedError` and leaves the approval pending for a properly authorized reviewer — an unauthorized caller cannot destroy a pending decision.
+
+Each refusal is recorded as an `approval_settlement_denied` audit event, which makes repeated attempts on one approval visible — but only when auditing is configured. Auditing is opt-in: with no sink registered, `AuditTrail` records nothing. Register at least one to keep the trail:
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  auditSinks: [new ConsoleAuditSink()],
+});
+```
+
+### The `actor` is not authenticated by the framework
+
+`ApprovalService` is a service, not an HTTP boundary — it has no request context and cannot verify identity. Whatever your code passes as `actor` is taken at face value by the authorizer, separation-of-duties, and tenant checks.
+
+Derive it from an already-authenticated principal, typically in a NestJS guard:
+
+```typescript
+@Post('approvals/:id/approve')
+@UseGuards(JwtAuthGuard)
+async approve(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+  // From the verified token — never from the request body.
+  return this.approvals.approve(id, {
+    actor: { userId: req.user.sub, tenantId: req.user.tenantId, roles: req.user.roles },
+  });
+}
+```
+
+Passing client-supplied values here would let a caller claim any identity and defeat every check below.
+
+### Separation of duties
+
+Enable `approvals.enforceSeparationOfDuties` to stop the identity that triggered an action from also approving it. The requester is captured on the approval as `requestedBy` at creation.
+
+Matching `userId`s are treated as a conflict **unless the two tenants are provably different** — an `admin` in two different tenants is two different people, but an unknown tenant on either side is not proof of that. A settlement is only refused when both `userId`s are known and equal; a missing `userId` cannot be shown to be the same person, so it is not treated as a violation.
+
+### Tenant isolation
+
+In a multi-tenant deployment, enable `approvals.enforceTenantIsolation` so a leaked approval ID cannot be settled from another tenant:
+
+```typescript
+approvals: { enforceTenantIsolation: true }
+```
+
+Both checks fail closed on an unknown tenant, in opposite directions — an unproven match is never read as permission, and an unproven difference is never read as separation:
+
+- **Tenant isolation** refuses when the approver's `tenantId` differs from the approval's, when the approver supplies none, or when the *approval itself* carries none (an untenanted approval cannot be shown to belong to the caller's tenant).
+- **Separation of duties** clears a matching `userId` only when the two tenants are *provably different*. If either side's tenant is unknown, a matching `userId` is still treated as the same person.
+
+### Failing closed
+
+Both checks above are opt-in. Without an authorizer, a caller holding an approval ID can settle it as long as every *enabled* governance check passes — with none enabled, that is the pre-existing behavior, kept for backward compatibility. To require an authorization boundary instead, enable strict mode:
+
+```typescript
+approvals: { requireAuthorizer: true }
+```
+
+Every settlement is then refused unless an `ApprovalAuthorizer` is registered, so a misconfigured deployment fails closed rather than silently ungoverned.
