@@ -1,5 +1,35 @@
 # @nestjs-agentic/core
 
+## 1.4.0
+
+### Minor Changes
+
+- d0045d5: Add a provider-agnostic message reducer (context projector) that bounds tool-loop context growth. The executor keeps one append-only transcript per turn and re-sends it in full every round, so intermediate tool observations are billed again on every later request even inside the allowed loop. A reducer projects a bounded view for the model while leaving the canonical transcript, checkpoints, and approval resume unchanged.
+
+  Configure through `AgenticModule.forRoot({ messageReducer })`, override per agent via `AgentConfig.messageReducer`, or per run via `RunInput.messageReducer`, resolved with the same precedence as limits. Unset is identity behavior, so existing runs are unchanged. The projection is applied consistently across `execute`, `stream`, `resume`, `resumeStream`, and checkpoint-resume, and runs before `onModelRequest`, so observers see the exact messages the adapter receives.
+
+  - `AgentMessageReducer`, `AgentMessageReductionContext` — the reduction contract, invoked once per model round.
+  - `BoundedToolHistoryReducer` — a deterministic reducer that keeps the last N complete tool groups verbatim and folds older ones into a compact run-state message, with no extra LLM summarization call. It always preserves the active pending-approval group.
+  - `validateReduction`, `fingerprintTranscript` — validate a projection against the tool protocol (no orphan tool result, no split group, pending-approval group preserved, no input mutation), exported so custom reducers can self-check.
+  - `MessageReducerContractError` — raised when a reducer returns a projection a provider would reject, rather than sending it.
+
+  Closes #185.
+
+- 482d6d6: Add `DistributedRateLimitPolicy`, a sliding-window rate limiter enforced across every instance sharing one Redis, closing the gap where N pods each admitted the configured limit independently. Evict, count, and admit happen in a single Lua `EVAL`, so concurrent callers cannot both take the last slot; a client without `eval` is rejected at construction rather than silently degraded to a racy read-then-write. Each window key carries a `PEXPIRE` matching the window, so idle callers' keys expire on their own.
+
+  Denials now report back-off timing. `PolicyResult`'s `deny` variant gains an optional `retryAfterSeconds`, computed from the oldest call still inside the window rather than assuming a full window, surfaced in the reason text the model sees and recorded on the `tool_policy_decision` audit event. `RateLimitPolicy` reports it too.
+
+  Adds `runRateLimiterContract` to `@nestjs-agentic/core`'s testing exports — a behavioral contract for any rate-limit policy, whose combined-limit groups create two limiters over one backend and assert they share a single allowance, including a race for the final slot. Closes #142.
+
+- 56ca269: Add framework-level resilience for model calls: retry with exponential backoff and jitter, plus a circuit breaker that fails fast during a provider outage.
+
+  Configure through `AgenticModule.forRoot({ resilience: { retry, circuitBreaker } })`. Both are opt-in and leave model calls unwrapped when unset, so existing behavior is unchanged.
+
+  - `retryWithBackoff`, `isRetryableModelError`, `readRetryAfterMs` — retry primitives. Retries `429`/`5xx` and recognized transport faults, never `AgenticError`, aborts, or programming errors, and honors a provider's `Retry-After` hint over the computed delay. Backoff is interrupted by an `AbortSignal`.
+  - `CircuitBreaker`, `CircuitOpenError` — closed/open/half-open breaker with a configurable failure threshold, cooldown, and success threshold.
+  - `ResilientModelAdapter` — composes both around any `ModelAdapter`. The breaker sits outside the retry, so exhausted retries count as a single failure. Streams are retried only before the first chunk is emitted.
+  - New observer hooks `onModelRetry` and `onCircuitStateChange` on `AgentObserver`.
+
 ## 1.3.0
 
 ### Minor Changes
