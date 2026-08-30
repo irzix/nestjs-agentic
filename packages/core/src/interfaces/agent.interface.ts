@@ -1,6 +1,7 @@
 import type { ExecutionLimits, ToolErrorHandling } from './execution.interface';
 import type { ModelConfig } from './runtime.interface';
 import type { CascadeConfig } from './cascade.interface';
+import type { AgentMessageReducer } from './message-reducer.interface';
 
 export interface AgentConfig {
   instructions: string;
@@ -26,6 +27,13 @@ export interface AgentConfig {
    * Overrides the module setting and can be overridden per run.
    */
   toolErrorHandling?: ToolErrorHandling;
+  /**
+   * Bounded projection applied to the transcript before each model round for
+   * this agent's turns. Overrides the module default and can be overridden per
+   * run. Shapes only what the model sees; the persisted transcript, checkpoints,
+   * and approval resume stay unreduced.
+   */
+  messageReducer?: AgentMessageReducer;
 }
 
 export interface AgentProvider {

@@ -185,6 +185,22 @@ export class CheckpointNotFoundError extends AgenticError {
 }
 
 /**
+ * Raised when a configured `AgentMessageReducer` returns a projection that
+ * violates the tool protocol — an orphan `role: "tool"` message, an assistant
+ * tool-call group missing one of its results, a dropped pending-approval group,
+ * or a mutation of the input transcript.
+ *
+ * This is a bug in the reducer rather than a recoverable tool failure, so the
+ * runtime surfaces it to the caller instead of sending an invalid payload to
+ * the provider, which would reject it anyway.
+ */
+export class MessageReducerContractError extends AgenticError {
+  constructor(readonly reason: string) {
+    super(`Message reducer produced an invalid projection: ${reason}`);
+  }
+}
+
+/**
  * Base error class for all FrugalGPT model cascading exceptions.
  */
 export class CascadeError extends AgenticError {

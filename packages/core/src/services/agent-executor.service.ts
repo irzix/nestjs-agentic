@@ -40,6 +40,8 @@ import type {
 import type { Provenance } from '../interfaces/provenance.interface';
 import { validateToolArgs } from '../utils/tool-args.validator';
 import type { AgentObserver } from '../interfaces/observer.interface';
+import type { AgentMessageReducer } from '../interfaces/message-reducer.interface';
+import { fingerprintTranscript, validateReduction } from '../reducers/validate-reduction';
 import { ObserverNotifier } from '../observers/observer-notifier';
 
 /** Input for one governed agent turn executed by the framework runtime. */
@@ -62,6 +64,13 @@ export interface AgentExecutionInput {
   signal?: AbortSignal;
   observers?: AgentObserver[];
   observerNotifier?: ObserverNotifier;
+  /**
+   * Bounded projection applied to the canonical transcript before each model
+   * round. Shapes only what the model receives; the transcript persisted via
+   * `onTranscript`, checkpoints, and approval resume stay unreduced. Unset
+   * sends the full transcript, preserving prior behavior.
+   */
+  messageReducer?: AgentMessageReducer;
   /**
    * Receives the conversation once the turn ends, either with a final answer or
    * suspended for approval. Not called when the turn fails, so a partial
@@ -96,6 +105,10 @@ interface ExecutorRequestContext {
   rootTraceId?: string;
   signal?: AbortSignal;
   observerNotifier?: ObserverNotifier;
+  /** Bounded projection applied to the transcript before each model round. */
+  messageReducer?: AgentMessageReducer;
+  /** `toolCallId` of the group withheld for approval on a resumed turn, if any. */
+  pendingApprovalToolCallId?: string;
 }
 
 /** Input for continuing a turn that suspended on `require_approval`. */
@@ -117,6 +130,7 @@ export interface AgentResumeInput extends ExecutorRequestContext {
   limits?: ExecutionLimits;
   toolErrorHandling?: ToolErrorHandling;
   observers?: AgentObserver[];
+  messageReducer?: AgentMessageReducer;
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
   /** Checkpoints a resumed turn that suspends again on a further approval. */
   onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
@@ -130,6 +144,7 @@ export interface AgentResumeCheckpointInput extends ExecutorRequestContext {
   limits?: ExecutionLimits;
   toolErrorHandling?: ToolErrorHandling;
   observers?: AgentObserver[];
+  messageReducer?: AgentMessageReducer;
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
   onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
   onCheckpoint?(checkpoint: InFlightCheckpoint): void | Promise<void>;
@@ -218,6 +233,11 @@ export class AgentExecutor {
       signal: input.signal,
       agentName: input.agentName,
       observerNotifier,
+      messageReducer: input.messageReducer,
+      // A resumed turn re-opens with the previously withheld group already
+      // resolved in the transcript; keep it identified so a reducer cannot fold
+      // it away before the model reacts to the outcome.
+      pendingApprovalToolCallId: (input as AgentResumeInput).toolCallId,
     };
   }
 
@@ -365,7 +385,7 @@ export class AgentExecutor {
       while (true) {
         this.assertWithinBudget(state, limits, scope);
 
-        const request = this.buildRequest(requestCtx, state, scope);
+        const request = await this.buildRequest(requestCtx, state, scope);
         const reqStart = Date.now();
 
         await requestCtx.observerNotifier?.notifyModelRequest({
@@ -444,7 +464,7 @@ export class AgentExecutor {
       while (true) {
         this.assertWithinBudget(state, limits, scope);
 
-        const request = this.buildRequest(requestCtx, state, scope);
+        const request = await this.buildRequest(requestCtx, state, scope);
         const reqStart = Date.now();
 
         await requestCtx.observerNotifier?.notifyModelRequest({
@@ -692,14 +712,14 @@ export class AgentExecutor {
     throw new ExecutionCancelledError();
   }
 
-  private buildRequest(
+  private async buildRequest(
     input: ExecutorRequestContext,
     state: ExecutionState,
     scope: { signal: AbortSignal },
-  ): ModelRequest {
+  ): Promise<ModelRequest> {
     return {
       model: input.model,
-      messages: [...state.messages],
+      messages: await this.projectMessages(input, state, scope),
       tools: this.toToolSchemas(input.tools),
       signal: scope.signal,
       metadata: {
@@ -709,6 +729,44 @@ export class AgentExecutor {
         iteration: state.iteration,
       },
     };
+  }
+
+  /**
+   * Applies the configured reducer to the canonical transcript to produce the
+   * messages sent to the model this round, leaving `state.messages` untouched.
+   *
+   * Without a reducer this is the previous behavior: a shallow copy of the full
+   * transcript. With one, the reduced output is validated against the tool
+   * protocol before it can reach the adapter, so a buggy reducer fails loudly
+   * rather than sending a payload the provider would reject.
+   */
+  private async projectMessages(
+    input: ExecutorRequestContext,
+    state: ExecutionState,
+    scope: { signal: AbortSignal },
+  ): Promise<ModelMessage[]> {
+    const canonical = state.messages;
+
+    if (!input.messageReducer) {
+      return [...canonical];
+    }
+
+    const fingerprint = fingerprintTranscript(canonical);
+
+    const reduced = await input.messageReducer.reduce(canonical, {
+      executionId: state.executionId,
+      sessionId: input.sessionId,
+      iteration: state.iteration,
+      agentName: input.agentName,
+      signal: scope.signal,
+      pendingApprovalToolCallId: input.pendingApprovalToolCallId,
+    });
+
+    validateReduction(reduced, canonical, fingerprint, input.pendingApprovalToolCallId);
+
+    // Return a defensive copy so the loop and observers cannot be affected by
+    // later reuse of a returned array by the reducer.
+    return reduced === canonical ? [...canonical] : [...reduced];
   }
 
   private toToolSchemas(tools: ResolvedTool[]): ModelToolSchema[] {

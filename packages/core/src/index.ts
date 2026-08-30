@@ -8,6 +8,7 @@ export * from './providers';
 export * from './services';
 export * from './stores';
 export * from './observers';
+export * from './reducers';
 export * from './adapters';
 export * from './policies';
 export * from './testing';
