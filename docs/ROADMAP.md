@@ -159,31 +159,45 @@ Goal: bring `@nestjs-agentic/rag`'s retrieval and reranking up to what its own d
 
 ### 1.3 — Security Hardening
 
-> **Status: Planned** | [Milestone 1.3](https://github.com/irzix/nestjs-agentic/milestone/8)
+> **Status: Complete** | [Milestone 1.3](https://github.com/irzix/nestjs-agentic/milestone/8)
 
 Goal: extend Tri-Rail Guardrails beyond opt-in per-tool policies into deny-by-default governance, and close indirect-injection, PII, and audit-integrity gaps.
 
 - [x] Support module-level default policy chains so tools are governed even without explicit `@UsePolicies` ([#135](https://github.com/irzix/nestjs-agentic/issues/135)).
-- [ ] Promote the example-only prompt-injection sanitizer into `@nestjs-agentic/core` and apply boundary-wrapping to retrieved RAG content ([#136](https://github.com/irzix/nestjs-agentic/issues/136)).
-- [ ] Add provenance/taint labeling so policies can distinguish model, tool, and externally-sourced content ([#137](https://github.com/irzix/nestjs-agentic/issues/137)).
-- [ ] Ship a `PiiRedactionPolicy` covering email, phone, credit card, and national ID patterns ([#138](https://github.com/irzix/nestjs-agentic/issues/138)).
-- [ ] Add approver authorization/separation-of-duties checks on `ApprovalService` and a tamper-evident (hash-chained) audit sink ([#139](https://github.com/irzix/nestjs-agentic/issues/139)).
+- [x] Promote the example-only prompt-injection sanitizer into `@nestjs-agentic/core` and apply boundary-wrapping to retrieved RAG content ([#136](https://github.com/irzix/nestjs-agentic/issues/136)).
+- [x] Add provenance/taint labeling so policies can distinguish model, tool, and externally-sourced content ([#137](https://github.com/irzix/nestjs-agentic/issues/137)).
+- [x] Ship a `PiiRedactionPolicy` covering email, phone, credit card, and national ID patterns ([#138](https://github.com/irzix/nestjs-agentic/issues/138)).
+- [x] Add approver authorization/separation-of-duties checks on `ApprovalService` and a tamper-evident (hash-chained) audit sink ([#139](https://github.com/irzix/nestjs-agentic/issues/139)).
 
 ### 1.4 — Reliability & Output Quality
 
-> **Status: Planned** | [Milestone 1.4](https://github.com/irzix/nestjs-agentic/milestone/9)
+> **Status: Released (v1.4.0)** | [Milestone 1.4](https://github.com/irzix/nestjs-agentic/milestone/9)
 
-Goal: production-hardening primitives for the model-call boundary and quantitative retrieval evaluation.
+Goal: production-hardening primitives for the model-call boundary, context lifecycle, and rate limiting.
+
+- [x] Add framework-level retry with backoff/jitter and a circuit breaker for model calls, independent of adapter-specific SDK retry behavior ([#141](https://github.com/irzix/nestjs-agentic/issues/141)).
+- [x] Fix `RateLimitPolicy`'s unbounded in-process history growth by evicting fully-expired entries ([#142](https://github.com/irzix/nestjs-agentic/issues/142)).
+- [x] Replace `RateLimitPolicy`'s in-process static state with a distributed (Redis-backed) implementation ([#142](https://github.com/irzix/nestjs-agentic/issues/142)).
+- [x] Add a provider-agnostic message reducer / context projector to bound tool-loop context growth, with an identity default and module/agent/run configuration ([#185](https://github.com/irzix/nestjs-agentic/issues/185)).
+
+Carried to 1.5 (not completed in 1.4.0): structured output ([#140](https://github.com/irzix/nestjs-agentic/issues/140)) and retrieval-quality metrics ([#143](https://github.com/irzix/nestjs-agentic/issues/143)).
+
+### 1.5 — Reliability & Output Quality (continued)
+
+> **Status: In Progress** | [Milestone 1.5](https://github.com/irzix/nestjs-agentic/milestone/11)
+
+Goal: finish the output-quality and governance work carried over from 1.4, plus telemetry-safety and dual-control hardening.
 
 - [ ] Support structured output with JSON Schema validation and bounded repair retries ([#140](https://github.com/irzix/nestjs-agentic/issues/140)).
-- [ ] Add framework-level retry with backoff/jitter and a circuit breaker for model calls, independent of adapter-specific SDK retry behavior ([#141](https://github.com/irzix/nestjs-agentic/issues/141)).
-- [x] Fix `RateLimitPolicy`'s unbounded in-process history growth by evicting fully-expired entries ([#142](https://github.com/irzix/nestjs-agentic/issues/142)).
-- [ ] Replace `RateLimitPolicy`'s in-process static state with a distributed (Redis-backed) implementation ([#142](https://github.com/irzix/nestjs-agentic/issues/142)).
 - [ ] Add retrieval-quality metrics (recall@k, precision@k, MRR, nDCG, faithfulness) to `@nestjs-agentic/evaluation` ([#143](https://github.com/irzix/nestjs-agentic/issues/143)).
+- [ ] Dual control (N-of-M approvals) for high-risk actions ([#175](https://github.com/irzix/nestjs-agentic/issues/175)).
+- [ ] Stop observer events from dispatching raw provider errors, which risks leaking secrets to telemetry ([#183](https://github.com/irzix/nestjs-agentic/issues/183)).
 
-### 1.5 — Dynamic Agent Tooling & Multi-Modal Perception
+---
 
-> **Status: In Progress**
+### 1.6 — Dynamic Agent Tooling & Multi-Modal Perception
+
+> **Status: Planned**
 
 Goal: empower agents with real-time multi-modal perception and zero-code runtime API ingestion.
 
@@ -194,7 +208,7 @@ Goal: empower agents with real-time multi-modal perception and zero-code runtime
 
 ---
 
-### 1.6 — Distributed Agent Swarms & Consensus Staking
+### 1.7 — Distributed Agent Swarms & Consensus Staking
 
 > **Status: Planned**
 

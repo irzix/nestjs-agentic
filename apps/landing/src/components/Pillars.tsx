@@ -18,7 +18,7 @@ const cards = [
     icon: Layers,
     title: 'NestJS Primitives & DI',
     badge: '@Agent, @ToolSet, @Tool',
-    tagline: 'Production Ready · v1.0.0',
+    tagline: 'Production Ready · v1.x GA',
     description: (
       <>
         Define agents and context-bound tools with NestJS decorators, dependency injection, and capability narrowing. Application services remain ordinary providers while runtimes receive governed tool closures.
