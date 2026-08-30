@@ -19,7 +19,7 @@ export default function RootDocsLayout({ children }: { children: ReactNode }) {
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(224,35,78,0.8)]" />
             <span className="text-sm font-semibold">nestjs-agentic</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">
-              v1.0.0
+              v1.x
             </span>
           </a>
         ),

@@ -10,9 +10,10 @@ export async function GET() {
 
 nestjs-agentic keeps agents, context-bound tools, policy evaluation, and deterministic testing inside the NestJS module and dependency-injection system. It focuses on bounded model decisions and application-owned security context rather than unconstrained autonomy.
 
-## Current Status: v1.0.0 General Availability (GA)
+## Current Status: v1.x General Availability (GA)
 
-- Available: Agent and tool decorators (@Agent, @ToolSet, @Tool, @Param, @Context), NestJS discovery and dependency injection, allow/deny/require_approval policies, context-bound tools, built-in runtime with governed model-to-tool loops, argument validation, execution limits, cancellation (AbortSignal), streaming, per-session conversation history, OpenAI model adapter, reusable contract testing suites, durable Human-in-the-Loop checkpoints with atomic settlement, Redis/PostgreSQL persistence stores, 5-tier cognitive memory with Stanford tri-factor scoring, AST-aware code chunking with GraphRAG, bounded-concurrency parallel fan-out, multi-agent debate with Fleiss' Kappa consensus, and Model Context Protocol (MCP) client transports.
+- Available: Agent and tool decorators (@Agent, @ToolSet, @Tool, @Param, @Context), NestJS discovery and dependency injection, allow/deny/require_approval policies, context-bound tools, built-in runtime with governed model-to-tool loops, argument validation, execution limits, cancellation (AbortSignal), streaming, per-session conversation history, OpenAI model adapter, reusable contract testing suites, durable Human-in-the-Loop checkpoints with atomic settlement, Redis/PostgreSQL persistence stores, 5-tier cognitive memory with Stanford tri-factor scoring, AST-aware code chunking with GraphRAG, bounded-concurrency parallel fan-out, multi-agent debate consensus scoring, and Model Context Protocol (MCP) client transports.
+- Added since GA: module-level default policy chains (deny-by-default governance), a built-in prompt-injection sanitizer with RAG boundary wrapping, provenance/taint labeling across model, tool, and retrieved content, a PII redaction policy, approver authorization with separation-of-duties, a tamper-evident hash-chained audit trail, real Reciprocal Rank Fusion and BM25 scoring, Cohere/Voyage reranker adapters, MMR diversity selection, an embedding cache, model-call retry with backoff/jitter plus a circuit breaker, a distributed Redis-backed rate limit policy, and a provider-agnostic message reducer that bounds tool-loop context growth.
 
 ## Architecture Highlights
 
@@ -21,6 +22,8 @@ nestjs-agentic keeps agents, context-bound tools, policy evaluation, and determi
 - Multi-Agent Collective Intelligence: Parallel sub-agent execution, dialectic debate rounds, and inter-rater reliability metrics.
 - Cognitive Memory: Epistemic scratchpads, semantic vector stores, and episodic memory with recency/importance/relevance decay.
 - Context Engineering: AST hierarchical code chunking and hybrid BM25 + dense vector search with cross-encoder reranking.
+- Bounded Context Lifecycle: A configurable message reducer projects a compact view of the transcript to the model each round, while the canonical transcript, checkpoints, and approval resume stay complete.
+- Model-Call Resilience: Retry with exponential backoff and jitter, plus a circuit breaker that fails fast during a provider outage, independent of adapter SDK retry behavior.
 
 ## Installation
 

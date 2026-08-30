@@ -168,7 +168,7 @@ export function HeroSection() {
             </div>
             <div>
               <span className="mr-3 sm:mr-4">Current release line</span>
-              <span className="text-emerald-400 font-semibold">v1.0.0 (GA)</span>
+              <span className="text-emerald-400 font-semibold">v1.x (GA)</span>
             </div>
           </div>
         </motion.div>
