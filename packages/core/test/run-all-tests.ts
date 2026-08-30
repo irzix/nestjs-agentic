@@ -23,6 +23,7 @@ import { runRedactionTraversalTests } from './redaction-traversal.spec';
 import { runTamperEvidentAuditTests } from './tamper-evident-audit.spec';
 import { runApproverAuthorizationTests } from './approver-authorization.spec';
 import { runDistributedRateLimitTests } from './distributed-rate-limit.spec';
+import { runModelResilienceTests } from './model-resilience.spec';
 import { runMessageReducerTests } from './message-reducer.spec';
 
 async function runAllCoreTests() {
@@ -56,10 +57,11 @@ async function runAllCoreTests() {
     await runTamperEvidentAuditTests();
     await runApproverAuthorizationTests();
     await runDistributedRateLimitTests();
+    await runModelResilienceTests();
     await runMessageReducerTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 26 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 27 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

@@ -5,3 +5,8 @@ export type {
   MockModelAdapterOptions,
   MockModelScriptBuilder,
 } from './mock-model.adapter';
+export { ResilientModelAdapter } from './resilient-model.adapter';
+export type {
+  ModelResilienceHooks,
+  ModelResilienceOptions,
+} from './resilient-model.adapter';

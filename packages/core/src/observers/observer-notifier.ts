@@ -3,8 +3,10 @@ import type {
   AgentErrorEvent,
   AgentObserver,
   AgentStartEvent,
+  CircuitBreakerEvent,
   ModelRequestEvent,
   ModelResponseEvent,
+  ModelRetryEvent,
   ToolCallEvent,
   ToolResultEvent,
 } from '../interfaces/observer.interface';
@@ -69,6 +71,16 @@ export class ObserverNotifier {
   async notifyModelResponse(event: ModelResponseEvent): Promise<void> {
     if (!this.isEnabled) return;
     await this.dispatch('onModelResponse', event);
+  }
+
+  async notifyModelRetry(event: ModelRetryEvent): Promise<void> {
+    if (!this.isEnabled) return;
+    await this.dispatch('onModelRetry', event);
+  }
+
+  async notifyCircuitStateChange(event: CircuitBreakerEvent): Promise<void> {
+    if (!this.isEnabled) return;
+    await this.dispatch('onCircuitStateChange', event);
   }
 
   async notifyToolCall(event: ToolCallEvent): Promise<void> {

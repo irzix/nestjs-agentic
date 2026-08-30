@@ -9,6 +9,7 @@
     "human-in-the-loop",
     "state-stores",
     "execution-limits",
+    "model-call-resilience",
     "context-projection",
     "observability-and-tracing"
   ],
