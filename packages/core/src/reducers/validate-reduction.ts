@@ -81,18 +81,31 @@ export function validateReduction(
   }
 
   const seenCallIds = new Set<string>();
-  const resolvedCallIds = new Set<string>();
+  const declaredCallIds = new Set<string>();
   // Ids requested by the assistant group currently being resolved, still awaiting
   // their tool result. Order is not required among a group's own results.
   let openGroup: Set<string> | null = null;
+  // Whether the currently open group declared the pending-approval id, tracked
+  // separately because that id is removed from `openGroup` once its result is
+  // consumed.
+  let openGroupHoldsApproval = false;
 
-  const closeGroupOrThrow = () => {
+  // A suspended turn legitimately produces a trailing group where the calls
+  // after the withheld one never ran: `applyModelRound` returns as soon as one
+  // call reports `pending_approval`. That incomplete group is only ever the last
+  // one in the transcript and always belongs to the pending-approval group, so it
+  // is the single exception to the "every group must be complete" rule.
+  const closeGroupOrThrow = (isFinal: boolean) => {
     if (openGroup && openGroup.size > 0) {
-      const missing = [...openGroup].join(', ');
-      throw new MessageReducerContractError(
-        `assistant tool-call group is missing results for: ${missing}; a tool-call group ` +
-          `must be kept or dropped whole, and its results must directly follow it.`,
-      );
+      const allowedTrailingSuspension = isFinal && openGroupHoldsApproval;
+
+      if (!allowedTrailingSuspension) {
+        const missing = [...openGroup].join(', ');
+        throw new MessageReducerContractError(
+          `assistant tool-call group is missing results for: ${missing}; a tool-call group ` +
+            `must be kept or dropped whole, and its results must directly follow it.`,
+        );
+      }
     }
     openGroup = null;
   };
@@ -100,9 +113,10 @@ export function validateReduction(
   for (const message of reduced) {
     if (message.role === 'assistant' && message.toolCalls?.length) {
       // A new group cannot open while the previous one is unresolved.
-      closeGroupOrThrow();
+      closeGroupOrThrow(false);
 
       openGroup = new Set();
+      openGroupHoldsApproval = false;
       for (const call of message.toolCalls) {
         if (seenCallIds.has(call.id)) {
           throw new MessageReducerContractError(
@@ -110,7 +124,11 @@ export function validateReduction(
           );
         }
         seenCallIds.add(call.id);
+        declaredCallIds.add(call.id);
         openGroup.add(call.id);
+        if (call.id === pendingApprovalToolCallId) {
+          openGroupHoldsApproval = true;
+        }
       }
       continue;
     }
@@ -124,18 +142,20 @@ export function validateReduction(
         );
       }
       openGroup.delete(message.toolCallId);
-      resolvedCallIds.add(message.toolCallId);
       continue;
     }
 
     // A system/user/plain-assistant message ends any open group; it must be
-    // fully resolved by now.
-    closeGroupOrThrow();
+    // fully resolved by now (it is not the trailing suspension group).
+    closeGroupOrThrow(false);
   }
 
-  closeGroupOrThrow();
+  closeGroupOrThrow(true);
 
-  if (pendingApprovalToolCallId && !resolvedCallIds.has(pendingApprovalToolCallId)) {
+  // The pending-approval group must be preserved. It is enough that its
+  // assistant tool-call was declared — the result may be withheld (suspension)
+  // or resolved (resume); either way the group is present.
+  if (pendingApprovalToolCallId && !declaredCallIds.has(pendingApprovalToolCallId)) {
     throw new MessageReducerContractError(
       `the pending-approval group "${pendingApprovalToolCallId}" was dropped; the active ` +
         `approval group and its toolCallId must be preserved so the turn can resume.`,

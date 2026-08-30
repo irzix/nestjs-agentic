@@ -550,6 +550,102 @@ export async function runMessageReducerTests() {
     assert(false, 'Test 12: Sequential validation', err.message);
   }
 
+  // TEST 13: A trailing incomplete group is accepted only for the withheld
+  // pending-approval call (parallel calls after the withheld one never ran).
+  try {
+    // The assistant requested two calls; the first was withheld for approval,
+    // the second never executed, so only one result exists at the tail.
+    const suspended: ModelMessage[] = [
+      { role: 'user', content: 'do two things' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+          { id: 'appr', name: 'sensitive', args: {} },
+          { id: 'later', name: 'other', args: {} },
+        ],
+      },
+      { role: 'tool', toolCallId: 'appr', toolName: 'sensitive', content: '{"pending":true}' },
+    ];
+
+    // Reducer returns a fresh array (not identity), forcing full validation.
+    const passthrough: ModelMessage[] = suspended.map((m) => ({ ...m }));
+    let caught: unknown;
+    try {
+      validateReduction(passthrough, suspended, fingerprintTranscript(suspended), 'appr');
+    } catch (err) {
+      caught = err;
+    }
+    assert(
+      caught === undefined,
+      'Test 13a: Trailing incomplete approval group is accepted',
+      caught ? String(caught) : undefined,
+    );
+
+    // But an incomplete trailing group that is NOT the approval group is rejected.
+    const badTrailing: ModelMessage[] = [
+      { role: 'user', content: 'x' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'z', name: 'zeta', args: {} }] },
+    ];
+    let caughtBad: unknown;
+    try {
+      validateReduction(badTrailing, [], fingerprintTranscript([]));
+    } catch (err) {
+      caughtBad = err;
+    }
+    assert(
+      caughtBad instanceof MessageReducerContractError,
+      'Test 13b: An unresolved trailing group without approval is still rejected',
+      caughtBad ? String(caughtBad) : 'no error thrown',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 13: Trailing suspension group', err.message);
+  }
+
+  // TEST 14: Mutating a nested tool-call args object in place is detected.
+  try {
+    const original: ModelMessage[] = [
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'm1', name: 'alpha', args: { q: 'original' } }],
+      },
+      { role: 'tool', toolCallId: 'm1', toolName: 'alpha', content: '{}' },
+    ];
+
+    const mutateArgsReducer: AgentMessageReducer = {
+      reduce: (messages) => {
+        const asst = messages[0];
+        if (asst.role === 'assistant' && asst.toolCalls) {
+          // Mutate the nested args object in place, then return the same array.
+          (asst.toolCalls[0].args as Record<string, unknown>).q = 'tampered';
+        }
+        return messages;
+      },
+    };
+
+    const fp = fingerprintTranscript(original);
+    const reduced = await mutateArgsReducer.reduce(original, {
+      executionId: 'e14',
+      sessionId: 's14',
+      iteration: 0,
+    });
+
+    let caught: unknown;
+    try {
+      validateReduction(reduced, original, fp);
+    } catch (err) {
+      caught = err;
+    }
+    assert(
+      caught instanceof MessageReducerContractError,
+      'Test 14a: In-place mutation of nested tool-call args is detected',
+      caught ? String(caught) : 'no error thrown',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 14: Nested args mutation detection', err.message);
+  }
+
   console.log(`\n  Message Reducer: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Message Reducer Tests Failed');

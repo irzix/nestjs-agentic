@@ -29,11 +29,12 @@ interface ToolGroup {
   toolCallIds: string[];
 }
 
-/** Strips control characters and caps length so a tool name cannot inject text. */
+/** Strips control characters, caps length, and quotes/escapes so a tool name cannot inject text. */
 function safeToolName(name: string): string {
   const cleaned = name.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
   const capped = cleaned.length > 64 ? `${cleaned.slice(0, 64)}…` : cleaned;
-  return `"${capped}"`;
+  // JSON.stringify quotes and escapes embedded quotes/backslashes.
+  return JSON.stringify(capped);
 }
 
 /**
