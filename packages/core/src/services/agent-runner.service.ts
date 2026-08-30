@@ -23,6 +23,7 @@ import type { AgentDecoratorOptions } from '../decorators/agent.decorator';
 import type {
   AgentConfig,
   AgentContext,
+  AgentMessageReducer,
   AgentObserver,
   AgentProvider,
   AgentResult,
@@ -153,6 +154,15 @@ export interface AgenticModuleOptions {
    * nothing injected.
    */
   approvalAuthorizer?: ApprovalAuthorizerRegistration;
+  /**
+   * Default context projector applied to the transcript before each model
+   * round. Bounds what the model receives — for example folding older tool
+   * groups into a compact run-state message — without touching the canonical
+   * transcript, checkpoints, or approval resume. An agent or a single run may
+   * override it. Unset sends the full transcript, so existing behavior is
+   * unchanged.
+   */
+  messageReducer?: AgentMessageReducer;
   /** Overrides for internal diagnostic logging (e.g. governance warnings). Defaults to `console`. */
   logger?: { warn?: (message: string) => void };
 }
@@ -176,6 +186,8 @@ export interface RunInput {
   limits?: ExecutionLimits;
   /** Overrides the agent and module tool error strategy for this run. */
   toolErrorHandling?: ToolErrorHandling;
+  /** Overrides the agent and module context projector for this run. */
+  messageReducer?: AgentMessageReducer;
   /** FrugalGPT model cascading configuration (fastModel -> reasoningModel). */
   cascade?: CascadeConfig;
   /**
@@ -208,6 +220,7 @@ export interface PreparedRun {
   tools: ResolvedTool[];
   limits?: ExecutionLimits;
   toolErrorHandling?: ToolErrorHandling;
+  messageReducer?: AgentMessageReducer;
 }
 
 @Injectable()
@@ -367,6 +380,7 @@ export class AgentRunner {
       outcome,
       limits: config.limits ?? this.options.limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
+      messageReducer: config.messageReducer ?? this.options.messageReducer,
       signal: options?.signal,
       onCheckpoint: (checkpoint) => this.saveInFlightCheckpoint(pending.context, checkpoint),
       onTranscript: store
@@ -620,6 +634,8 @@ export class AgentRunner {
       limits,
       toolErrorHandling:
         input.toolErrorHandling ?? config.toolErrorHandling ?? this.options.toolErrorHandling,
+      messageReducer:
+        input.messageReducer ?? config.messageReducer ?? this.options.messageReducer,
     };
   }
 
@@ -675,6 +691,7 @@ export class AgentRunner {
           rootTraceId: prepared.context.rootTraceId,
           limits: prepared.limits,
           toolErrorHandling: prepared.toolErrorHandling,
+          messageReducer: prepared.messageReducer,
           signal: input.signal,
           observerNotifier: notifier,
           history: withHistory ? await this.loadHistory(prepared.context) : undefined,
@@ -768,6 +785,7 @@ export class AgentRunner {
           rootTraceId: prepared.context.rootTraceId,
           limits: prepared.limits,
           toolErrorHandling: prepared.toolErrorHandling,
+          messageReducer: prepared.messageReducer,
           signal: input.signal,
           observerNotifier: notifier,
           history: withHistory ? await this.loadHistory(prepared.context) : undefined,
@@ -927,6 +945,7 @@ export class AgentRunner {
       traceId: context.traceId,
       limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
+      messageReducer: config.messageReducer ?? this.options.messageReducer,
       signal: options?.signal,
       onCheckpoint: (cp) => this.saveInFlightCheckpoint(context, cp),
       onTranscript: sessionStore

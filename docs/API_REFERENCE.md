@@ -327,6 +327,65 @@ Set `toolErrorHandling: 'throw'` to end the run instead, resolved per run with t
 
 Framework errors are always fatal regardless of this setting, because they signal misconfiguration rather than a recoverable tool failure. Cancellation observed during a tool invocation is reported as `ExecutionCancelledError`.
 
+## Message Reducer (Context Projection)
+
+The executor keeps one append-only transcript per turn and, by default, sends it verbatim to the model on every round. In a long tool loop that means each intermediate tool observation is re-transmitted on all later rounds, so per-round context grows even though a limit still bounds the loop.
+
+An `AgentMessageReducer` is a provider-agnostic projection applied between the canonical transcript and the messages sent to the model. It shapes only what the model receives — the persisted transcript (`onTranscript`), in-flight checkpoints, and approval resume all stay unreduced. It runs before `onModelRequest`, so an observer sees the exact messages the adapter receives.
+
+```typescript
+interface AgentMessageReductionContext {
+  executionId: string;
+  sessionId: string;
+  iteration: number; // zero-based model round
+  agentName?: string;
+  signal?: AbortSignal;
+  pendingApprovalToolCallId?: string; // group that must survive on a resumed turn
+}
+
+interface AgentMessageReducer {
+  reduce(
+    messages: readonly ModelMessage[],
+    context: AgentMessageReductionContext,
+  ): readonly ModelMessage[] | Promise<readonly ModelMessage[]>;
+}
+```
+
+Configure a default at the module level, override it per agent, or override it per run. Resolution follows the same precedence as limits: `RunInput.messageReducer`, then `AgentConfig.messageReducer`, then `AgenticModuleOptions.messageReducer`. Unset means identity — the full transcript is sent, so existing behavior is unchanged.
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel,
+  messageReducer: new BoundedToolHistoryReducer({ keepLastToolGroups: 1 }),
+});
+```
+
+### Contract
+
+A reducer shapes context; it cannot return an arbitrary list. The framework validates the output before it reaches the adapter and throws `MessageReducerContractError` on a violation, because providers reject the same shapes:
+
+- An assistant `toolCalls` message and its matching `role: "tool"` results are one atomic group. A retained tool-call must keep all its results; no `role: "tool"` message may remain without its assistant message (no orphan results).
+- Parallel tool calls in one assistant message are one group — keep or drop them together.
+- When `pendingApprovalToolCallId` is set, that group and its `toolCallId` must be preserved so the turn can resume.
+- The reducer must not mutate the input array or any message object; return a new array (or the same reference unchanged for identity behavior).
+
+`validateReduction(reduced, original, fingerprintTranscript(original), pendingApprovalToolCallId)` is exported so a custom reducer can self-check in its own tests.
+
+### Deterministic bounded history (no extra LLM call)
+
+`BoundedToolHistoryReducer` keeps the last N complete tool groups verbatim and folds older completed groups into one compact run-state message. It is fully deterministic — no summarization model call — and always preserves the active pending-approval group.
+
+```typescript
+const reducer = new BoundedToolHistoryReducer({ keepLastToolGroups: 1 });
+
+// Transcript before reduction:
+//   user, assistant[alpha], tool(alpha), assistant[beta], tool(beta)
+// Projection sent to the model (older group folded in place, later kept verbatim):
+//   user, "[Earlier tool activity folded ...] ran 1 tool call(s): \"alpha\"", assistant[beta], tool(beta)
+```
+
+The application decides the semantic policy — for example expiring a discovery result once a record is selected. Core provides the lifecycle hook and the protocol guardrails; the durable transcript always retains the full results.
+
 ## Errors
 
 ```typescript
