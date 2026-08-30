@@ -399,6 +399,157 @@ export async function runMessageReducerTests() {
     assert(false, 'Test 9: Identity reducer', err.message);
   }
 
+  // TEST 10: End-to-end suspend then resume keeps the pending-approval group
+  // in the reduced projection even when the reducer would otherwise fold it.
+  try {
+    const approvalId = 'appr_1';
+
+    // Initial run: the tool suspends for approval. Capture the withheld transcript.
+    const suspendModel = new MockModelAdapter();
+    suspendModel
+      .whenAsked('approve then finish')
+      .callTool('needsApproval')
+      .reply('resumed and finished');
+
+    let withheld: ModelMessage[] = [];
+    const suspendExecutor = new AgentExecutor(suspendModel);
+    await suspendExecutor.execute({
+      sessionId: 's10',
+      message: 'approve then finish',
+      model: MODEL,
+      tools: [makeApprovalTool('needsApproval', approvalId)],
+      messageReducer: new BoundedToolHistoryReducer({ keepLastToolGroups: 0 }),
+      onSuspend: (_id, messages) => {
+        withheld = messages;
+      },
+    });
+
+    const withheldTool = withheld.find((m) => m.role === 'tool') as
+      | Extract<ModelMessage, { role: 'tool' }>
+      | undefined;
+    assert(Boolean(withheldTool), 'Test 10a: Turn suspended with a withheld tool message');
+    const toolCallId = withheldTool!.toolCallId;
+
+    // Resume: the reducer (keepLast=0) would fold every group, but the active
+    // approval group must survive so the model can react to the outcome.
+    const { observer, rounds } = capturingObserver();
+    const resumeExecutor = new AgentExecutor(suspendModel);
+
+    const result = await resumeExecutor.resume({
+      sessionId: 's10',
+      model: MODEL,
+      tools: [makeApprovalTool('needsApproval', approvalId)],
+      history: withheld,
+      toolCallId,
+      toolName: 'needsApproval',
+      args: {},
+      outcome: { success: true, data: { approved: true } } as ToolExecutionResult,
+      observers: [observer],
+      messageReducer: new BoundedToolHistoryReducer({ keepLastToolGroups: 0 }),
+    });
+
+    const firstResumeRound = rounds[0] ?? [];
+    const keptIds = firstResumeRound
+      .filter((m) => m.role === 'tool')
+      .map((m) => (m as any).toolCallId);
+    assert(
+      keptIds.includes(toolCallId),
+      'Test 10b: Reduced projection preserves the pending-approval group on resume',
+      `kept ${keptIds.join(',')}`,
+    );
+    assert(
+      result.output === 'resumed and finished',
+      'Test 10c: Resumed turn reaches the final answer through the reducer',
+      result.output,
+    );
+  } catch (err: any) {
+    assert(false, 'Test 10: End-to-end approval resume', err.message);
+  }
+
+  // TEST 11: Folding preserves non-tool messages between folded groups.
+  try {
+    const ctx: AgentMessageReductionContext = {
+      executionId: 'e11',
+      sessionId: 's11',
+      iteration: 0,
+    };
+    const transcript: ModelMessage[] = [
+      { role: 'user', content: 'start' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'alpha', args: {} }] },
+      { role: 'tool', toolCallId: 'c1', toolName: 'alpha', content: '{}' },
+      { role: 'user', content: 'interjection between groups' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'c2', name: 'beta', args: {} }] },
+      { role: 'tool', toolCallId: 'c2', toolName: 'beta', content: '{}' },
+    ];
+
+    const reduced = new BoundedToolHistoryReducer({ keepLastToolGroups: 1 }).reduce(
+      transcript,
+      ctx,
+    );
+
+    const keptInterjection = reduced.some(
+      (m) => m.role === 'user' && m.content === 'interjection between groups',
+    );
+    const foldedFirst = reduced.some(
+      (m) => m.role === 'user' && m.content.includes('folded to bound context'),
+    );
+    assert(
+      keptInterjection,
+      'Test 11a: A user message between folded groups is preserved',
+    );
+    assert(foldedFirst, 'Test 11b: The older group was folded');
+    assert(
+      reduced.filter((m) => m.role === 'tool').length === 1,
+      'Test 11c: Only the last tool group stays verbatim',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 11: Intervening message preservation', err.message);
+  }
+
+  // TEST 12: The validator rejects out-of-order and duplicate tool calls.
+  try {
+    const outOfOrder: ModelMessage[] = [
+      { role: 'tool', toolCallId: 'c1', toolName: 'alpha', content: '{}' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'alpha', args: {} }] },
+    ];
+    let caughtOrder: unknown;
+    try {
+      validateReduction(outOfOrder, [], fingerprintTranscript([]));
+    } catch (err) {
+      caughtOrder = err;
+    }
+    assert(
+      caughtOrder instanceof MessageReducerContractError,
+      'Test 12a: A tool result before its assistant tool-call is rejected',
+      caughtOrder ? String(caughtOrder) : 'no error thrown',
+    );
+
+    const duplicate: ModelMessage[] = [
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+          { id: 'dup', name: 'alpha', args: {} },
+          { id: 'dup', name: 'beta', args: {} },
+        ],
+      },
+      { role: 'tool', toolCallId: 'dup', toolName: 'alpha', content: '{}' },
+    ];
+    let caughtDup: unknown;
+    try {
+      validateReduction(duplicate, [], fingerprintTranscript([]));
+    } catch (err) {
+      caughtDup = err;
+    }
+    assert(
+      caughtDup instanceof MessageReducerContractError,
+      'Test 12b: A duplicate tool-call id is rejected',
+      caughtDup ? String(caughtDup) : 'no error thrown',
+    );
+  } catch (err: any) {
+    assert(false, 'Test 12: Sequential validation', err.message);
+  }
+
   console.log(`\n  Message Reducer: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {
     throw new Error('Message Reducer Tests Failed');

@@ -88,8 +88,8 @@ const reducer = new BoundedToolHistoryReducer({ keepLastToolGroups: 1 });
 
 // Transcript before reduction:
 //   user, assistant[alpha], tool(alpha), assistant[beta], tool(beta)
-// Projection sent to the model:
-//   user, "[Earlier tool activity folded — 1 group] 1. ran 1 tool call(s): alpha", assistant[beta], tool(beta)
+// Projection sent to the model (older group folded in place, later kept verbatim):
+//   user, "[Earlier tool activity folded ...] ran 1 tool call(s): \"alpha\"", assistant[beta], tool(beta)
 ```
 
 The semantic policy — what to keep, fold, or expire — belongs to your application. Core provides the lifecycle hook and the protocol guardrails; the durable transcript always retains the full results.

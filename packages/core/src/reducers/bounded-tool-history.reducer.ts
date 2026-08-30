@@ -8,11 +8,11 @@ import type { ModelMessage } from '../interfaces/model.interface';
 export interface BoundedToolHistoryOptions {
   /**
    * Number of most-recent complete tool groups kept verbatim. Older groups are
-   * folded into one compact run-state message. Default: `1`.
+   * each folded into a compact run-state message. Default: `1`.
    */
   keepLastToolGroups?: number;
   /**
-   * Role used for the folded run-state summary. `user` is the safest default
+   * Role used for a folded run-state summary. `user` is the safest default
    * because every provider accepts a plain user message in any position; some
    * reject a second system message mid-conversation. Default: `'user'`.
    */
@@ -29,14 +29,21 @@ interface ToolGroup {
   toolCallIds: string[];
 }
 
+/** Strips control characters and caps length so a tool name cannot inject text. */
+function safeToolName(name: string): string {
+  const cleaned = name.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+  const capped = cleaned.length > 64 ? `${cleaned.slice(0, 64)}…` : cleaned;
+  return `"${capped}"`;
+}
+
 /**
  * A deterministic, LLM-free context projector that bounds tool-loop growth.
  *
  * It keeps the last `keepLastToolGroups` complete tool groups verbatim and
- * folds every older completed group into a single compact message describing
- * what ran, so intermediate observations are paid for once rather than
- * re-sent on every later round. Non-tool messages (system, user, plain
- * assistant answers) are always kept in place.
+ * folds every older completed group into a compact message describing what ran,
+ * so intermediate observations are paid for once rather than re-sent on every
+ * later round. Each folded group is replaced in place, so any system, user, or
+ * plain assistant message between groups is always retained.
  *
  * The projection is a view for the model only — the executor's canonical
  * transcript, approval-resume data, and checkpoints are untouched. The reducer
@@ -79,37 +86,42 @@ export class BoundedToolHistoryReducer implements AgentMessageReducer {
       return messages;
     }
 
-    // Never fold the pending-approval group even if it is old — resume needs it.
-    let cutoff = groups.length - this.keepLast;
-    if (context.pendingApprovalToolCallId) {
-      const approvalGroup = groups.findIndex((g) =>
-        g.toolCallIds.includes(context.pendingApprovalToolCallId!),
-      );
-      if (approvalGroup !== -1 && approvalGroup < cutoff) {
-        cutoff = approvalGroup;
+    const cutoff = groups.length - this.keepLast;
+
+    // The set of group start indices that should be folded — every group older
+    // than the retention window, except the active pending-approval group, which
+    // resume needs verbatim.
+    const foldStarts = new Map<number, ToolGroup>();
+    for (let i = 0; i < cutoff; i++) {
+      const group = groups[i];
+      const isApprovalGroup =
+        context.pendingApprovalToolCallId !== undefined &&
+        group.toolCallIds.includes(context.pendingApprovalToolCallId);
+      if (!isApprovalGroup) {
+        foldStarts.set(group.start, group);
       }
     }
 
-    if (cutoff <= 0) {
+    if (foldStarts.size === 0) {
       return messages;
     }
 
-    const foldedGroups = groups.slice(0, cutoff);
-    const foldStart = foldedGroups[0].start;
-    const foldEnd = foldedGroups[foldedGroups.length - 1].end;
+    // Walk the transcript, replacing only folded group ranges with a summary and
+    // emitting every other message — including anything between groups — verbatim.
+    const result: ModelMessage[] = [];
+    let i = 0;
+    while (i < messages.length) {
+      const folded = foldStarts.get(i);
+      if (folded) {
+        result.push({ role: this.summaryRole, content: this.summarize(folded) });
+        i = folded.end;
+        continue;
+      }
+      result.push(messages[i]);
+      i++;
+    }
 
-    const summary = this.summarize(foldedGroups);
-
-    // Keep everything before the first folded group (system, user, prior plain
-    // assistant turns), then the summary, then everything from the first kept
-    // group onward verbatim. A message inside [foldStart, foldEnd) that is not
-    // part of a tool group cannot exist — groups are contiguous — so slicing by
-    // index is safe.
-    return [
-      ...messages.slice(0, foldStart),
-      { role: this.summaryRole, content: summary },
-      ...messages.slice(foldEnd),
-    ];
+    return result;
   }
 
   /**
@@ -139,16 +151,12 @@ export class BoundedToolHistoryReducer implements AgentMessageReducer {
     return groups;
   }
 
-  /** A compact, deterministic description of the folded groups. */
-  private summarize(groups: ToolGroup[]): string {
-    const lines = groups.map((group, index) => {
-      const tools = group.toolNames.join(', ');
-      return `${index + 1}. ran ${group.toolCallIds.length} tool call(s): ${tools}`;
-    });
-
+  /** A compact, deterministic description of one folded group. */
+  private summarize(group: ToolGroup): string {
+    const tools = group.toolNames.map(safeToolName).join(', ');
     return (
-      `[Earlier tool activity folded to bound context — ${groups.length} completed ` +
-      `group(s). Full results remain in the durable transcript.]\n${lines.join('\n')}`
+      `[Earlier tool activity folded to bound context. Full results remain in the durable ` +
+      `transcript.] ran ${group.toolCallIds.length} tool call(s): ${tools}`
     );
   }
 }

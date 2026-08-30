@@ -11,18 +11,23 @@ export type TranscriptFingerprint = string;
  * Snapshots the transcript's shape so {@link validateReduction} can tell whether
  * a reducer edited the shared input in place, which the contract forbids.
  *
- * Captures the fields that matter to the model request — role, content, and
- * tool-call/tool identity — not object identity, so a reducer returning a fresh
- * array of equivalent messages is not flagged.
+ * Captures the fields sent to the model — role, content, and the full tool-call
+ * identity *and arguments* — so a reducer that mutates a nested `args` object in
+ * place is caught, not just one that reassigns a top-level field.
  */
 export function fingerprintTranscript(messages: readonly ModelMessage[]): TranscriptFingerprint {
   return JSON.stringify(messages.map(shapeOf));
 }
 
+/** Reduces one message to the model-relevant fields the fingerprint compares. */
 function shapeOf(message: ModelMessage): unknown {
   switch (message.role) {
     case 'assistant':
-      return ['a', message.content, (message.toolCalls ?? []).map((c) => [c.id, c.name])];
+      return [
+        'a',
+        message.content,
+        (message.toolCalls ?? []).map((c) => [c.id, c.name, c.args]),
+      ];
     case 'tool':
       return ['t', message.toolCallId, message.toolName, message.content];
     default:
@@ -35,14 +40,21 @@ function shapeOf(message: ModelMessage): unknown {
  * to a provider. Throws {@link MessageReducerContractError} on the first
  * violation; returns nothing on success.
  *
- * The rules mirror what providers enforce on a request:
- * - every `role: "tool"` message must be preceded, within the array, by the
- *   assistant `toolCalls` message that requested that `toolCallId` (no orphan
- *   results);
- * - every retained assistant tool-call must keep a `role: "tool"` result for
- *   each of its `toolCalls` (no incomplete group);
- * - a pending-approval group, when one is active, must be retained;
- * - the reducer must not mutate the input transcript in place.
+ * The transcript is walked sequentially so ordering and group ownership are
+ * enforced, not just set membership — providers reject a result that precedes
+ * its request or one whose group was split by an unrelated message:
+ *
+ * - An assistant `toolCalls` message opens a group; the `role: "tool"` messages
+ *   that immediately follow must resolve exactly that group's call ids, with no
+ *   other message type interleaved before every id is answered.
+ * - A `role: "tool"` message that does not resolve an open group is an orphan
+ *   (it either precedes its request or belongs to an already-closed group).
+ * - A tool-call id may not be declared twice.
+ * - A group left with unanswered calls when the next non-tool message or the end
+ *   of the array is reached is incomplete.
+ * - A pending-approval group, when one is active, must survive as a resolved
+ *   group.
+ * - The reducer must not mutate the input transcript in place.
  *
  * @param reduced Messages returned by the reducer.
  * @param original The transcript handed to the reducer.
@@ -68,39 +80,62 @@ export function validateReduction(
     return;
   }
 
-  const requestedIds = new Set<string>();
-  const resultIds = new Set<string>();
+  const seenCallIds = new Set<string>();
+  const resolvedCallIds = new Set<string>();
+  // Ids requested by the assistant group currently being resolved, still awaiting
+  // their tool result. Order is not required among a group's own results.
+  let openGroup: Set<string> | null = null;
+
+  const closeGroupOrThrow = () => {
+    if (openGroup && openGroup.size > 0) {
+      const missing = [...openGroup].join(', ');
+      throw new MessageReducerContractError(
+        `assistant tool-call group is missing results for: ${missing}; a tool-call group ` +
+          `must be kept or dropped whole, and its results must directly follow it.`,
+      );
+    }
+    openGroup = null;
+  };
 
   for (const message of reduced) {
     if (message.role === 'assistant' && message.toolCalls?.length) {
+      // A new group cannot open while the previous one is unresolved.
+      closeGroupOrThrow();
+
+      openGroup = new Set();
       for (const call of message.toolCalls) {
-        requestedIds.add(call.id);
+        if (seenCallIds.has(call.id)) {
+          throw new MessageReducerContractError(
+            `tool-call id "${call.id}" appears more than once; each tool call must be unique.`,
+          );
+        }
+        seenCallIds.add(call.id);
+        openGroup.add(call.id);
       }
+      continue;
     }
+
+    if (message.role === 'tool') {
+      if (!openGroup || !openGroup.has(message.toolCallId)) {
+        throw new MessageReducerContractError(
+          `tool result "${message.toolCallId}" (${message.toolName}) does not directly follow ` +
+            `the assistant tool-call that requested it; an orphan or out-of-order tool result ` +
+            `is rejected by providers.`,
+        );
+      }
+      openGroup.delete(message.toolCallId);
+      resolvedCallIds.add(message.toolCallId);
+      continue;
+    }
+
+    // A system/user/plain-assistant message ends any open group; it must be
+    // fully resolved by now.
+    closeGroupOrThrow();
   }
 
-  for (const message of reduced) {
-    if (message.role !== 'tool') continue;
+  closeGroupOrThrow();
 
-    if (!requestedIds.has(message.toolCallId)) {
-      throw new MessageReducerContractError(
-        `tool result "${message.toolCallId}" (${message.toolName}) has no matching ` +
-          `assistant tool-call message; an orphan tool result is rejected by providers.`,
-      );
-    }
-    resultIds.add(message.toolCallId);
-  }
-
-  for (const id of requestedIds) {
-    if (!resultIds.has(id)) {
-      throw new MessageReducerContractError(
-        `assistant tool-call "${id}" is missing its matching tool result; a tool-call ` +
-          `group must be kept or dropped whole, never split.`,
-      );
-    }
-  }
-
-  if (pendingApprovalToolCallId && !resultIds.has(pendingApprovalToolCallId)) {
+  if (pendingApprovalToolCallId && !resolvedCallIds.has(pendingApprovalToolCallId)) {
     throw new MessageReducerContractError(
       `the pending-approval group "${pendingApprovalToolCallId}" was dropped; the active ` +
         `approval group and its toolCallId must be preserved so the turn can resume.`,

@@ -378,10 +378,10 @@ A reducer shapes context; it cannot return an arbitrary list. The framework vali
 ```typescript
 const reducer = new BoundedToolHistoryReducer({ keepLastToolGroups: 1 });
 
-// Round 3 transcript, before reduction:
+// Transcript before reduction:
 //   user, assistant[alpha], tool(alpha), assistant[beta], tool(beta)
-// After reduction (sent to the model):
-//   user, "[Earlier tool activity folded ... 1 group] 1. ran 1 tool call(s): alpha", assistant[beta], tool(beta)
+// Projection sent to the model (older group folded in place, later kept verbatim):
+//   user, "[Earlier tool activity folded ...] ran 1 tool call(s): \"alpha\"", assistant[beta], tool(beta)
 ```
 
 The application decides the semantic policy — for example expiring a discovery result once a record is selected. Core provides the lifecycle hook and the protocol guardrails; the durable transcript always retains the full results.
