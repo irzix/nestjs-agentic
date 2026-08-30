@@ -1,0 +1,161 @@
+---
+title: Context Projection (Message Reducer)
+description: Bound tool-loop context growth by projecting a compact view of the transcript to the model, without touching the canonical history.
+---
+
+## Why Context Grows
+
+The executor keeps one append-only transcript per turn and, by default, sends it to the model on every round. Each tool round appends an assistant `toolCalls` message and one `role: "tool"` result per call, and the next request replays the whole array again.
+
+So a tool observation keeps being re-transmitted on every later round even after the model has already consumed it and moved on. Execution limits stop an infinite loop, but they do not stop this avoidable, repeated carriage inside the allowed loop — cost grows quadratically with the number of rounds when result sizes are comparable.
+
+---
+
+## The Reducer Hook
+
+An `AgentMessageReducer` runs between the canonical transcript and the `ModelRequest`. It projects a bounded view for the model **only** — the persisted transcript, in-flight checkpoints, and approval resume all keep operating on the full, untouched history.
+
+```typescript
+export interface AgentMessageReductionContext {
+  executionId: string;
+  sessionId: string;
+  /** Zero-based model round. `0` is the first round, before any tool group. */
+  iteration: number;
+  agentName?: string;
+  signal?: AbortSignal;
+  /** Group that must survive on a resumed turn. */
+  pendingApprovalToolCallId?: string;
+}
+
+export interface AgentMessageReducer {
+  reduce(
+    messages: readonly ModelMessage[],
+    context: AgentMessageReductionContext,
+  ): readonly ModelMessage[] | Promise<readonly ModelMessage[]>;
+}
+```
+
+The reducer runs **before** the `onModelRequest` observer, so telemetry sees the exact messages the adapter receives — not the unreduced transcript.
+
+---
+
+## Configuration
+
+A reducer resolves with the same precedence as execution limits: per run, then per agent, then module default. Leaving it unset is identity behavior — the full transcript is sent, so existing runs are unchanged.
+
+### Module Default
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel,
+  messageReducer: new BoundedToolHistoryReducer({ keepLastToolGroups: 1 }),
+});
+```
+
+### Per-Agent
+
+```typescript
+@Agent({ name: 'research_agent' })
+export class ResearchAgent implements AgentProvider {
+  define(): AgentConfig {
+    return {
+      instructions: '...',
+      tools: [this.searchTools],
+      messageReducer: new BoundedToolHistoryReducer({ keepLastToolGroups: 2 }),
+    };
+  }
+}
+```
+
+### Per-Run
+
+```typescript
+await runner.run('research_agent', {
+  sessionId,
+  message,
+  messageReducer: new BoundedToolHistoryReducer({ keepLastToolGroups: 1 }),
+});
+```
+
+---
+
+## Built-in: BoundedToolHistoryReducer
+
+`BoundedToolHistoryReducer` is deterministic — no extra LLM summarization call. It keeps the last N complete tool groups verbatim and folds older completed groups into one compact run-state message. The active pending-approval group is always preserved.
+
+```typescript
+const reducer = new BoundedToolHistoryReducer({ keepLastToolGroups: 1 });
+
+// Transcript before reduction:
+//   user, assistant[alpha], tool(alpha), assistant[beta], tool(beta)
+// Projection sent to the model:
+//   user, "[Earlier tool activity folded — 1 group] 1. ran 1 tool call(s): alpha", assistant[beta], tool(beta)
+```
+
+The semantic policy — what to keep, fold, or expire — belongs to your application. Core provides the lifecycle hook and the protocol guardrails; the durable transcript always retains the full results.
+
+---
+
+## The Tool Protocol Contract
+
+A reducer shapes context; it cannot return an arbitrary list. The framework validates the output before it reaches the adapter and throws `MessageReducerContractError` on a violation, because providers reject the same shapes:
+
+- An assistant `toolCalls` message and its matching `role: "tool"` results form one atomic group. A retained tool-call must keep all its results, and no `role: "tool"` message may remain without the assistant message that requested it (no orphan results).
+- Parallel tool calls in one assistant message are one group — keep or drop them together.
+- When `pendingApprovalToolCallId` is set, that group and its `toolCallId` must be preserved so the turn can resume.
+- The reducer must not mutate the input array or any message object; return a new array (or the same reference unchanged for identity).
+
+`validateReduction(reduced, original, fingerprintTranscript(original), pendingApprovalToolCallId)` is exported so a custom reducer can self-check in its own tests.
+
+---
+
+## Custom Reducer Example
+
+You can write your own reducer to lighten retained groups instead of folding them entirely — for example keeping each older tool result but dropping the re-sent argument payloads. Note the pairing must stay intact: keep the assistant message's `id` and `name`, and only trim `args`/`content`. Dropping the assistant tool-call message while keeping its result produces an orphan and is rejected.
+
+```typescript
+import type {
+  AgentMessageReducer,
+  AgentMessageReductionContext,
+  ModelMessage,
+} from '@nestjs-agentic/core';
+
+export class LightenToolHistoryReducer implements AgentMessageReducer {
+  constructor(
+    private readonly opts: { keepLastGroupsFull?: number; maxResultChars?: number } = {},
+  ) {}
+
+  reduce(
+    messages: readonly ModelMessage[],
+    ctx: AgentMessageReductionContext,
+  ): readonly ModelMessage[] {
+    const keepFull = this.opts.keepLastGroupsFull ?? 1;
+    const maxChars = this.opts.maxResultChars ?? 500;
+
+    const toolCallTurns = messages
+      .map((m, i) => (m.role === 'assistant' && m.toolCalls?.length ? i : -1))
+      .filter((i) => i !== -1);
+    const keepFromIndex = toolCallTurns[toolCallTurns.length - keepFull] ?? Infinity;
+
+    return messages.map((m, i) => {
+      if (i >= keepFromIndex) return m;
+      if (m.role === 'tool' && m.toolCallId === ctx.pendingApprovalToolCallId) return m;
+
+      if (m.role === 'assistant' && m.toolCalls?.length) {
+        // Keep tool name and id, drop the repeated argument payload.
+        return {
+          ...m,
+          content: '',
+          toolCalls: m.toolCalls.map((c) => ({ id: c.id, name: c.name, args: {} })),
+        };
+      }
+
+      if (m.role === 'tool' && m.content.length > maxChars) {
+        return { ...m, content: m.content.slice(0, maxChars) + '…[truncated]' };
+      }
+
+      return m;
+    });
+  }
+}
+```
