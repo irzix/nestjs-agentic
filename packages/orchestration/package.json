@@ -14,7 +14,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "tsc -p test/tsconfig.json && node dist/test/test/orchestration.spec.js"
+    "test": "tsc -p test/tsconfig.json && node test-dist/test/orchestration.spec.js"
   },
   "publishConfig": {
     "access": "public"
@@ -23,7 +23,7 @@
     "@nestjs-agentic/core": "^1.4.0"
   },
   "peerDependencies": {
-    "@nestjs/common": "^10.0.0 || ^11.0.0",
-    "@nestjs/core": "^10.0.0 || ^11.0.0"
+    "@nestjs/common": "^10.0.0 || ^11.0.0 || ^12.0.0",
+    "@nestjs/core": "^10.0.0 || ^11.0.0 || ^12.0.0"
   }
 }

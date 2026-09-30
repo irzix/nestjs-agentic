@@ -33,3 +33,34 @@ jobs:
 
       - name: Run Test Suite
         run: npm run test
+
+  nest-compat:
+    name: NestJS ${{ matrix.nest }} compatibility
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        nest: ['11', '12']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      # The examples pin NestJS 10, so test only the published packages
+      # against the NestJS major under test.
+      - name: Install NestJS ${{ matrix.nest }}
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.workspaces=p.workspaces.filter(w=>w.startsWith('packages/'));fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+          rm -rf package-lock.json node_modules
+          npm install --no-audit --no-fund -D @nestjs/common@${{ matrix.nest }} @nestjs/core@${{ matrix.nest }} @nestjs/testing@${{ matrix.nest }}
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Run package tests
+        run: npm run test

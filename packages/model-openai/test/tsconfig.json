@@ -4,7 +4,7 @@
     "module": "CommonJS",
     "target": "ES2021",
     "lib": ["ES2021", "DOM"],
-    "outDir": "../dist/test",
+    "outDir": "../test-dist",
     "rootDir": "..",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
