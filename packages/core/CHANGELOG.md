@@ -1,5 +1,23 @@
 # @nestjs-agentic/core
 
+## 1.5.0
+
+### Minor Changes
+
+- 9ee3e4a: Add opt-in `durability: 'async'` and `observerTimeoutMs` to keep persistence and telemetry off a turn's critical path.
+
+  - `durability: 'async'` (module option, overridable per run) queues in-flight checkpoint and history writes in order instead of awaiting each one, so the next model round no longer waits for a store round-trip after a tool call. The queue is drained before the turn completes and a failed write fails the turn there. The next turn for the same session in the same process waits for queued writes before reading history. Approval checkpoints and resumed turns stay synchronous. Default remains `sync`.
+  - `observerTimeoutMs` bounds how long each observer hook can hold up a turn; observers keep running in the background. `ObserverNotifier` accepts the same bound as `timeoutMs`.
+  - New `DeferredWriteQueue` utility.
+
+### Patch Changes
+
+- c679715: Support NestJS 12 and tighten what gets published.
+
+  - Peer dependencies on `@nestjs/common` and `@nestjs/core` now accept `^12.0.0`, so installing into a NestJS 12 app no longer fails with `ERESOLVE`. Every package's test suite passes against NestJS 11.2 and 12.1, and CI now checks both. NestJS 12 is ESM only; with these CommonJS packages it needs Node 20.19+ or 22.12+.
+  - Internal `*` ranges (`@nestjs-agentic/memory` in `rag`'s dependencies, and the `@nestjs-agentic/core` / `nestjs-agentic` peers of `memory`, `rag` and `openai`) are now `^1.4.0`, so a future major of a sibling package is never pulled in silently.
+  - Compiled tests are written to `test-dist/` instead of `dist/test/`, so they are no longer published. `evaluation`, `mcp` and `orchestration` now declare `files` like the other packages, so they stop shipping `src/`, `test/` and `tsconfig.json` and exclude `test-dist/` even when packed outside the repo. `@nestjs-agentic/core` drops from 712 files (3.4 MB) to about 315 files (1.4 MB) unpacked.
+
 ## 1.4.0
 
 ### Minor Changes
