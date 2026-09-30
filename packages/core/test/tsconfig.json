@@ -3,7 +3,7 @@
   "compilerOptions": {
     "module": "CommonJS",
     "target": "ES2021",
-    "outDir": "../dist/test",
+    "outDir": "../test-dist",
     "rootDir": "..",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,

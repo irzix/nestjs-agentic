@@ -86,6 +86,8 @@ npm install @nestjs-agentic/orchestration
 npm install @nestjs-agentic/evaluation
 ```
 
+Supports NestJS 10, 11 and 12. NestJS 12 ships as ESM only, and these packages are CommonJS, so with NestJS 12 use Node 20.19+ or 22.12+, where `require()` can load ES modules.
+
 ## Quick Start
 
 The example uses `MockModelAdapter`, so the full tool-calling loop runs deterministically without an API key. Swap in your own `ModelAdapter` to talk to a real provider.
