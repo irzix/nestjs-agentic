@@ -14,10 +14,12 @@ async function runTask07Tests() {
     'irzix/nestjs-agentic',
   );
 
-  const lessons = await memoryService.getRelevantLessons('security');
+  const lessons = await memoryService.getRelevantLessons('security', 'irzix/nestjs-agentic');
   assert.ok(lessons.length > 0);
   assert.ok(lessons.some((l) => l.includes('@UsePermissions')));
-  console.log('  ✅ PASS: Test 1: Maintainer feedback recorded and retrieved from ExperienceLearner');
+  const otherRepo = await memoryService.getRelevantLessons('security', 'someone/else');
+  assert.strictEqual(otherRepo.length, 0);
+  console.log('  ✅ PASS: Test 1: Maintainer feedback recorded and retrieved from ExperienceLearner, scoped to its repo');
 
   // Test 2: Stanford Memory Scorer ($S = w_rec S_rec + w_imp S_imp + w_rel S_rel$)
   const score = memoryService.scoreMemoryItem(

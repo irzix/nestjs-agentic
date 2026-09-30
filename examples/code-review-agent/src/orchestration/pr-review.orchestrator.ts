@@ -93,6 +93,7 @@ export class PrReviewOrchestrator {
     const episodicLessons = options.episodicLessons ??
       await this.experienceService.getRelevantLessons(
         `pr-review ${options.triggerEvent.repoFullName} ${ragQuery}`,
+        options.triggerEvent.repoFullName,
       );
     tracer?.record(
       'memory',

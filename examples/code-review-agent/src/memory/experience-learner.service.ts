@@ -44,12 +44,14 @@ export class NjentExperienceService {
 
   /**
    * Retrieves relevant historical maintainer lessons to prevent repeating past false-positives.
+   * Lessons are scoped per repository, so one repo's feedback never shapes another's reviews.
    *
    * @param trigger Contextual review query / category.
+   * @param repo Repository identifier the lessons were recorded for.
    * @returns Array of formatted lesson strings.
    */
-  async getRelevantLessons(trigger: string): Promise<string[]> {
-    const records = await this.experienceLearner.recallLessons(trigger);
+  async getRelevantLessons(trigger: string, repo: string): Promise<string[]> {
+    const records = await this.experienceLearner.recallLessons(trigger, repo);
     return records.map((r: ExperienceRecord) => r.lesson);
   }
 

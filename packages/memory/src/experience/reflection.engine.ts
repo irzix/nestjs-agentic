@@ -100,7 +100,7 @@ export class ReflectionEngine {
         (typeof resObj?.message === 'string' ? resObj.message : undefined) ??
         JSON.stringify(failedStep.result);
 
-      const critiqueStr = `Tool "${toolName}" failed on step ${failedStep.stepIndex}: ${errDetail}`;
+      const critiqueStr = `Tool "${toolName}" failed on step ${failedStep.stepIndex}: ${truncate(errDetail, MAX_ERROR_DETAIL_LENGTH)}`;
       critiques.push(critiqueStr);
 
       const errLower = errDetail.toLowerCase();
@@ -143,7 +143,10 @@ export class ReflectionEngine {
         lessonsLearned.push(`Throttle tool calls or wait before retrying "${toolName}".`);
         maxImportance = Math.max(maxImportance, this.weights.rateLimitsAndTimeouts);
       } else {
-        lessonsLearned.push(`Verify input parameters and precondition checks for tool "${toolName}": ${errDetail}`);
+        // The error text came from the tool, not from the developer, so it stays
+        // in the critique and is never promoted into a lesson that later reaches
+        // the prompt as guidance.
+        lessonsLearned.push(`Verify input parameters and precondition checks for tool "${toolName}" before retrying.`);
       }
     }
 
@@ -159,4 +162,11 @@ export class ReflectionEngine {
       importance: maxImportance,
     };
   }
+}
+
+/** Upper bound for tool error text carried into a critique. */
+const MAX_ERROR_DETAIL_LENGTH = 500;
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
