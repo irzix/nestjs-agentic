@@ -12,6 +12,10 @@
   "homepage": "https://github.com/irzix/nestjs-agentic#readme",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "tsc -p test/tsconfig.json && node test-dist/test/orchestration.spec.js"
