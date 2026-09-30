@@ -19,6 +19,7 @@ import {
   RuntimeNotConfiguredError,
 } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
+import { DeferredWriteQueue } from '../utils/deferred-write-queue';
 import type { AgentDecoratorOptions } from '../decorators/agent.decorator';
 import type {
   AgentConfig,
@@ -163,9 +164,38 @@ export interface AgenticModuleOptions {
    * unchanged.
    */
   messageReducer?: AgentMessageReducer;
+  /**
+   * When a turn's in-flight checkpoints and conversation history are written.
+   *
+   * - `sync` (default): each write is awaited where it happens, so a checkpoint
+   *   is durable before the next model round starts.
+   * - `async`: writes are queued in order and the turn carries on without
+   *   waiting for the store. The queue is drained before the turn completes,
+   *   and a failed write fails the turn at that point. The next turn for the
+   *   same session in this process waits for the queue before reading
+   *   history. If a stream consumer stops early, the queue still drains but a
+   *   failed write is not reported. Suits
+   *   latency-sensitive turns such as voice, where a store round-trip between a
+   *   tool result and the next model call is audible. A crash mid-turn can lose
+   *   the latest in-flight checkpoint.
+   *
+   * Applies to `run` and `runStream`, and a run may override it. Approval
+   * checkpoints are always written synchronously, because an approval must be
+   * resumable before its id is surfaced; resumed turns write synchronously too.
+   */
+  durability?: DurabilityMode;
+  /**
+   * Upper bound, in milliseconds, on how long each observer hook may hold up a
+   * turn. Observers still finish in the background. `0` never waits. Unset
+   * waits for every observer.
+   */
+  observerTimeoutMs?: number;
   /** Overrides for internal diagnostic logging (e.g. governance warnings). Defaults to `console`. */
   logger?: { warn?: (message: string) => void };
 }
+
+/** Whether persistence writes during a turn are awaited in place or queued. */
+export type DurabilityMode = 'sync' | 'async';
 
 export interface RunInput {
   sessionId: string;
@@ -195,6 +225,8 @@ export interface RunInput {
    * Defaults to the module session setting.
    */
   history?: boolean;
+  /** Overrides the module `durability` setting for this run. */
+  durability?: DurabilityMode;
   /** Cancels the run when aborted. Honored by the built-in runtime. */
   signal?: AbortSignal;
 }
@@ -253,7 +285,53 @@ export class AgentRunner {
     }
     const all = [...fromOptions, ...fromInjected];
     const unique = Array.from(new Set(all.filter((o): o is AgentObserver => Boolean(o))));
-    return new ObserverNotifier(unique, { samplingRate: this.options.samplingRate });
+    return new ObserverNotifier(unique, {
+      samplingRate: this.options.samplingRate,
+      timeoutMs: this.options.observerTimeoutMs,
+    });
+  }
+
+  /**
+   * Latest queued-write tail per session key, so a turn never reads history
+   * while an earlier `async` turn for the same session is still writing it.
+   */
+  private readonly pendingWrites = new Map<string, Promise<void>>();
+
+  /** Returns a write queue when this run uses `async` durability. */
+  private openWriteQueue(context: AgentContext, input: RunInput): DeferredWriteQueue | undefined {
+    const mode = input.durability ?? this.options.durability ?? 'sync';
+    if (mode !== 'async') {
+      return undefined;
+    }
+    return new DeferredWriteQueue(this.pendingWrites.get(this.sessionKey(context)));
+  }
+
+  /**
+   * Runs a persistence write now, or queues it when the run has a write queue.
+   * Queued writes are tracked per session until they settle.
+   */
+  private persist(
+    writes: DeferredWriteQueue | undefined,
+    context: AgentContext,
+    write: () => Promise<void>,
+  ): Promise<void> | void {
+    if (!writes) {
+      return write();
+    }
+    writes.enqueue(write);
+    const key = this.sessionKey(context);
+    const tail = writes.settled;
+    this.pendingWrites.set(key, tail);
+    void tail.then(() => {
+      if (this.pendingWrites.get(key) === tail) {
+        this.pendingWrites.delete(key);
+      }
+    });
+  }
+
+  /** Waits for queued writes of an earlier `async` turn on the same session. */
+  private async awaitPendingWrites(context: AgentContext): Promise<void> {
+    await this.pendingWrites.get(this.sessionKey(context));
   }
 
   /**
@@ -289,6 +367,7 @@ export class AgentRunner {
     const store = this.resolveSessionStore();
     if (!store) return undefined;
 
+    await this.awaitPendingWrites(context);
     try {
       const stored = await store.get(this.sessionKey(context));
       return isSessionRecord(stored) ? stored.messages : undefined;
@@ -301,6 +380,7 @@ export class AgentRunner {
     const store = this.resolveSessionStore();
     if (!store) return [];
 
+    await this.awaitPendingWrites(context);
     try {
       const stored = await store.get(this.sessionKey(context));
       if (!isSessionRecord(stored)) return [];
@@ -677,6 +757,7 @@ export class AgentRunner {
 
       if (this.useBuiltInRuntime()) {
         const withHistory = this.historyEnabled(input);
+        const writes = this.openWriteQueue(prepared.context, input);
 
         result = await this.executor!.execute({
           agentName,
@@ -696,14 +777,20 @@ export class AgentRunner {
           observerNotifier: notifier,
           history: withHistory ? await this.loadHistory(prepared.context) : undefined,
           onCheckpoint: (checkpoint) =>
-            this.saveInFlightCheckpoint(prepared.context, checkpoint),
+            this.persist(writes, prepared.context, () =>
+              this.saveInFlightCheckpoint(prepared.context, checkpoint),
+            ),
           onTranscript: withHistory
-            ? (messages) => this.saveHistory(prepared.context, messages)
+            ? (messages) =>
+                this.persist(writes, prepared.context, () =>
+                  this.saveHistory(prepared.context, messages),
+                )
             : undefined,
           // Independent of history being enabled: an approval must stay resumable
-          // even for a stateless turn.
+          // even for a stateless turn. Always synchronous for the same reason.
           onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
         });
+        await writes?.flush();
       } else {
         result = await this.requireRuntimeAdapter().execute({
           sessionId: input.sessionId,
@@ -771,6 +858,7 @@ export class AgentRunner {
         let finalUsage: ModelUsage | undefined;
         let finalOutput = '';
         let wasSuspended = false;
+        const writes = this.openWriteQueue(prepared.context, input);
 
         for await (const event of this.executor!.stream({
           agentName,
@@ -790,9 +878,14 @@ export class AgentRunner {
           observerNotifier: notifier,
           history: withHistory ? await this.loadHistory(prepared.context) : undefined,
           onCheckpoint: (checkpoint) =>
-            this.saveInFlightCheckpoint(prepared.context, checkpoint),
+            this.persist(writes, prepared.context, () =>
+              this.saveInFlightCheckpoint(prepared.context, checkpoint),
+            ),
           onTranscript: withHistory
-            ? (messages) => this.saveHistory(prepared.context, messages)
+            ? (messages) =>
+                this.persist(writes, prepared.context, () =>
+                  this.saveHistory(prepared.context, messages),
+                )
             : undefined,
           onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
         })) {
@@ -805,6 +898,7 @@ export class AgentRunner {
           }
           yield event;
         }
+        await writes?.flush();
 
         const durationMs = Date.now() - startAt;
         const result: AgentResult = {

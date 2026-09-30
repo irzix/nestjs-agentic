@@ -23,17 +23,26 @@ export interface ObserverNotifierOptions {
    * Defaults to 1.0 (all turns are observed).
    */
   samplingRate?: number;
+  /**
+   * Upper bound, in milliseconds, on how long a lifecycle hook waits for its
+   * observers. Observers that are still running keep going in the background;
+   * the caller simply stops waiting for them. `0` never waits. Unset waits
+   * for every observer, which is the original behavior.
+   */
+  timeoutMs?: number;
 }
 
 /**
  * Dispatches runtime observer lifecycle hooks with complete error isolation.
  * Observers are executed concurrently using Promise.allSettled so that a slow or
- * failing observer never throws or disrupts the primary agent execution.
+ * failing observer never throws or disrupts the primary agent execution. Set
+ * `timeoutMs` so a slow observer cannot delay it either.
  */
 export class ObserverNotifier {
   private readonly observers: AgentObserver[];
   private readonly samplingRate: number;
   private readonly isSampled: boolean;
+  private readonly timeoutMs?: number;
 
   constructor(
     observers: AgentObserver[] = [],
@@ -43,6 +52,10 @@ export class ObserverNotifier {
     const rate = options.samplingRate ?? 1.0;
     this.samplingRate = Math.max(0, Math.min(1, rate));
     this.isSampled = this.samplingRate >= 1.0 || Math.random() < this.samplingRate;
+    if (options.timeoutMs !== undefined && !(options.timeoutMs >= 0 && Number.isFinite(options.timeoutMs))) {
+      throw new Error(`Observer timeoutMs must be a non-negative finite number, received ${options.timeoutMs}.`);
+    }
+    this.timeoutMs = options.timeoutMs;
   }
 
   get length(): number {
@@ -115,6 +128,26 @@ export class ObserverNotifier {
       }
     });
 
-    await Promise.allSettled(tasks);
+    // allSettled never rejects, so leaving it running unawaited cannot raise an
+    // unhandled rejection.
+    const settled = Promise.allSettled(tasks).then(() => undefined);
+    if (this.timeoutMs === undefined) {
+      await settled;
+      return;
+    }
+    if (this.timeoutMs === 0) {
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.timeoutMs);
+      timer.unref?.();
+    });
+    try {
+      await Promise.race([settled, timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
