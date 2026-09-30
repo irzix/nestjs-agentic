@@ -268,7 +268,9 @@ export class AgentExecutor {
     if (options instanceof CircuitBreaker) return options;
 
     if (!this.breaker) {
-      this.moduleNotifier ??= new ObserverNotifier(this.injectedObservers ?? []);
+      this.moduleNotifier ??= new ObserverNotifier(this.injectedObservers ?? [], {
+        timeoutMs: this.options?.observerTimeoutMs,
+      });
       const notifier = this.moduleNotifier;
 
       this.breaker = new CircuitBreaker(this.requireAdapter().constructor?.name ?? 'model', {
@@ -294,7 +296,9 @@ export class AgentExecutor {
   ): ExecutorRequestContext {
     const observerNotifier =
       input.observerNotifier ??
-      (input.observers?.length ? new ObserverNotifier(input.observers) : undefined);
+      (input.observers?.length
+        ? new ObserverNotifier(input.observers, { timeoutMs: this.options?.observerTimeoutMs })
+        : undefined);
 
     return {
       sessionId: input.sessionId,

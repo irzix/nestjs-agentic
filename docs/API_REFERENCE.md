@@ -1322,6 +1322,26 @@ Observers can be registered globally via `AgenticModule.forRoot({ observers: [..
 
 - `samplingRate`: Optional float between `0.0` (0%) and `1.0` (100%) to sample high-volume turns. Defaults to `1.0`.
 - Observer callbacks run concurrently with complete error isolation (`Promise.allSettled`), guaranteeing that monitoring exceptions never disrupt agent execution.
+- `observerTimeoutMs`: Optional upper bound, in milliseconds, on how long each hook waits for observers. Observers still finish in the background; the turn just stops waiting. `0` never waits. Unset waits for every observer, as before.
+
+## Durability
+
+Each turn writes an in-flight checkpoint after every intermediate model round, and the conversation history when the turn ends. By default (`durability: 'sync'`) each write is awaited where it happens, so a tool result waits for the store before the next model call.
+
+For latency-sensitive turns such as voice, set `durability: 'async'`. Writes are queued in order and the turn carries on without waiting. The queue is drained before `run()` resolves or the stream finishes, and a failed write fails the turn at that point. The next turn for the same session in the same process waits for any queued writes before reading history, even if a stream consumer stopped early (in that case a failed write is not reported).
+
+```typescript
+AgenticModule.forRoot({
+  defaultModel,
+  durability: 'async',
+  observerTimeoutMs: 5,
+});
+
+// Or per run:
+runner.runStream('receptionist', { sessionId, message, durability: 'async' });
+```
+
+Trade-off: a crash mid-turn can lose the latest in-flight checkpoint. Approval checkpoints are always written synchronously, because an approval must be resumable before its id is surfaced, and resumed turns write synchronously too.
 
 ## Injection Tokens
 

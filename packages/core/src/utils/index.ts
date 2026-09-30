@@ -18,3 +18,4 @@ export type {
 } from './circuit-breaker';
 export { isRetryableModelError, readRetryAfterMs, retryWithBackoff } from './retry';
 export type { RetryAfterCarrier, RetryAttemptEvent, RetryOptions } from './retry';
+export { DeferredWriteQueue } from './deferred-write-queue';
