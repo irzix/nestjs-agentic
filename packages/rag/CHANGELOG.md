@@ -1,5 +1,14 @@
 # @nestjs-agentic/rag
 
+## 1.5.0
+
+### Patch Changes
+
+- Updated dependencies [9ee3e4a]
+- Updated dependencies [2a60a91]
+  - @nestjs-agentic/core@1.5.0
+  - @nestjs-agentic/memory@1.5.0
+
 ## 1.4.0
 
 ### Patch Changes
