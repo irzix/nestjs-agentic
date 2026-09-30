@@ -28,6 +28,15 @@ export interface AgentTrajectory {
   /** Session identifier for tracing context. */
   sessionId: string;
 
+  /**
+   * Tenant that owns the lessons learned from this trajectory.
+   *
+   * Lessons are recalled per tenant, so set this to share what one session
+   * learned with the tenant's later sessions. When omitted, lessons are scoped
+   * to `sessionId`, the narrowest scope, and never reach another session.
+   */
+  tenantId?: string;
+
   /** Target agent name. */
   agentName: string;
 

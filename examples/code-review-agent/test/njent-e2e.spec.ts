@@ -249,7 +249,7 @@ export class RefundService {
     'irzix/nestjs-agentic',
   );
 
-  const recalledLessons = await experienceService.getRelevantLessons('security');
+  const recalledLessons = await experienceService.getRelevantLessons('security', 'irzix/nestjs-agentic');
   assert.ok(recalledLessons.some((l) => l.includes('@UsePermissions')));
 
   const auditLogger = new NjentAuditLogger();
