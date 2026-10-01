@@ -31,6 +31,8 @@
       "@nestjs-agentic/evaluation/*": ["./packages/evaluation/dist/*"],
       "@nestjs-agentic/openai": ["./packages/model-openai/dist/index.d.ts"],
       "@nestjs-agentic/openai/*": ["./packages/model-openai/dist/*"],
+      "@nestjs-agentic/jev": ["./packages/jev/dist/index.d.ts"],
+      "@nestjs-agentic/jev/*": ["./packages/jev/dist/*"],
       "nestjs-agentic": ["./packages/core/dist/index.d.ts"],
       "nestjs-agentic/*": ["./packages/core/dist/*"]
     }
