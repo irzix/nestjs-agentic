@@ -29,6 +29,7 @@
     "packages/evaluation",
     "packages/model-openai",
     "packages/mcp",
+    "packages/jev",
     "packages/meta",
     "examples/*",
     "apps/*"

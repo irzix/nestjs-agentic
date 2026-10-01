@@ -313,6 +313,7 @@ export class LocalToolProvider {
           toolName,
           policyName: Constructor.name,
           decision: 'allow',
+          ...(outputResult.reason !== undefined ? { reason: outputResult.reason } : {}),
           args,
         });
       }
@@ -531,6 +532,7 @@ export class LocalToolProvider {
             toolName: tool.toolName,
             policyName: Constructor.name,
             decision: 'allow',
+            ...(result.reason !== undefined ? { reason: result.reason } : {}),
             args,
           });
         }
@@ -608,12 +610,14 @@ export class LocalToolProvider {
     },
   ): Promise<ToolExecutionResult> {
     const requiredApprovals = Math.max(...requests.map((request) => request.requiredApprovals));
+    // Each policy's lifetime is its own ttlSeconds, else the module default,
+    // and the shortest wins: a policy that inherits a short default is not
+    // outlived because another sets a long lifetime. With neither set
+    // anywhere the approval never expires.
     const ttls = requests
-      .map((request) => request.ttlSeconds)
+      .map((request) => request.ttlSeconds ?? call.defaultTtlSeconds)
       .filter((ttl): ttl is number => ttl !== undefined);
-    // A policy's own ttlSeconds overrides the module default; when neither is
-    // set the approval never expires.
-    const ttlSeconds = ttls.length > 0 ? Math.min(...ttls) : call.defaultTtlSeconds;
+    const ttlSeconds = ttls.length > 0 ? Math.min(...ttls) : undefined;
     const reason = [...new Set(requests.map((request) => request.reason))].join(' ');
 
     const approvalId = randomUUID();

@@ -8,7 +8,15 @@ import type { Provenance } from './provenance.interface';
  * - `require_approval`: Tool call requires Human-In-The-Loop approval before execution.
  */
 export type PolicyResult =
-  | { decision: 'allow' }
+  | {
+      decision: 'allow';
+      /**
+       * Why the call was allowed, for policies whose judgment is worth keeping
+       * (a score, a matched rule). Recorded on the audit trail when
+       * `audit.includeAllowDecisions` is enabled; never shown to the model.
+       */
+      reason?: string;
+    }
   | {
       decision: 'deny';
       reason: string;
@@ -46,7 +54,11 @@ export type PolicyResult =
  * - `sanitize`: Output is sanitized/redacted before being returned to the model reasoning loop.
  */
 export type PolicyOutputResult =
-  | { decision: 'allow' }
+  | {
+      decision: 'allow';
+      /** Why the output was let through, recorded on the audit trail; never shown to the model. */
+      reason?: string;
+    }
   | { decision: 'deny'; reason: string }
   | { decision: 'sanitize'; sanitizedResult: unknown };
 

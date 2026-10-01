@@ -1,0 +1,57 @@
+{
+  "name": "@nestjs-agentic/jev",
+  "version": "1.5.0",
+  "description": "Jev (TypeSafe System One) decisions for nestjs-agentic governance: calibrated allow / human review / deny gates for tool calls, output rails, and evaluation judges.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/irzix/nestjs-agentic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/irzix/nestjs-agentic/issues"
+  },
+  "homepage": "https://github.com/irzix/nestjs-agentic#readme",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p test/tsconfig.json && node test-dist/test/jev.spec.js"
+  },
+  "peerDependencies": {
+    "@nestjs-agentic/core": "^1.5.0",
+    "@nestjs/common": "^10.0.0 || ^11.0.0 || ^12.0.0",
+    "@typesafe-ai/sdk": ">=0.6.0"
+  },
+  "peerDependenciesMeta": {
+    "@typesafe-ai/sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nestjs-agentic/core": "^1.5.0",
+    "@nestjs-agentic/evaluation": "^1.5.0",
+    "@typesafe-ai/sdk": "^0.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "nestjs",
+    "nestjs-agentic",
+    "jev",
+    "typesafe",
+    "governance",
+    "guardrails",
+    "human-in-the-loop",
+    "ai-agent",
+    "policy",
+    "llm-judge"
+  ],
+  "license": "MIT"
+}

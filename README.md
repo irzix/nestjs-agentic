@@ -46,6 +46,7 @@ The current release line is `0.6.x`. Core primitives, persistence adapters, and 
 | U-Shaped Context Assembler | Available | `@nestjs-agentic/rag` & `@nestjs-agentic/core` for Lost-in-the-Middle attention mitigation. |
 | Codebase AST & GraphRAG | Available | `@nestjs-agentic/rag` for AST code splitting, hybrid vector store, and graph traversal. |
 | Debiased Evaluation & Trajectory Metrics | Available | `@nestjs-agentic/evaluation` for MT-Bench position-debiased judge and AgentBench metrics. |
+| Jev Decision Gates | Available | `@nestjs-agentic/jev` for calibrated allow / human review / deny decisions on tool calls and output, via TypeSafe's Jev. |
 | Persistence & Durable Checkpoints | Available | In-memory, Redis, and PostgreSQL drivers for Session, State, Approval, and Idempotency. |
 | Sub-Agent Orchestration | Available | `@nestjs-agentic/orchestration` for parallel delegation, bounded concurrency, and refinement. |
 
@@ -63,6 +64,7 @@ See the [product roadmap](docs/ROADMAP.md) for milestones and production-readine
 | [`@nestjs-agentic/rag`](packages/rag) | Retrieval strategies, vector stores, and knowledge-graph primitives |
 | [`@nestjs-agentic/orchestration`](packages/orchestration) | Sub-agent delegation, parallel execution, and refinement loops |
 | [`@nestjs-agentic/evaluation`](packages/evaluation) | Metrics, benchmark execution, and reporting |
+| [`@nestjs-agentic/jev`](packages/jev) | Jev (TypeSafe System One) action gates, output rails, and evaluation judges |
 
 ## Installation
 
@@ -84,6 +86,7 @@ npm install @nestjs-agentic/memory
 npm install @nestjs-agentic/rag @nestjs-agentic/memory
 npm install @nestjs-agentic/orchestration
 npm install @nestjs-agentic/evaluation
+npm install @nestjs-agentic/jev @typesafe-ai/sdk
 ```
 
 Supports NestJS 10, 11 and 12. NestJS 12 ships as ESM only, and these packages are CommonJS, so with NestJS 12 use Node 20.19+ or 22.12+, where `require()` can load ES modules.

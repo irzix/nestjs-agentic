@@ -27,6 +27,7 @@ packages/
   core/                 → NestJS primitives and governance boundary (@nestjs-agentic/core)
   model-openai/         → OpenAI ModelAdapter (@nestjs-agentic/openai)
   mcp/                  → Model Context Protocol client (@nestjs-agentic/mcp)
+  jev/                  → Jev decision gates and judges (@nestjs-agentic/jev)
   memory/               → Stanford Tri-Factor scoring, procedural SOPs, and reflection (@nestjs-agentic/memory)
   rag/                  → AST codebase chunking, vector stores, and GraphRAG (@nestjs-agentic/rag)
   orchestration/        → Sub-agent delegation, parallel execution, and refinement (@nestjs-agentic/orchestration)
