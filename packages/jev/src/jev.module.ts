@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import type { DynamicModule, FactoryProvider } from '@nestjs/common';
+import { CircuitBreaker } from '@nestjs-agentic/core';
+import { assertTimeout } from './ask-jev';
 import type { JevClient } from './jev.interface';
 
 /** Injection token for the shared `JevClient`. */
@@ -11,10 +13,17 @@ export const JEV_DEFAULTS = Symbol('JEV_DEFAULTS');
 export interface JevModuleOptions {
   /** Usually `new TypeSafeClient()` from `@typesafe-ai/sdk`, which reads `TYPESAFE_API_KEY`. */
   client: JevClient;
-  /** Default model for every gate and judge, e.g. a pinned `'jev-1.13.0'`. */
+  /** Default model for gates that use this client, e.g. a pinned `'jev-1.13.0'`. */
   model?: string;
-  /** Default per-call timeout in milliseconds. */
+  /** Default per-call timeout in milliseconds for every gate. */
   timeoutMs?: number;
+  /**
+   * Shared by the gates that use this client, so once Jev has failed
+   * repeatedly they stop waiting on it and follow `onError` at once.
+   * Default: a breaker that opens after 5 consecutive failures and probes
+   * again after 30 seconds. `false` turns it off.
+   */
+  circuitBreaker?: CircuitBreaker | false;
 }
 
 export interface JevModuleAsyncOptions {
@@ -27,6 +36,17 @@ export interface JevModuleAsyncOptions {
 export interface JevDefaults {
   model?: string;
   timeoutMs?: number;
+  circuitBreaker?: CircuitBreaker;
+}
+
+function toDefaults(options: JevModuleOptions): JevDefaults {
+  assertTimeout(options.timeoutMs, 'JevModule');
+  return {
+    model: options.model,
+    timeoutMs: options.timeoutMs,
+    circuitBreaker:
+      options.circuitBreaker === false ? undefined : (options.circuitBreaker ?? new CircuitBreaker('jev')),
+  };
 }
 
 /**
@@ -47,7 +67,7 @@ export class JevModule {
       global: true,
       providers: [
         { provide: JEV_CLIENT, useValue: options.client },
-        { provide: JEV_DEFAULTS, useValue: { model: options.model, timeoutMs: options.timeoutMs } },
+        { provide: JEV_DEFAULTS, useValue: toDefaults(options) },
       ],
       exports: [JEV_CLIENT, JEV_DEFAULTS],
     };
@@ -71,14 +91,7 @@ export class JevModule {
       providers: [
         { provide: OPTIONS, useFactory: options.useFactory, inject: options.inject ?? [] },
         { provide: JEV_CLIENT, useFactory: (resolved: JevModuleOptions) => resolved.client, inject: [OPTIONS] },
-        {
-          provide: JEV_DEFAULTS,
-          useFactory: (resolved: JevModuleOptions): JevDefaults => ({
-            model: resolved.model,
-            timeoutMs: resolved.timeoutMs,
-          }),
-          inject: [OPTIONS],
-        },
+        { provide: JEV_DEFAULTS, useFactory: toDefaults, inject: [OPTIONS] },
       ],
       exports: [JEV_CLIENT, JEV_DEFAULTS],
     };

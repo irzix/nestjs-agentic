@@ -1,3 +1,5 @@
+import type { CircuitBreaker } from '@nestjs-agentic/core';
+
 /**
  * The part of the TypeSafe API client this package uses. `TypeSafeClient` from
  * `@typesafe-ai/sdk` satisfies it, and so can a fake in tests or a client
@@ -81,11 +83,24 @@ export interface JevCallOptions {
    * explicit client wins.
    */
   client?: JevClient;
-  /** Model, e.g. `'jev-latest'` or a pinned version. Defaults to the client's. */
+  /**
+   * Model, e.g. `'jev-latest'` or a pinned version. Defaults to `JevModule`'s
+   * `model` when the module's client is used, otherwise to the client's own.
+   */
   model?: string;
   /**
    * Upper bound on one call in milliseconds, retries included. Exceeding it
-   * counts as an error and follows the caller's `onError`. Default: `5000`.
+   * counts as an error and follows the caller's `onError`. A positive number
+   * up to 2147483647 (about 24.8 days). Default: `5000`.
    */
   timeoutMs?: number;
+  /**
+   * Fails Jev calls fast after repeated failures, so an outage does not make
+   * every call wait for `timeoutMs`. A failed-fast call follows `onError`
+   * like any other failure. `false` turns it off.
+   *
+   * Gates default to the breaker of `JevModule`, or to one of their own when
+   * given their own `client`; judges have none unless one is passed.
+   */
+  circuitBreaker?: CircuitBreaker | false;
 }

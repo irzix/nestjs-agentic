@@ -5,6 +5,8 @@ import {
   AgenticModule,
   AgentRunner,
   ApprovalService,
+  CircuitBreaker,
+  ExecutionCancelledError,
   InMemoryAuditSink,
   MockModelAdapter,
   Param,
@@ -267,13 +269,19 @@ export async function runJevTests() {
     assert(hanging.requests[0]?.options?.timeout === 50, 'Test 5f: The timeout is also passed to the client');
 
     const controller = new AbortController();
-    controller.abort();
-    const cancelled = new FakeJev((_req, options) => {
-      if (options?.signal?.aborted) throw new Error('aborted by caller');
-      return noul('safe', 0.99);
-    });
-    await new JevActionGatePolicy({ onError: 'deny' }, cancelled).evaluate({ ...ctx, signal: controller.signal }, 'refund', {});
+    const cancelled = new FakeJev((_req, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('aborted by caller')));
+      setTimeout(() => controller.abort(), 5);
+    }));
+    const outcome = await new JevActionGatePolicy({ onError: 'allow' }, cancelled)
+      .evaluate({ ...ctx, signal: controller.signal }, 'refund', {})
+      .then((decision) => decision, (err: unknown) => err);
     assert(cancelled.requests[0]?.options?.signal?.aborted === true, 'Test 5g: The run cancellation signal reaches the client');
+    assert(
+      outcome instanceof ExecutionCancelledError,
+      'Test 5h: A run cancelled mid-call throws ExecutionCancelledError instead of following onError',
+      JSON.stringify(outcome),
+    );
   } catch (err) {
     assert(false, 'Test 5: Failure modes', String(err));
   }
@@ -395,6 +403,186 @@ export async function runJevTests() {
     assert(task.score === 1 && task.passed, 'Test 10c: jevTaskJudge works as an LLMAsAJudgeMetric judge');
   } catch (err) {
     assert(false, 'Test 10: Judges', String(err));
+  }
+
+  // TEST 11: review fixes
+  try {
+    const rejects = async (promise: Promise<unknown>) => promise.then(() => undefined, (err: unknown) => err);
+    const throws = (fn: () => unknown) => {
+      try {
+        fn();
+        return undefined;
+      } catch (err) {
+        return err;
+      }
+    };
+
+    // An already-cancelled run never reaches Jev, on either gate.
+    const idle = new FakeJev(() => noul('safe', 0.99));
+    const aborted = new AbortController();
+    aborted.abort();
+    const cancelledCtx = { ...ctx, signal: aborted.signal };
+    const actionErr = await rejects(new JevActionGatePolicy({}, idle).evaluate(cancelledCtx, 'refund', {}));
+    const outputErr = await rejects(new JevOutputGatePolicy({ onError: 'allow' }, idle).evaluateOutput(cancelledCtx, 'readTicket', 'x'));
+    assert(
+      actionErr instanceof ExecutionCancelledError && outputErr instanceof ExecutionCancelledError && idle.requests.length === 0,
+      'Test 11a: A cancelled run throws ExecutionCancelledError from both gates without calling Jev',
+    );
+
+    // An outage keeps dual control: the strictest tier applies.
+    const down = new FakeJev(() => {
+      throw new Error('503');
+    });
+    const fixed = await new JevActionGatePolicy({ requiredApprovals: 2 }, down).evaluate(ctx, 'refund', {});
+    const tiered = await new JevActionGatePolicy({ requiredApprovals: (p) => (p < 0.5 ? 3 : 1) }, down).evaluate(ctx, 'refund', {});
+    const banded = await new JevActionGatePolicy(
+      { requiredApprovals: (p) => (p >= 0.4 && p < 0.6 ? 2 : 1) },
+      down,
+    ).evaluate(ctx, 'refund', {});
+    assert(
+      fixed.decision === 'require_approval' && fixed.requiredApprovals === 2 &&
+        tiered.decision === 'require_approval' && tiered.requiredApprovals === 3 &&
+        banded.decision === 'require_approval' && banded.requiredApprovals === 2,
+      'Test 11b: A call Jev could not judge needs the most approvers the band asks for',
+      JSON.stringify([fixed, tiered, banded]),
+    );
+
+    // Invalid approver counts reach core, which refuses them, instead of becoming one approver.
+    const zero = await new JevActionGatePolicy({ requiredApprovals: () => 0 }, new FakeJev(() => noul('safe', 0.5))).evaluate(ctx, 'refund', {});
+    const nan = await new JevActionGatePolicy({ requiredApprovals: () => Number.NaN }, down).evaluate(ctx, 'refund', {});
+    assert(
+      zero.decision === 'require_approval' && zero.requiredApprovals === 0 &&
+        nan.decision === 'require_approval' && Number.isNaN(nan.requiredApprovals),
+      'Test 11c: An invalid requiredApprovals is passed on for core to refuse',
+      JSON.stringify([zero, nan]),
+    );
+
+    // Unnamed gates never share a class name.
+    const first = JevActionGate({ client: idle });
+    const second = JevActionGate({ client: idle });
+    const outputs = [JevOutputGate({ client: idle }), JevOutputGate({ client: idle })];
+    const named = JevActionGate({ client: idle, name: 'WireGate' });
+    assert(
+      first.name !== second.name && first.name.startsWith('JevActionGate') && second.name.startsWith('JevActionGate') &&
+        outputs[0].name !== outputs[1].name && named.name === 'WireGate',
+      'Test 11d: Unnamed gates get distinct names, explicit names are kept',
+      [first.name, second.name, outputs[0].name, outputs[1].name].join(', '),
+    );
+
+    // A bug in describe() is not a Jev outage: it propagates even with onError allow.
+    const unused = new FakeJev(() => noul('safe', 0.99));
+    const describeErr = await rejects(
+      new JevActionGatePolicy(
+        { onError: 'allow', describe: (c) => ({ tier: (c.data as { tier: string }).tier }) },
+        unused,
+      ).evaluate(ctx, 'refund', {}),
+    );
+    const outputDescribeErr = await rejects(
+      new JevOutputGatePolicy(
+        { onError: 'allow', describe: () => { throw new TypeError('describe bug'); } },
+        unused,
+      ).evaluateOutput(ctx, 'readTicket', 'x'),
+    );
+    assert(
+      describeErr instanceof TypeError && outputDescribeErr instanceof TypeError && unused.requests.length === 0,
+      'Test 11e: An error in describe() propagates instead of following onError',
+      String(describeErr),
+    );
+
+    // A client that ignores the signal is still cut off at timeoutMs.
+    const deaf = new FakeJev(() => new Promise<JevResult>(() => undefined));
+    const started = Date.now();
+    const deafDecision = await new JevActionGatePolicy({ timeoutMs: 30, onError: 'deny' }, deaf).evaluate(ctx, 'refund', {});
+    assert(
+      deafDecision.decision === 'deny' && deafDecision.reason.includes('timed out after 30ms') && Date.now() - started < 1000,
+      'Test 11f: timeoutMs bounds a client that ignores the abort signal',
+      JSON.stringify(deafDecision),
+    );
+
+    // Unusable timeouts fail at construction.
+    const badTimeouts = [0, -1, Number.POSITIVE_INFINITY, 3_000_000_000, Number.NaN];
+    assert(
+      badTimeouts.every((timeoutMs) =>
+        throws(() => new JevActionGatePolicy({ timeoutMs }, idle)) instanceof RangeError &&
+        throws(() => new JevOutputGatePolicy({ timeoutMs }, idle)) instanceof RangeError &&
+        throws(() => JevModule.forRoot({ client: idle, timeoutMs })) instanceof RangeError &&
+        throws(() => jevTaskJudge({ client: idle, timeoutMs })) instanceof RangeError,
+      ),
+      'Test 11g: A timeoutMs setTimeout cannot honor is rejected at construction',
+    );
+
+    // Reasons never contradict the decision.
+    const nearAllow = await new JevActionGatePolicy({}, new FakeJev(() => noul('safe', 0.8996))).evaluate(ctx, 'refund', {});
+    const nearDeny = await new JevActionGatePolicy({}, new FakeJev(() => noul('safe', 0.0996))).evaluate(ctx, 'refund', {});
+    const custom = await new JevActionGatePolicy({ allowAt: 0.955 }, new FakeJev(() => noul('safe', 0.95))).evaluate(ctx, 'refund', {});
+    assert(
+      nearAllow.decision === 'require_approval' && nearAllow.reason.includes('p(safe)=0.8996') &&
+        nearDeny.decision === 'deny' && nearDeny.reason.includes('p(safe)=0.0996') &&
+        custom.decision === 'require_approval' && custom.reason.includes('p(safe)=0.95;') && custom.reason.includes('>= 0.955'),
+      'Test 11h: Reasons show enough precision to agree with the decision',
+      JSON.stringify([nearAllow, nearDeny, custom]),
+    );
+
+    // Allowed calls and outputs record why.
+    const allowed = await new JevActionGatePolicy({}, new FakeJev(() => noul('safe', 0.97))).evaluate(ctx, 'refund', {});
+    const passed = await new JevOutputGatePolicy({}, new FakeJev(() => noul('withhold', 0.2))).evaluateOutput(ctx, 'readTicket', 'hi');
+    assert(
+      allowed.decision === 'allow' && allowed.reason?.includes('p(safe)=0.97') === true &&
+        passed.decision === 'allow' && passed.reason?.includes('p=0.20') === true,
+      'Test 11i: Allow decisions carry the probability for the audit trail',
+      JSON.stringify([allowed, passed]),
+    );
+
+    // A gate with its own client does not inherit the module's model or breaker.
+    const own = new FakeJev(() => noul('safe', 0.99));
+    const moduleBreaker = new CircuitBreaker('module-jev');
+    await new JevActionGatePolicy({ client: own }, idle, { model: 'jev-module-pin', circuitBreaker: moduleBreaker }).evaluate(ctx, 'refund', {});
+    await new JevActionGatePolicy({}, own, { model: 'jev-module-pin' }).evaluate(ctx, 'refund', {});
+    assert(
+      own.requests[0]?.request.model === undefined && own.requests[1]?.request.model === 'jev-module-pin',
+      'Test 11j: The module default model applies only to the module client',
+      JSON.stringify(own.requests.map((r) => r.request.model)),
+    );
+
+    // An outage trips the breaker, after which calls fail fast; cancellations do not count.
+    const outage = new FakeJev(() => {
+      throw new Error('503');
+    });
+    const breaker = new CircuitBreaker('jev-test', { failureThreshold: 2, cooldownMs: 60_000 });
+    const breakerGate = new JevActionGatePolicy({ circuitBreaker: breaker, onError: 'deny' }, outage);
+    await breakerGate.evaluate(ctx, 'refund', {});
+    await breakerGate.evaluate(ctx, 'refund', {});
+    const fast = await breakerGate.evaluate(ctx, 'refund', {});
+    assert(
+      outage.requests.length === 2 && fast.decision === 'deny' && fast.reason.includes('is open'),
+      'Test 11k: After repeated failures the breaker fails calls fast, following onError',
+      JSON.stringify({ calls: outage.requests.length, fast }),
+    );
+
+    const cancelBreaker = new CircuitBreaker('jev-cancel', { failureThreshold: 1, cooldownMs: 60_000 });
+    const slowJev = new FakeJev((_req, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+    }));
+    const runAbort = new AbortController();
+    setTimeout(() => runAbort.abort(), 5);
+    await rejects(new JevActionGatePolicy({ circuitBreaker: cancelBreaker }, slowJev).evaluate({ ...ctx, signal: runAbort.signal }, 'refund', {}));
+    assert(cancelBreaker.currentState() === 'closed', 'Test 11l: A cancelled run does not trip the breaker', cancelBreaker.currentState());
+
+    // A score answer without a confidence still scores.
+    const bare = new FakeJev(() => ({ model: 'm', answers: { verdict: { type: 'score', score: 3 } } }) as unknown as JevResult);
+    const judged = await jevTaskJudge({ client: bare })({ query: 'q' }, { output: 'o' });
+    assert(judged.score === 0.75, 'Test 11m: A score answer without confidence still scores', JSON.stringify(judged));
+
+    // The faithfulness judge does not see the reference answer.
+    const grounded = new FakeJev(() => answer('verdict', { type: 'score', score: 4, confidence: 0.9 }));
+    await jevFaithfulnessJudge({ client: grounded })({ query: 'q', answer: 'a', contexts: ['p'], expectedAnswer: 'a' });
+    assert(
+      JSON.stringify(grounded.requests[0]?.request.state) === JSON.stringify({ question: 'q', answer: 'a', passages: ['p'] }),
+      'Test 11n: Groundedness is judged against the passages only, not the reference answer',
+      JSON.stringify(grounded.requests[0]?.request.state),
+    );
+  } catch (err) {
+    assert(false, 'Test 11: Review fixes', String(err));
   }
 
   await sleep(0);

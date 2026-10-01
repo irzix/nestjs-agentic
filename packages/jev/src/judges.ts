@@ -1,4 +1,4 @@
-import { askJev, formatProbability } from './ask-jev';
+import { assertTimeout, askJev, formatProbability } from './ask-jev';
 import type { JevCallOptions, JevClient, JevState } from './jev.interface';
 
 export interface JevJudgeOptions extends Omit<JevCallOptions, 'client'> {
@@ -46,14 +46,27 @@ async function scoreOnRubric(
     options.client,
     state,
     { verdict: { type: 'score', instructions: options.question ?? defaults.question, criteria: rubric } },
-    { model: options.model, timeoutMs: options.timeoutMs },
+    {
+      model: options.model,
+      timeoutMs: options.timeoutMs,
+      circuitBreaker: options.circuitBreaker || undefined,
+    },
   );
   const top = rubric.length - 1;
   const position = Math.min(top, Math.max(0, answers.verdict.score));
+  // The score is what the metric needs; a missing confidence only shortens the reason.
+  const confidence = answers.verdict.confidence;
+  const confidenceNote =
+    typeof confidence === 'number' && Number.isFinite(confidence) ? ` (confidence ${formatProbability(confidence)})` : '';
   return {
     score: position / top,
-    reason: `Jev placed it at ${position.toFixed(2)} of ${top} (confidence ${formatProbability(answers.verdict.confidence)}).`,
+    reason: `Jev placed it at ${position.toFixed(2)} of ${top}${confidenceNote}.`,
   };
+}
+
+function assertJudgeOptions(options: JevJudgeOptions, owner: string): void {
+  if (!options?.client) throw new Error(`${owner} needs a Jev client.`);
+  assertTimeout(options.timeoutMs, owner);
 }
 
 /**
@@ -61,12 +74,17 @@ async function scoreOnRubric(
  * `@nestjs-agentic/evaluation`: Jev scores how well the answer is supported by
  * the retrieved passages on a five-level rubric.
  *
+ * Jev sees the query, the answer, and the passages, not the item's
+ * `expectedAnswer`: groundedness is about the passages, and a reference
+ * answer would reward a correct answer the passages do not support.
+ *
  * @example
  * new FaithfulnessMetric(jevFaithfulnessJudge({ client: new TypeSafeClient() }))
  */
 export function jevFaithfulnessJudge(
   options: JevJudgeOptions,
 ): (input: JevFaithfulnessInput) => Promise<{ score: number; reason: string }> {
+  assertJudgeOptions(options, 'jevFaithfulnessJudge');
   return (input) =>
     scoreOnRubric(
       options,
@@ -74,12 +92,7 @@ export function jevFaithfulnessJudge(
         question: 'How well is the answer supported by the retrieved passages?',
         rubric: FAITHFULNESS_RUBRIC,
       },
-      {
-        question: input.query,
-        answer: input.answer,
-        passages: input.contexts,
-        ...(input.expectedAnswer !== undefined ? { referenceAnswer: input.expectedAnswer } : {}),
-      },
+      { question: input.query, answer: input.answer, passages: input.contexts },
     );
 }
 
@@ -96,6 +109,7 @@ export function jevTaskJudge(
   item: { query: string; expectedOutput?: string },
   result: { output: string },
 ) => Promise<{ score: number; reason: string }> {
+  assertJudgeOptions(options, 'jevTaskJudge');
   return (item, result) =>
     scoreOnRubric(
       options,

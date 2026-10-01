@@ -43,7 +43,7 @@ export class AppModule {}
 @UsePolicies(RefundGate)
 ```
 
-By default Jev sees `{ tool, arguments }`, which is sent to the TypeSafe API. Use `describe` to control exactly what leaves your system. When Jev is unreachable or too slow, calls go to human review by default (`onError`).
+By default Jev sees `{ tool, arguments }`, which is sent to the TypeSafe API. Use `describe` to control exactly what leaves your system. When Jev is unreachable or too slow, calls go to human review by default (`onError`), and a circuit breaker stops waiting on Jev once it has failed repeatedly. `requiredApprovals` above 1 needs `@nestjs-agentic/core` 1.6.0 or later.
 
 See the [full documentation](https://github.com/irzix/nestjs-agentic/tree/main/apps/landing/content/docs/jev/index.mdx).
 

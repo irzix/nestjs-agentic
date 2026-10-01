@@ -313,6 +313,7 @@ export class LocalToolProvider {
           toolName,
           policyName: Constructor.name,
           decision: 'allow',
+          ...(outputResult.reason !== undefined ? { reason: outputResult.reason } : {}),
           args,
         });
       }
@@ -531,6 +532,7 @@ export class LocalToolProvider {
             toolName: tool.toolName,
             policyName: Constructor.name,
             decision: 'allow',
+            ...(result.reason !== undefined ? { reason: result.reason } : {}),
             args,
           });
         }

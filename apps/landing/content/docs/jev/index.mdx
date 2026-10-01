@@ -15,7 +15,7 @@ nestjs-agentic already has the governance boundary: every tool call passes throu
 | between `denyBelow` and `allowAt` | `require_approval`: a human decides, optionally several humans |
 | below `denyBelow` (0.1) | `deny`: refused, and the model is told why |
 
-`@nestjs-agentic/jev` packages this as policies you attach with `@UsePolicies`, plus judges for the evaluation package. Nothing in the core changes. Jev plugs into the boundary that is already there.
+`@nestjs-agentic/jev` packages this as policies you attach with `@UsePolicies`, plus judges for the evaluation package. Jev plugs into the boundary that is already there.
 
 ## Installation
 
@@ -23,7 +23,7 @@ nestjs-agentic already has the governance boundary: every tool call passes throu
 npm install @nestjs-agentic/jev @typesafe-ai/sdk
 ```
 
-Set `TYPESAFE_API_KEY` in the environment. Requires Node.js 20 or newer, like the TypeSafe SDK.
+Set `TYPESAFE_API_KEY` in the environment. Requires Node.js 20 or newer, like the TypeSafe SDK. A `requiredApprovals` above 1 needs `@nestjs-agentic/core` 1.6.0 or later, which enforces multiple approvers; with an older core, the gate refuses to start rather than let one person approve.
 
 ## Gating tool calls
 
@@ -65,11 +65,15 @@ export class AppModule {}
 
 `JevActionGate(options)` returns an injectable policy class. Register it in `policies` and attach it with `@UsePolicies`, like any other policy. It can run alongside rule-based policies on the same tool: put cheap deterministic checks first, so Jev is only asked about calls they let through.
 
-Every decision reason carries the probability and the thresholds, for example `Jev sent "refund" to human review (p(safe)=0.43; runs unreviewed at >= 0.95, refused below 0.10).` That text is what the model sees on a denial and what the audit trail records, under the gate's `name`.
+Give each gate its own `name`. It identifies the gate on the audit trail, and core also resolves policy classes by name, so two gates must not share one. Unnamed gates are numbered (`JevActionGate`, `JevActionGate#2`, ...) so they never collide.
+
+Every decision reason carries the probability and the thresholds, for example `Jev sent "refund" to human review (p(safe)=0.43; runs unreviewed at >= 0.95, refused below 0.10).` That text is what the model sees on a denial and what the audit trail records, under the gate's `name`. Allowed calls carry a reason too, recorded when `audit.includeAllowDecisions` is on. The probability is shown with as many decimals as it takes to agree with the decision: a call at 0.8996 reads `p(safe)=0.8996`, never `0.90`.
 
 ### What Jev sees
 
 By default Jev receives `{ tool, arguments }`. That payload goes to the TypeSafe API, so decide deliberately what it contains. `describe` replaces it: leave out what must not leave your system, and add what the judgment needs.
+
+If `describe` throws, the error propagates and the call does not run. A bug in your own code is not a Jev outage, so `onError` does not cover it.
 
 ```typescript
 JevActionGate({
@@ -89,11 +93,15 @@ JevActionGate({
 
 If Jev is unreachable, slower than `timeoutMs` (default 5000 ms), or answers in an unexpected shape, the gate follows `onError`:
 
-- `'require_approval'` (default): the call goes to a human. An outage slows things down but neither blocks nor waves calls through.
+- `'require_approval'` (default): the call goes to a human. An outage slows things down but neither blocks nor waves calls through. The call needs the most approvers `requiredApprovals` asks for anywhere in the review band, so an outage cannot be used to get past dual control.
 - `'deny'`: fail closed.
 - `'allow'`: fail open. Use this only for gates that are advisory.
 
-The run's cancellation signal is passed to the Jev call, so an aborted run does not wait for it.
+`timeoutMs` bounds the whole call, even with a client that ignores its abort signal.
+
+A **circuit breaker** keeps an outage from making every call wait for the timeout. The gates that use `JevModule`'s client share one: after 5 consecutive failures it opens, calls follow `onError` at once, and after 30 seconds one call probes Jev again. Pass your own with `circuitBreaker: new CircuitBreaker('jev', { failureThreshold, cooldownMs })` (from `@nestjs-agentic/core`), or `false` to turn it off. A gate with its own `client` gets a breaker of its own.
+
+The run's cancellation signal is passed to the Jev call. A cancelled run is not an outage: the gate throws `ExecutionCancelledError`, so the run stops instead of leaving behind an approval or a decision for a run that no longer exists.
 
 ## Withholding tool output
 
@@ -108,6 +116,12 @@ async readEmail(@Param('id') id: string) { /* ... */ }
 ```
 
 The default question looks for prompt injection. Pass your own `question` and `criteria` to withhold anything else Jev can recognize. An output gate fails closed (`onError: 'deny'`) by default, like the framework's other output rails.
+
+Output rails also see a failed tool's error message, as `{ error: message }`, because an error can carry injected text as well. A raw error message can also hold a connection string or an upstream response body, and the gate sends what it judges to the TypeSafe API. Attach a redaction policy before the gate, so Jev only sees what is left after redaction:
+
+```typescript
+@UsePolicies(SecretRedactionPolicy, InjectionGate)
+```
 
 ## Without a module
 
@@ -139,11 +153,13 @@ new LLMAsAJudgeMetric(jevTaskJudge({ client }), 0.75);
 
 Both use a five-level rubric by default and normalize Jev's expected position to a 0 to 1 score. Pass `rubric` and `question` to grade against your own criteria.
 
+The faithfulness judge shows Jev the query, the answer, and the passages, but not the item's `expectedAnswer`: groundedness is about the passages, and a reference answer would reward a correct answer the passages do not support. Judges have no circuit breaker unless you pass `circuitBreaker`.
+
 ## Configuration reference
 
 | Option | Gate | Default |
 | --- | --- | --- |
-| `name` | both | `'JevActionGate'` / `'JevOutputGate'` |
+| `name` | both | `'JevActionGate'` / `'JevOutputGate'`, numbered for further unnamed gates |
 | `tools` | both | every tool the gate is attached to |
 | `question`, `criteria` | both | a general safety question / a prompt-injection question |
 | `allowAt`, `denyBelow` | action | `0.9`, `0.1` |
@@ -152,4 +168,5 @@ Both use a five-level rubric by default and normalize Jev's expected position to
 | `denyAt` | output | `0.5` |
 | `describe` | both | `{ tool, arguments }` / `{ tool, output }` |
 | `onError` | both | `'require_approval'` / `'deny'` |
-| `client`, `model`, `timeoutMs` | both | from `JevModule`, the client's default model, `5000` |
+| `client`, `model`, `timeoutMs` | both | from `JevModule` (its `model` only for its own client), the client's default model, `5000` |
+| `circuitBreaker` | both | `JevModule`'s shared breaker, or one per gate with its own `client`; `false` turns it off |

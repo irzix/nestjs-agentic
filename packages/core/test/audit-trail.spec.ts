@@ -41,6 +41,7 @@ class AmountPolicy implements ToolPolicy {
     if (amount > 500) {
       return { decision: 'require_approval', reason: 'Requires manager approval.' };
     }
+    if (amount <= 10) return { decision: 'allow', reason: 'Petty cash.' };
     return { decision: 'allow' };
   }
 }
@@ -290,8 +291,19 @@ export async function runAuditTrailTests() {
 
     const allowed = verbose.sink.ofType('tool_policy_decision');
     assert(
-      allowed.length === 1 && allowed[0]?.decision === 'allow',
+      allowed.length === 1 && allowed[0]?.decision === 'allow' && !('reason' in allowed[0]),
       'Test 4c: includeAllowDecisions records allow decisions',
+    );
+
+    const explained = createHarness({
+      model: modelRequesting(5, 'Sent.'),
+      moduleOptions: { audit: { includeAllowDecisions: true } },
+    });
+    await explained.runner.run('banker', { sessionId: 'sess_audit_4d', message: 'transfer 5' });
+    assert(
+      explained.sink.ofType('tool_policy_decision')[0]?.reason === 'Petty cash.',
+      'Test 4d: An allow decision keeps the reason its policy gave',
+      JSON.stringify(explained.sink.ofType('tool_policy_decision')),
     );
   } catch (err: any) {
     assert(false, 'Test 4: allow decision filtering', err.message);

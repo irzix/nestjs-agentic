@@ -164,7 +164,8 @@ A compliant runtime calls `ResolvedTool.execute()` and does not invoke applicati
 
 ```typescript
 type PolicyResult =
-  | { decision: 'allow' }
+  // reason is optional, recorded with audit.includeAllowDecisions, never shown to the model.
+  | { decision: 'allow'; reason?: string }
   | { decision: 'deny'; reason: string; retryAfterSeconds?: number }
   | {
       decision: 'require_approval';
