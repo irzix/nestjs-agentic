@@ -95,8 +95,9 @@ export interface JevCallOptions {
    */
   timeoutMs?: number;
   /**
-   * Fails Jev calls fast after repeated failures, so an outage does not make
-   * every call wait for `timeoutMs`. A failed-fast call follows `onError`
+   * Fails Jev calls fast after repeated failures (errors, timeouts, or
+   * malformed answers), so an outage does not make every call wait for
+   * `timeoutMs`. A failed-fast call follows `onError`
    * like any other failure. `false` turns it off.
    *
    * Gates default to the breaker of `JevModule`, or to one of their own when

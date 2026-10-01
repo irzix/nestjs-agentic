@@ -559,6 +559,22 @@ export async function runJevTests() {
       JSON.stringify({ calls: outage.requests.length, fast }),
     );
 
+    const garbled = new FakeJev(() => ({ model: 'm', answers: { safe: { type: 'noul', noul: 7 } } }) as unknown as JevResult);
+    const garbledBreaker = new CircuitBreaker('jev-garbled', { failureThreshold: 2, cooldownMs: 60_000 });
+    const garbledGate = new JevActionGatePolicy({ circuitBreaker: garbledBreaker, onError: 'deny' }, garbled);
+    const garbledFirst = await garbledGate.evaluate(ctx, 'refund', {});
+    await garbledGate.evaluate(ctx, 'refund', {});
+    const garbledFast = await garbledGate.evaluate(ctx, 'refund', {});
+    assert(
+      garbled.requests.length === 2 &&
+        garbledBreaker.currentState() === 'open' &&
+        garbledFirst.decision === 'deny' && garbledFirst.reason.includes('no usable "noul" answer') &&
+        !garbledFirst.reason.includes('Jev call failed: Jev returned') &&
+        garbledFast.decision === 'deny' && garbledFast.reason.includes('is open'),
+      'Test 11k2: Repeated malformed answers trip the breaker too',
+      JSON.stringify({ calls: garbled.requests.length, state: garbledBreaker.currentState(), garbledFirst, garbledFast }),
+    );
+
     const cancelBreaker = new CircuitBreaker('jev-cancel', { failureThreshold: 1, cooldownMs: 60_000 });
     const slowJev = new FakeJev((_req, options) => new Promise((_resolve, reject) => {
       options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));

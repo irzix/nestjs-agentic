@@ -99,7 +99,7 @@ If Jev is unreachable, slower than `timeoutMs` (default 5000 ms), or answers in 
 
 `timeoutMs` bounds the whole call, even with a client that ignores its abort signal.
 
-A **circuit breaker** keeps an outage from making every call wait for the timeout. The gates that use `JevModule`'s client share one: after 5 consecutive failures it opens, calls follow `onError` at once, and after 30 seconds one call probes Jev again. Pass your own with `circuitBreaker: new CircuitBreaker('jev', { failureThreshold, cooldownMs })` (from `@nestjs-agentic/core`), or `false` to turn it off. A gate with its own `client` gets a breaker of its own.
+A **circuit breaker** keeps an outage from making every call wait for the timeout. The gates that use `JevModule`'s client share one: after 5 consecutive failures (errors, timeouts, or malformed answers) it opens, calls follow `onError` at once, and after 30 seconds one call probes Jev again. Pass your own with `circuitBreaker: new CircuitBreaker('jev', { failureThreshold, cooldownMs })` (from `@nestjs-agentic/core`), or `false` to turn it off. A gate with its own `client` gets a breaker of its own.
 
 The run's cancellation signal is passed to the Jev call. A cancelled run is not an outage: the gate throws `ExecutionCancelledError`, so the run stops instead of leaving behind an approval or a decision for a run that no longer exists.
 

@@ -58,8 +58,11 @@ export async function askJev<Q extends Record<string, JevQuestion>>(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const cancelledByCaller = () => options.signal?.aborted === true;
 
-  const call = () =>
-    raceAbort(
+  // Validation is part of the call, so a breaker counts a malformed answer
+  // as a failure: a Jev that keeps answering unusably is as down as one
+  // that does not answer.
+  const call = async (): Promise<JevResult> => {
+    const result = await raceAbort(
       () =>
         client.systemOne(
           { state, questions, ...(options.model !== undefined ? { model: options.model } : {}) },
@@ -67,6 +70,9 @@ export async function askJev<Q extends Record<string, JevQuestion>>(
         ),
       controller.signal,
     );
+    assertAnswered(result, questions);
+    return result;
+  };
 
   let result: JevResult;
   try {
@@ -74,6 +80,7 @@ export async function askJev<Q extends Record<string, JevQuestion>>(
       ? await throughBreaker(options.circuitBreaker, call, cancelledByCaller)
       : await call();
   } catch (err: unknown) {
+    if (err instanceof JevCallError) throw err;
     const reason = controller.signal.aborted && !cancelledByCaller()
       ? `timed out after ${timeoutMs}ms`
       : err instanceof Error
@@ -85,13 +92,17 @@ export async function askJev<Q extends Record<string, JevQuestion>>(
     options.signal?.removeEventListener('abort', onAbort);
   }
 
+  return { answers: result.answers as { [K in keyof Q]: JevAnswer & { type: Q[K]['type'] } }, result };
+}
+
+/** Throws `JevCallError` unless every question got a well-formed answer of its type. */
+function assertAnswered(result: JevResult, questions: Record<string, JevQuestion>): void {
   for (const [name, question] of Object.entries(questions)) {
     const answer = result?.answers?.[name];
     if (!answer || answer.type !== question.type || !isWellFormed(answer)) {
       throw new JevCallError(`Jev returned no usable "${question.type}" answer for "${name}".`);
     }
   }
-  return { answers: result.answers as { [K in keyof Q]: JevAnswer & { type: Q[K]['type'] } }, result };
 }
 
 /** Settles with the call, or rejects as soon as `signal` aborts, whichever comes first. */
@@ -113,9 +124,10 @@ function raceAbort<T>(call: () => PromiseLike<T>, signal: AbortSignal): Promise<
 }
 
 /**
- * Runs the call through a circuit breaker. Jev failures and timeouts count
- * toward tripping it; a call the caller cancelled says nothing about Jev, so
- * it does not, except that a cancelled probe keeps the circuit open.
+ * Runs the call through a circuit breaker. Jev failures, timeouts, and
+ * malformed answers count toward tripping it; a call the caller cancelled
+ * says nothing about Jev, so it does not, except that a cancelled probe
+ * keeps the circuit open.
  */
 async function throughBreaker<T>(
   breaker: CircuitBreaker,
