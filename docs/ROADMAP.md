@@ -184,14 +184,15 @@ Carried to 1.5 (not completed in 1.4.0): structured output ([#140](https://githu
 
 ### 1.5 — Reliability & Output Quality (continued)
 
-> **Status: In Progress** | [Milestone 1.5](https://github.com/irzix/nestjs-agentic/milestone/11)
+> **Status: Complete** (released in 1.6.0) | [Milestone 1.5](https://github.com/irzix/nestjs-agentic/milestone/11)
 
 Goal: finish the output-quality and governance work carried over from 1.4, plus telemetry-safety and dual-control hardening.
 
-- [ ] Support structured output with JSON Schema validation and bounded repair retries ([#140](https://github.com/irzix/nestjs-agentic/issues/140)).
-- [ ] Add retrieval-quality metrics (recall@k, precision@k, MRR, nDCG, faithfulness) to `@nestjs-agentic/evaluation` ([#143](https://github.com/irzix/nestjs-agentic/issues/143)).
-- [ ] Dual control (N-of-M approvals) for high-risk actions ([#175](https://github.com/irzix/nestjs-agentic/issues/175)).
-- [ ] Stop observer events from dispatching raw provider errors, which risks leaking secrets to telemetry ([#183](https://github.com/irzix/nestjs-agentic/issues/183)).
+- [x] Support structured output with JSON Schema validation and bounded repair retries ([#140](https://github.com/irzix/nestjs-agentic/issues/140)).
+- [x] Add retrieval-quality metrics (recall@k, precision@k, MRR, nDCG, faithfulness) to `@nestjs-agentic/evaluation` ([#143](https://github.com/irzix/nestjs-agentic/issues/143)).
+- [x] Dual control (N-of-M approvals) for high-risk actions ([#175](https://github.com/irzix/nestjs-agentic/issues/175)).
+- [x] Stop observer events from dispatching raw provider errors, which risks leaking secrets to telemetry ([#183](https://github.com/irzix/nestjs-agentic/issues/183)).
+- [x] Add `@nestjs-agentic/jev`: calibrated allow / human review / deny gates for tool calls and output, plus evaluation judges, backed by TypeSafe's Jev.
 
 ---
 
