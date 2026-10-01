@@ -27,7 +27,9 @@ export interface StructuredOutputOptions<T = unknown> {
    * Ask the provider for strict, schema-constrained decoding where supported.
    * Strict modes accept only a subset of JSON Schema (OpenAI requires every
    * property to be `required` and `additionalProperties: false`), so this is
-   * off by default. The answer is validated either way.
+   * off by default; the OpenAI adapter sends a schema outside that subset
+   * non-strict rather than have the request rejected. The answer is
+   * validated either way.
    *
    * Default: `false`
    */

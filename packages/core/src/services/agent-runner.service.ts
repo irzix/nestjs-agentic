@@ -450,6 +450,13 @@ export class AgentRunner {
 
     const config = agent.define();
 
+    // Resolved before the tool runs: an agent schema that cannot be used must
+    // fail the settlement, not strand an approval whose side effect happened.
+    const resumes = Boolean(pending.toolCallId && this.executor?.isAvailable());
+    const structuredOutput = resumes
+      ? this.resumedStructuredOutput(pending.checkpoint?.structuredOutput, config)
+      : undefined;
+
     const outcome: ToolExecutionResult = decision.approved
       ? await this.invokeApprovedToolFromConfig(
           config.tools,
@@ -460,7 +467,7 @@ export class AgentRunner {
         )
       : { success: false, status: 'denied', reason: decision.reason ?? pending.reason };
 
-    if (!pending.toolCallId || !this.executor?.isAvailable()) {
+    if (!resumes || !this.executor || !pending.toolCallId) {
       return outcome;
     }
 
@@ -486,7 +493,7 @@ export class AgentRunner {
       limits: config.limits ?? this.options.limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer: config.messageReducer ?? this.options.messageReducer,
-      structuredOutput: restoreStructuredOutput(pending.checkpoint?.structuredOutput, resolveStructuredOutput([config])),
+      structuredOutput,
       signal: options?.signal,
       onCheckpoint: (checkpoint) => this.saveInFlightCheckpoint(pending.context, checkpoint),
       onTranscript: store
@@ -667,6 +674,25 @@ export class AgentRunner {
   /**
    * Invokes an approved tool directly across registered providers and local tools.
    */
+  /**
+   * The spec a resumed or recovered turn runs under. A stored spec was valid
+   * when its run started, so an agent schema broken since then cannot block
+   * it; without a stored spec the agent's own applies and must be valid.
+   */
+  private resumedStructuredOutput(
+    stored: StoredStructuredOutput | undefined,
+    config: AgentConfig,
+  ): StructuredOutputSpec | undefined {
+    if (!stored) return resolveStructuredOutput([config]);
+    let agentSpec: StructuredOutputSpec | undefined;
+    try {
+      agentSpec = resolveStructuredOutput([config]);
+    } catch {
+      agentSpec = undefined;
+    }
+    return restoreStructuredOutput(stored, agentSpec);
+  }
+
   private async invokeApprovedToolFromConfig(
     tools: (object | Function)[],
     toolName: string,
@@ -1092,7 +1118,7 @@ export class AgentRunner {
       limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer: config.messageReducer ?? this.options.messageReducer,
-      structuredOutput: restoreStructuredOutput(checkpoint.structuredOutput, resolveStructuredOutput([config])),
+      structuredOutput: this.resumedStructuredOutput(checkpoint.structuredOutput, config),
       signal: options?.signal,
       onCheckpoint: (cp) => this.saveInFlightCheckpoint(context, cp),
       onTranscript: sessionStore

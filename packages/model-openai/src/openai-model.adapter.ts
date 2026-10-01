@@ -215,20 +215,23 @@ export class OpenAiModelAdapter implements ModelAdapter {
   private buildBaseParams(request: ModelRequest) {
     const tools = toOpenAiTools(request.tools);
     const format = this.supportsStructuredOutput ? request.outputFormat : undefined;
+    const schema = format && (needsWrapping(format.schema) ? wrapSchema(format.schema) : format.schema);
 
     return {
       ...this.options.extraBody,
       model: request.model.model,
       messages: toOpenAiMessages(request.messages),
       ...(tools.length > 0 ? { tools } : {}),
-      ...(format
+      ...(format && schema
         ? {
             response_format: {
               type: 'json_schema' as const,
               json_schema: {
                 name: format.name,
-                schema: needsWrapping(format.schema) ? wrapSchema(format.schema) : format.schema,
-                strict: format.strict,
+                schema,
+                // Strict mode rejects schemas outside its subset with a 400, so
+                // those are sent non-strict; the core runtime validates either way.
+                strict: format.strict && isStrictCompatible(schema),
                 ...(format.description !== undefined ? { description: format.description } : {}),
               },
             },
@@ -258,16 +261,93 @@ function needsWrapping(schema: Record<string, unknown>): boolean {
 }
 
 function wrapSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  // Local `$ref`s point at the root, so definitions move to the new root.
+  // Definitions move to the new root, so `#/$defs/...` and `#/definitions/...`
+  // references keep their targets.
   const { $defs, definitions, ...inner } = schema;
-  return {
+  const wrapper = (value: unknown, defs: unknown, legacyDefs: unknown) => ({
     type: 'object',
-    properties: { value: inner },
+    properties: { value },
     required: ['value'],
     additionalProperties: false,
-    ...($defs !== undefined ? { $defs } : {}),
-    ...(definitions !== undefined ? { definitions } : {}),
+    ...(defs !== undefined ? { $defs: defs } : {}),
+    ...(legacyDefs !== undefined ? { definitions: legacyDefs } : {}),
+  });
+
+  // Any other local reference (`#` for root recursion, `#/items/...`) pointed
+  // into the original root. The root then moves into `$defs` too, and those
+  // references are re-pointed at it.
+  let moved = false;
+  const rootKey = uniqueKey('wrapped_root', $defs);
+  const moveRef = (ref: string): string => {
+    if (ref !== '#' && !ref.startsWith('#/')) return ref;
+    if (ref.startsWith('#/$defs/') || ref.startsWith('#/definitions/')) return ref;
+    moved = true;
+    return `#/$defs/${rootKey}${ref.slice(1)}`;
   };
+  const movedInner = rewriteRefs(inner, moveRef);
+  const movedDefs = $defs !== undefined ? rewriteRefs($defs, moveRef) : undefined;
+  const movedDefinitions = definitions !== undefined ? rewriteRefs(definitions, moveRef) : undefined;
+  if (!moved) return wrapper(inner, $defs, definitions);
+  return wrapper(
+    { $ref: `#/$defs/${rootKey}` },
+    { ...(isRecord(movedDefs) ? movedDefs : {}), [rootKey]: movedInner },
+    movedDefinitions,
+  );
+}
+
+/** Keywords whose values are data, not subschemas, so a `$ref` key inside them is not a reference. */
+const DATA_KEYWORDS = new Set(['const', 'enum', 'default', 'examples']);
+/** Keywords whose values map names to subschemas. */
+const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Copies a schema with every `$ref` passed through `map`. */
+function rewriteRefs(node: unknown, map: (ref: string) => string): unknown {
+  if (Array.isArray(node)) return node.map((item) => rewriteRefs(item, map));
+  if (!isRecord(node)) return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === '$ref' && typeof value === 'string') out[key] = map(value);
+    else if (DATA_KEYWORDS.has(key)) out[key] = value;
+    else if (SCHEMA_MAPS.has(key) && isRecord(value)) {
+      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, rewriteRefs(sub, map)]));
+    } else out[key] = rewriteRefs(value, map);
+  }
+  return out;
+}
+
+function uniqueKey(base: string, taken: unknown): string {
+  const keys = isRecord(taken) ? taken : {};
+  let key = base;
+  for (let n = 2; key in keys; n++) key = `${base}_${n}`;
+  return key;
+}
+
+/** Subschema-valued keywords that strict mode's object rules reach through. */
+const SUBSCHEMA_KEYWORDS = ['items', 'prefixItems', 'anyOf', 'oneOf', 'allOf', 'not', 'additionalProperties', 'contains', 'if', 'then', 'else'];
+
+/**
+ * Whether OpenAI's strict mode accepts the schema's objects: each must set
+ * `additionalProperties: false` and list every property in `required`.
+ * Checked through properties, items, combinators, and definitions.
+ */
+function isStrictCompatible(node: unknown): boolean {
+  if (Array.isArray(node)) return node.every(isStrictCompatible);
+  if (!isRecord(node)) return true;
+  const types = Array.isArray(node.type) ? node.type : [node.type];
+  if (types.includes('object') || isRecord(node.properties)) {
+    if (node.additionalProperties !== false) return false;
+    const required = Array.isArray(node.required) ? node.required : [];
+    if (isRecord(node.properties) && !Object.keys(node.properties).every((name) => required.includes(name))) return false;
+  }
+  for (const key of SCHEMA_MAPS) {
+    const map = node[key];
+    if (isRecord(map) && !Object.values(map).every(isStrictCompatible)) return false;
+  }
+  return SUBSCHEMA_KEYWORDS.every((key) => isStrictCompatible(node[key]));
 }
 
 /** Undoes `wrapSchema` on the model's answer. Anything else passes through. */

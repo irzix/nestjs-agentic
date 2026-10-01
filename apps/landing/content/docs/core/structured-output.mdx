@@ -69,7 +69,7 @@ structuredOutput: {
 }
 ```
 
-`strict` asks the provider for schema-constrained decoding. It is off by default because strict modes accept only a subset of JSON Schema: OpenAI requires every property to be listed in `required` and `additionalProperties: false`, and rejects other schemas with a 400. The answer is validated either way.
+`strict` asks the provider for schema-constrained decoding. It is off by default because strict modes accept only a subset of JSON Schema: OpenAI requires every object to list each of its properties in `required` and set `additionalProperties: false`, and rejects other schemas with a 400. The OpenAI adapter checks this through nested objects, arrays, combinators, and definitions, and sends a schema outside the subset non-strict instead, so setting `strict` never makes a request fail. The answer is validated either way.
 
 ## Validation
 

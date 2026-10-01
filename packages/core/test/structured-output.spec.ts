@@ -98,6 +98,8 @@ class ApproveRefunds implements ToolPolicy {
 
 @ToolSet({ name: 'support-desk' })
 class SupportTools {
+  static refunds = 0;
+
   @Tool({ name: 'lookupCustomer', description: 'Look up a customer' })
   lookupCustomer(@Param('email') email: string) {
     return { email, plan: 'pro' };
@@ -106,6 +108,7 @@ class SupportTools {
   @Tool({ name: 'refund', description: 'Refund a charge' })
   @UsePolicies(ApproveRefunds)
   refund(@Param('amount', { type: 'number' }) amount: number) {
+    SupportTools.refunds++;
     return { refunded: amount };
   }
 }
@@ -610,6 +613,45 @@ export async function runStructuredOutputTests() {
     );
   } catch (err) {
     assert(false, 'Test 15: Persistence', String(err));
+  }
+
+  // TEST 16: an agent schema broken after the run started
+  try {
+    reset();
+    const broken = { type: 'string', pattern: '(' } as JsonSchema;
+    const runSchema: JsonSchema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] };
+    const adapter = new ScriptedAdapter([
+      { content: '', toolCalls: [{ id: 'r1', name: 'refund', args: { amount: 20 } }] },
+      '{"ok":true}',
+    ]);
+    const { runner, approvals } = await boot(adapter);
+    const suspended = await runner.run('triage', { sessionId: 's16', message: 'refund me', outputSchema: runSchema });
+    const approvalId = (suspended.toolCalls[0]?.result as { approvalId?: string }).approvalId!;
+    agentSchema = broken;
+    const resumed = (await approvals.approve(approvalId)) as { structured?: { ok?: boolean } };
+    assert(
+      resumed.structured?.ok === true,
+      "Test 16a: A stored schema still settles the approval when the agent's schema has since broken",
+      JSON.stringify(resumed),
+    );
+
+    reset();
+    agentSchema = undefined;
+    const second = await boot(
+      new ScriptedAdapter([{ content: '', toolCalls: [{ id: 'r2', name: 'refund', args: { amount: 5 } }] }, 'done']),
+    );
+    const pending = await second.runner.run('triage', { sessionId: 's16b', message: 'refund again' });
+    const id = (pending.toolCalls[0]?.result as { approvalId?: string }).approvalId!;
+    agentSchema = broken;
+    const before = SupportTools.refunds;
+    const err = await expectError(second.approvals.approve(id));
+    assert(
+      err instanceof InvalidOutputSchemaError && SupportTools.refunds === before,
+      'Test 16b: Without a stored schema, a broken agent schema fails before the approved tool runs',
+      String(err),
+    );
+  } catch (err) {
+    assert(false, 'Test 16: Broken agent schema on resume', String(err));
   }
 
   reset();

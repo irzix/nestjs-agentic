@@ -34,7 +34,7 @@ const adapter = new OpenAiModelAdapter({
 ## Supported Capabilities
 
 - **Tool Calling**: Converts `@Tool()` parameter definitions into OpenAPI/JSON Schema function call objects.
-- **Structured Outputs**: Sends an agent's `outputSchema` as `response_format: { type: 'json_schema' }` (`strict` follows `structuredOutput.strict`), wrapping non-object roots, and reports refusals. Set `structuredOutput: 'prompt'` on the adapter for servers that do not support `json_schema`. The core runtime still validates and repairs the answer. See [Structured Output](/docs/core/structured-output).
+- **Structured Outputs**: Sends an agent's `outputSchema` as `response_format: { type: 'json_schema' }` (`strict` follows `structuredOutput.strict` when the schema is within strict mode's subset, and is off otherwise), wrapping non-object roots with their `$ref` targets kept, and reports refusals. Set `structuredOutput: 'prompt'` on the adapter for servers that do not support `json_schema`. The core runtime still validates and repairs the answer. See [Structured Output](/docs/core/structured-output).
 - **Reasoning Models Compatibility**: Automatically handles `max_completion_tokens` instead of `max_tokens` for reasoning models (`o1`, `o3-mini`, `gpt-5-luna`).
 - **Transient Error Retries**: Automatic exponential backoff for HTTP 429 (rate limits) and 5xx transient server errors.
 - **AbortSignal Forwarding**: Propagates cancellation signals when requests are aborted or timeouts expire.

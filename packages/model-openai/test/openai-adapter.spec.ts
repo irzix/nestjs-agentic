@@ -450,7 +450,7 @@ async function main() {
       () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: 'plain' } }] }),
     ]);
     const adapter = buildAdapter(fetch);
-    const schema = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'] };
+    const schema = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'], additionalProperties: false };
 
     await adapter.generate(
       buildRequest({
@@ -527,6 +527,71 @@ async function main() {
       JSON.stringify(sent),
     );
     assert(unwrapped.content === '[1,2]', 'Test 12e: The wrapped answer is unwrapped again', unwrapped.content);
+  } catch (err: any) {
+    assert(false, 'Test 12: Structured output edge cases', err.message);
+  }
+
+  // TEST 13: strict mode only for schemas it accepts, and references survive wrapping
+  try {
+    const recorder = createRecorder(
+      Array.from({ length: 5 }, () => () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"value":[]}' } }] })),
+    );
+    const adapter = buildAdapter(recorder.fetch);
+    const send = (schema: Record<string, unknown>) =>
+      adapter.generate(buildRequest({ outputFormat: { type: 'json_schema', name: 'r', schema, strict: true } }));
+
+    const loose = { type: 'object', properties: { a: { type: 'object', properties: { b: { type: 'string' } }, required: ['b'] } }, required: ['a'], additionalProperties: false };
+    const partial = { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['a'], additionalProperties: false };
+    await send(loose);
+    await send(partial);
+    assert(
+      recorder.calls[0].body.response_format.json_schema.strict === false &&
+        recorder.calls[1].body.response_format.json_schema.strict === false,
+      'Test 13a: A schema strict mode would reject (a nested open object, an optional property) is sent non-strict',
+    );
+
+    const nested = { type: 'array', items: { anyOf: [{ type: 'number' }, { $ref: '#' }] } };
+    await send(nested);
+    const sentNested = recorder.calls[2].body.response_format.json_schema;
+    const root = sentNested.schema.$defs?.[sentNested.schema.properties.value.$ref?.replace('#/$defs/', '')];
+    assert(
+      sentNested.schema.properties.value.$ref === '#/$defs/wrapped_root' &&
+        root?.type === 'array' &&
+        root.items.anyOf[1].$ref === '#/$defs/wrapped_root' &&
+        sentNested.strict === true,
+      'Test 13b: Root recursion still points at the original root after wrapping',
+      JSON.stringify(sentNested.schema),
+    );
+
+    const pointer = {
+      type: 'array',
+      items: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+      prefixItems: [{ $ref: '#/items' }],
+      $defs: { wrapped_root: { type: 'string' }, keep: { $ref: '#/$defs/wrapped_root' } },
+      default: [{ $ref: '#' }],
+    };
+    await send(pointer);
+    const sentPointer = recorder.calls[3].body.response_format.json_schema.schema;
+    assert(
+      sentPointer.properties.value.$ref === '#/$defs/wrapped_root_2' &&
+        sentPointer.$defs.wrapped_root_2.prefixItems[0].$ref === '#/$defs/wrapped_root_2/items' &&
+        sentPointer.$defs.keep.$ref === '#/$defs/wrapped_root' &&
+        sentPointer.$defs.wrapped_root.type === 'string' &&
+        sentPointer.$defs.wrapped_root_2.default[0].$ref === '#',
+      'Test 13c: Pointers into the moved root are re-pointed, definition references and data are left alone',
+      JSON.stringify(sentPointer),
+    );
+
+    const legacy = { type: 'array', items: { $ref: '#/definitions/node' }, definitions: { node: { anyOf: [{ type: 'number' }, { $ref: '#' }] } } };
+    await send(legacy);
+    const sentLegacy = recorder.calls[4].body.response_format.json_schema.schema;
+    assert(
+      sentLegacy.properties.value.$ref === '#/$defs/wrapped_root' &&
+        sentLegacy.$defs.wrapped_root.items.$ref === '#/definitions/node' &&
+        sentLegacy.definitions.node.anyOf[1].$ref === '#/$defs/wrapped_root',
+      'Test 13d: A root reference inside draft-07 definitions also moves the root',
+      JSON.stringify(sentLegacy),
+    );
   } catch (err: any) {
     assert(false, 'Test 12: Structured output edge cases', err.message);
   }
