@@ -44,7 +44,13 @@ function summarize(event: AuditEvent): string {
     case 'tool_output_policy_decision':
       return `${event.toolName} output ${event.decision} by ${event.policyName}`;
     case 'approval_requested':
-      return `${event.toolName} approval ${event.approvalId}`;
+      return `${event.toolName} approval ${event.approvalId}${
+        event.requiredApprovals ? ` needs ${event.requiredApprovals} approvers` : ''
+      }`;
+    case 'approval_signed':
+      return `${event.toolName} approval ${event.approvalId} signed by ${describeActor(event.actor)} (${
+        event.signatures
+      } of ${event.requiredApprovals})`;
     case 'approval_settled':
       return `${event.toolName} ${event.outcome} approval ${event.approvalId}${
         event.actor ? ` by ${describeActor(event.actor)}` : ''

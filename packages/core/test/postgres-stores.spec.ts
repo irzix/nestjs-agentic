@@ -110,6 +110,61 @@ export function createFakePostgres() {
         }
       }
 
+      const live = (key: unknown, tableName: string) => {
+        const row = getTable(tableName).get(String(key));
+        if (!row || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) return undefined;
+        return row;
+      };
+      const parse = (row: StoredRow) => (typeof row.data === 'string' ? JSON.parse(row.data) : row.data);
+
+      // Dual control: conditional signature append (UPDATE ... RETURNING).
+      // Emulated in one synchronous step, as the row lock makes it in Postgres.
+      if (normalized.startsWith('UPDATE') && normalized.includes("'{signatures}'")) {
+        const tableName = normalized.match(/UPDATE ([a-zA-Z0-9_]+) SET/i)![1];
+        const [key, signatureJson, signer] = values;
+        const row = live(key, tableName);
+        if (!row) return { rows: [], rowCount: 0 };
+        const data = parse(row);
+        const signatures: any[] = data.signatures ?? [];
+        const required = data.requiredApprovals ?? 1;
+        if (
+          data.completingSigner !== undefined ||
+          signatures.length >= required ||
+          signatures.some((signature) => signature?.actor?.userId === signer)
+        ) {
+          return { rows: [], rowCount: 0 };
+        }
+        data.signatures = [...signatures, JSON.parse(String(signatureJson))];
+        if (data.signatures.length >= required) data.completingSigner = signer;
+        row.data = JSON.stringify(data);
+        return { rows: [{ data: row.data } as R], rowCount: 1 };
+      }
+
+      // Dual control: take the completion of a record already at its threshold.
+      if (normalized.startsWith('UPDATE') && normalized.includes("'{completingSigner}'")) {
+        const tableName = normalized.match(/UPDATE ([a-zA-Z0-9_]+) SET/i)![1];
+        const [key, signer] = values;
+        const row = live(key, tableName);
+        if (!row) return { rows: [], rowCount: 0 };
+        const data = parse(row);
+        if (data.completingSigner !== undefined || (data.signatures?.length ?? 0) < (data.requiredApprovals ?? 1)) {
+          return { rows: [], rowCount: 0 };
+        }
+        data.completingSigner = signer;
+        row.data = JSON.stringify(data);
+        return { rows: [{ data: row.data } as R], rowCount: 1 };
+      }
+
+      // Dual control: the marked signer claims the approval.
+      if (normalized.startsWith('DELETE FROM') && normalized.includes('completingSigner')) {
+        const tableName = normalized.match(/DELETE FROM ([a-zA-Z0-9_]+) WHERE/i)![1];
+        const [key, signer] = values;
+        const row = getTable(tableName).get(String(key));
+        if (!row || parse(row).completingSigner !== signer) return { rows: [], rowCount: 0 };
+        getTable(tableName).delete(String(key));
+        return { rows: [row as R], rowCount: 1 };
+      }
+
       // DELETE ... RETURNING
       if (normalized.startsWith('DELETE FROM') && normalized.includes('RETURNING')) {
         const match = normalized.match(/DELETE FROM ([a-zA-Z0-9_]+) WHERE/i);
@@ -201,7 +256,16 @@ export async function runPostgresStoresTests() {
       createStore: () => new PostgresApprovalStore({ client }),
       log: false,
     });
-    assert(result.failed === 0, 'Test 2: PostgresApprovalStore passes ApprovalStore contract');
+    assert(
+      result.failed === 0,
+      'Test 2: PostgresApprovalStore passes ApprovalStore contract',
+      result.failures.join(' | '),
+    );
+    assert(
+      result.skipped === 0,
+      'Test 2b: No contract group, dual control included, is skipped for PostgresApprovalStore',
+      String(result.skipped),
+    );
   }
 
   // 3. PostgresIdempotencyStore Contract

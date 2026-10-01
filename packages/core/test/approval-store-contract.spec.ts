@@ -5,6 +5,8 @@ import {
   runApprovalStoreContract,
 } from '../src';
 import type {
+  ApprovalSignature,
+  ApprovalSignatureResult,
   ApprovalStore,
   GenericRedisClient,
   PendingApproval,
@@ -25,8 +27,12 @@ interface RecordedSet {
  * is exercised through the same surface it uses in production. `getdel` is
  * optional so both the atomic claim path and the get+del fallback can be
  * covered.
+ *
+ * `eval` mirrors the semantics of `RedisApprovalStore`'s addSignature and
+ * claim scripts in one synchronous step, which is what makes them atomic here,
+ * as a script is in Redis. The Lua itself is not executed by this fake.
  */
-function createFakeRedis(options: { withGetDel: boolean }) {
+function createFakeRedis(options: { withGetDel: boolean; withEval?: boolean }) {
   const storage = new Map<string, string>();
   const sets: RecordedSet[] = [];
 
@@ -53,6 +59,40 @@ function createFakeRedis(options: { withGetDel: boolean }) {
       const value = storage.get(key) ?? null;
       storage.delete(key);
       return value;
+    };
+  }
+
+  if (options.withEval ?? options.withGetDel) {
+    client.eval = async (script, numKeys, ...args) => {
+      const keys = args.slice(0, numKeys).map(String);
+      const argv = args.slice(numKeys).map(String);
+      const raw = storage.get(keys[0]);
+
+      if (!script.includes('requiredApprovals')) {
+        // The claim script: GET and DEL in one step.
+        storage.delete(keys[0]);
+        return raw ?? null;
+      }
+
+      const [signer, line] = argv;
+      if (raw === undefined) return null;
+      const [head, ...lines] = raw.split('\n');
+      const required = Number(/^\{"requiredApprovals":(\d+)/.exec(head)?.[1] ?? 1);
+      const signed = lines.filter(Boolean);
+      if (signed.length >= required) {
+        storage.delete(keys[0]);
+        return ['complete', raw];
+      }
+      if (signed.some((entry) => entry.slice(0, entry.indexOf('\t')) === signer)) {
+        return ['duplicate', raw];
+      }
+      const updated = `${raw}\n${line}`;
+      if (signed.length + 1 >= required) {
+        storage.delete(keys[0]);
+        return ['complete', updated];
+      }
+      storage.set(keys[0], updated);
+      return ['pending', updated];
     };
   }
 
@@ -84,6 +124,26 @@ class NonCompliantApprovalStore implements ApprovalStore {
     await new Promise((resolve) => setTimeout(resolve, 0));
     this.store.delete(id);
     return found;
+  }
+}
+
+/**
+ * Implements addSignature with an await between the read and the write, so
+ * concurrent signers can all see the same count. Proves the suite catches it.
+ */
+class NonAtomicSignatureStore extends InMemoryApprovalStore {
+  async addSignature(id: string, signature: ApprovalSignature): Promise<ApprovalSignatureResult | null> {
+    const approval = await this.get(id);
+    if (!approval) return null;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const signatures = [...(approval.signatures ?? []), signature];
+    const updated = { ...approval, signatures };
+    if (signatures.length >= (approval.requiredApprovals ?? 1)) {
+      await this.delete(id);
+      return { status: 'complete', approval: updated };
+    }
+    await this.save(updated);
+    return { status: 'pending', approval: updated };
   }
 }
 
@@ -175,9 +235,66 @@ export async function runApprovalStoreContractTests() {
       'Test 3a: The get+del fallback passes every non-concurrency assertion',
       result.failures.join(' | '),
     );
-    assert(result.skipped === 1, 'Test 3b: Atomicity assertions are skipped, not silently passed');
+    assert(
+      result.skipped === 2,
+      'Test 3b: Claim atomicity and the dual-control groups are skipped, not silently passed',
+      String(result.skipped),
+    );
   } catch (err: any) {
     assert(false, 'Test 3: Redis fallback contract', err.message);
+  }
+
+  // TEST 3c: Without eval, RedisApprovalStore does not claim to support dual control
+  try {
+    const withoutEval = new RedisApprovalStore({
+      client: createFakeRedis({ withGetDel: true, withEval: false }).client,
+    });
+    const withEval = new RedisApprovalStore({ client: createFakeRedis({ withGetDel: true }).client });
+    const viaEvalFn = new RedisApprovalStore({
+      client: createFakeRedis({ withGetDel: true, withEval: false }).client,
+      evalFn: async () => null,
+    });
+    assert(
+      withoutEval.addSignature === undefined &&
+        typeof withEval.addSignature === 'function' &&
+        typeof viaEvalFn.addSignature === 'function',
+      'Test 3c: addSignature exists only when a script can run atomically (eval or evalFn)',
+    );
+
+    const evalOnly = await runApprovalStoreContract({
+      name: 'RedisApprovalStore (eval, no GETDEL)',
+      log: false,
+      createStore: () =>
+        new RedisApprovalStore({ client: createFakeRedis({ withGetDel: false, withEval: true }).client }),
+    });
+    assert(
+      evalOnly.failed === 0 && evalOnly.skipped === 0,
+      'Test 3f: Without GETDEL, claim() stays atomic through eval, so dual control is safe',
+      evalOnly.failures.join(' | '),
+    );
+  } catch (err: any) {
+    assert(false, 'Test 3c: Redis dual-control capability', err.message);
+  }
+
+  // TEST 3d: The suite detects a non-atomic addSignature
+  try {
+    const result = await runApprovalStoreContract({
+      name: 'NonAtomicSignatureStore',
+      log: false,
+      createStore: () => new NonAtomicSignatureStore(),
+    });
+    assert(
+      result.failures.some((f) => f.includes('exactly one completes')),
+      'Test 3d: Concurrent signers completing more than once is detected',
+      result.failures.join(' | '),
+    );
+    assert(
+      result.failures.some((f) => f.includes('repeated signature from the same userId')),
+      'Test 3e: A store that counts the same userId twice is detected',
+      result.failures.join(' | '),
+    );
+  } catch (err: any) {
+    assert(false, 'Test 3d: Non-atomic signature detection', err.message);
   }
 
   // TEST 4: The suite detects a non-compliant store

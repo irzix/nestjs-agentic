@@ -132,6 +132,16 @@ export function toOpenTelemetryGenAiAttributes(
       attributes[OpenTelemetryGenAiConventions.APPROVAL_ID] = event.approvalId;
       break;
 
+    case 'approval_signed':
+      attributes[OpenTelemetryGenAiConventions.OPERATION_NAME] = 'approval_signed';
+      attributes[OpenTelemetryGenAiConventions.AGENT_NAME] = event.agentName;
+      attributes[OpenTelemetryGenAiConventions.TOOL_NAME] = event.toolName;
+      attributes[OpenTelemetryGenAiConventions.APPROVAL_ID] = event.approvalId;
+      if (event.actor.userId) {
+        attributes[OpenTelemetryGenAiConventions.USER_ID] = event.actor.userId;
+      }
+      break;
+
     case 'approval_settled':
       attributes[OpenTelemetryGenAiConventions.OPERATION_NAME] = 'approval_settled';
       attributes[OpenTelemetryGenAiConventions.AGENT_NAME] = event.agentName;

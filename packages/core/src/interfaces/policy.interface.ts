@@ -29,6 +29,14 @@ export type PolicyResult =
        * default, or leave both unset for an approval that never expires.
        */
       ttlSeconds?: number;
+      /**
+       * Number of distinct approvers who must sign off before the withheld tool
+       * runs (dual control, N-of-M). A positive integer; defaults to `1`, a
+       * single approver. Values above 1 need an `ApprovalStore` that implements
+       * `addSignature`; with any other store the call is denied rather than
+       * silently settled by one person.
+       */
+      requiredApprovals?: number;
     };
 
 /**

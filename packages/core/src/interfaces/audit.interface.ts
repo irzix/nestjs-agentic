@@ -60,7 +60,26 @@ export interface ApprovalRequestedAuditEvent extends AuditEventBase {
   reason: string;
   /** When the approval stops being resolvable, if it has a lifetime. */
   expiresAt?: Date;
+  /** Distinct approvers needed, when more than one (dual control). */
+  requiredApprovals?: number;
   args?: Record<string, unknown>;
+}
+
+/**
+ * An approver signed a dual-control approval. Recorded for every counted
+ * signature, so a reviewer can follow the progression and not just the final
+ * settlement. The signature that meets the threshold is followed by an
+ * `approval_settled` event.
+ */
+export interface ApprovalSignedAuditEvent extends AuditEventBase {
+  type: 'approval_signed';
+  approvalId: string;
+  agentName: string;
+  toolName: string;
+  actor: AuditActor;
+  /** Signatures recorded so far, this one included. */
+  signatures: number;
+  requiredApprovals: number;
 }
 
 /** A human resolved a pending approval, and the outcome was applied. */
@@ -72,6 +91,14 @@ export interface ApprovalSettledAuditEvent extends AuditEventBase {
   outcome: 'approved' | 'rejected';
   /** Who made the decision, when the application supplied it. */
   actor?: AuditActor;
+  /**
+   * Every approver who signed a dual-control approval, in signing order.
+   * Absent for single-approver approvals. `actor` is whoever settled the
+   * approval, usually the final signer. It need not appear here: a reviewer
+   * who rejects does not sign, and a caller who completes a record that
+   * already met its threshold settles it without adding a signature.
+   */
+  signatures?: AuditActor[];
   /** Rejection reason, or the reason approval was required. */
   reason?: string;
   args?: Record<string, unknown>;
@@ -144,6 +171,7 @@ export type AuditEvent =
   | ToolPolicyDecisionAuditEvent
   | ToolOutputPolicyDecisionAuditEvent
   | ApprovalRequestedAuditEvent
+  | ApprovalSignedAuditEvent
   | ApprovalSettledAuditEvent
   | ApprovalExpiredAuditEvent
   | ApprovalSettlementFailedAuditEvent

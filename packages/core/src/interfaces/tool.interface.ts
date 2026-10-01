@@ -53,6 +53,10 @@ export type ToolExecutionResult<T = unknown> =
       status: 'pending_approval';
       reason: string;
       approvalId: string;
+      /** Distinct approvers needed, when more than one (dual control). */
+      requiredApprovals?: number;
+      /** Signatures collected so far, set alongside `requiredApprovals`. */
+      signatures?: number;
       /** Reserved for uniform inspection; unset, since no tool content exists yet. */
       provenance?: Provenance;
     };

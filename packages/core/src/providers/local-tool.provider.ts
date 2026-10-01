@@ -459,6 +459,7 @@ export class LocalToolProvider {
         }
 
         const policyMap = this.getPolicyMap();
+        const approvalRequests: ApprovalRequest[] = [];
 
         for (const Constructor of allPolicyConstructors) {
           const policy = this.resolvePolicy(Constructor, policyMap);
@@ -488,63 +489,39 @@ export class LocalToolProvider {
           }
 
           if (result.decision === 'require_approval') {
-            const approvalId = randomUUID();
-            const createdAt = new Date();
-            // A policy's own ttlSeconds overrides the module default; when
-            // neither is set the approval never expires.
-            const ttlSeconds = result.ttlSeconds ?? defaultApprovalTtlSeconds;
-            const expiresAt =
-              ttlSeconds !== undefined
-                ? new Date(createdAt.getTime() + ttlSeconds * 1000)
+            // Dual control fails closed: a threshold the store cannot enforce
+            // must not quietly become a single-approver approval.
+            const requiredApprovals = result.requiredApprovals ?? 1;
+            const misconfiguration = !(Number.isInteger(requiredApprovals) && requiredApprovals >= 1)
+              ? `${Constructor.name} requested an invalid requiredApprovals (${String(result.requiredApprovals)}); it must be a positive integer`
+              : requiredApprovals > 1 && typeof this.approvalStore.addSignature !== 'function'
+                ? `${Constructor.name} requires ${requiredApprovals} approvers, but the configured ApprovalStore does not implement addSignature()`
                 : undefined;
-            await this.approvalStore.save({
-              id: approvalId,
-              agentName,
-              toolName: tool.toolName,
-              args,
-              context: agentContext,
-              reason: result.reason,
-              createdAt,
-              expiresAt,
-              toolCallId,
-              requestedBy: requesterFrom(agentContext),
-            });
-
-            if (this.audit?.isEnabled()) {
-              const envelope = auditEnvelope(agentContext);
-
-              // Both the boundary decision and the resulting request are
-              // recorded: the first proves the call was gated, the second is
-              // what a reviewer correlates their eventual decision against.
-              await this.audit.record({
-                ...envelope,
+            if (misconfiguration) {
+              const reason = `Approval cannot be requested: ${misconfiguration}.`;
+              await this.audit?.record({
+                ...auditEnvelope(agentContext),
                 type: 'tool_policy_decision',
                 agentName,
                 toolName: tool.toolName,
                 policyName: Constructor.name,
-                decision: 'require_approval',
-                reason: result.reason,
-                approvalId,
+                decision: 'deny',
+                reason,
                 args,
               });
-              await this.audit.record({
-                ...envelope,
-                type: 'approval_requested',
-                approvalId,
-                agentName,
-                toolName: tool.toolName,
-                reason: result.reason,
-                expiresAt,
-                args,
-              });
+              return { success: false, status: 'denied', reason };
             }
 
-            return {
-              success: false,
-              status: 'pending_approval',
+            // The remaining policies still run: a later deny must win, and a
+            // later policy may ask for more approvers or a shorter lifetime.
+            // An approved call skips policies, so this is their only chance.
+            approvalRequests.push({
+              policyName: Constructor.name,
               reason: result.reason,
-              approvalId,
-            };
+              requiredApprovals,
+              ttlSeconds: result.ttlSeconds,
+            });
+            continue;
           }
 
           await this.audit?.record({
@@ -555,6 +532,17 @@ export class LocalToolProvider {
             policyName: Constructor.name,
             decision: 'allow',
             args,
+          });
+        }
+
+        if (approvalRequests.length > 0) {
+          return this.requestApproval(approvalRequests, {
+            agentContext,
+            agentName,
+            toolName: tool.toolName,
+            args,
+            toolCallId,
+            defaultTtlSeconds: defaultApprovalTtlSeconds,
           });
         }
 
@@ -603,6 +591,96 @@ export class LocalToolProvider {
 
     return { success: true, data, provenance: { source: 'tool', origin: tool.toolName } };
   }
+
+  /**
+   * Creates one approval for every policy that required one, applying the
+   * strictest terms: the most approvers and the shortest lifetime.
+   */
+  private async requestApproval(
+    requests: ApprovalRequest[],
+    call: {
+      agentContext: AgentContext;
+      agentName: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      toolCallId?: string;
+      defaultTtlSeconds?: number;
+    },
+  ): Promise<ToolExecutionResult> {
+    const requiredApprovals = Math.max(...requests.map((request) => request.requiredApprovals));
+    const ttls = requests
+      .map((request) => request.ttlSeconds)
+      .filter((ttl): ttl is number => ttl !== undefined);
+    // A policy's own ttlSeconds overrides the module default; when neither is
+    // set the approval never expires.
+    const ttlSeconds = ttls.length > 0 ? Math.min(...ttls) : call.defaultTtlSeconds;
+    const reason = [...new Set(requests.map((request) => request.reason))].join(' ');
+
+    const approvalId = randomUUID();
+    const createdAt = new Date();
+    const expiresAt = ttlSeconds !== undefined ? new Date(createdAt.getTime() + ttlSeconds * 1000) : undefined;
+    await this.approvalStore.save({
+      id: approvalId,
+      agentName: call.agentName,
+      toolName: call.toolName,
+      args: call.args,
+      context: call.agentContext,
+      reason,
+      createdAt,
+      expiresAt,
+      toolCallId: call.toolCallId,
+      requestedBy: requesterFrom(call.agentContext),
+      ...(requiredApprovals > 1 ? { requiredApprovals } : {}),
+    });
+
+    if (this.audit?.isEnabled()) {
+      const envelope = auditEnvelope(call.agentContext);
+
+      // Both the boundary decisions and the resulting request are recorded:
+      // the first prove the call was gated, the second is what a reviewer
+      // correlates their eventual decision against.
+      for (const request of requests) {
+        await this.audit.record({
+          ...envelope,
+          type: 'tool_policy_decision',
+          agentName: call.agentName,
+          toolName: call.toolName,
+          policyName: request.policyName,
+          decision: 'require_approval',
+          reason: request.reason,
+          approvalId,
+          args: call.args,
+        });
+      }
+      await this.audit.record({
+        ...envelope,
+        type: 'approval_requested',
+        approvalId,
+        agentName: call.agentName,
+        toolName: call.toolName,
+        reason,
+        expiresAt,
+        ...(requiredApprovals > 1 ? { requiredApprovals } : {}),
+        args: call.args,
+      });
+    }
+
+    return {
+      success: false,
+      status: 'pending_approval',
+      reason,
+      approvalId,
+      ...(requiredApprovals > 1 ? { requiredApprovals, signatures: 0 } : {}),
+    };
+  }
+}
+
+/** One policy's request for approval, before requests are combined. */
+interface ApprovalRequest {
+  policyName: string;
+  reason: string;
+  requiredApprovals: number;
+  ttlSeconds?: number;
 }
 
 /**

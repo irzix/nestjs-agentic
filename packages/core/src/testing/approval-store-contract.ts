@@ -1,5 +1,10 @@
 import { APPROVAL_CHECKPOINT_VERSION } from '../interfaces/approval.interface';
-import type { ApprovalStore, PendingApproval } from '../interfaces/approval.interface';
+import type {
+  ApprovalSignature,
+  ApprovalSignatureResult,
+  ApprovalStore,
+  PendingApproval,
+} from '../interfaces/approval.interface';
 import type { AgentContext } from '../interfaces/agent-context.interface';
 
 /** Agent name the harness records on every approval it creates. */
@@ -25,6 +30,19 @@ export interface ApprovalStoreContractOptions {
    * Default: true
    */
   supportsAtomicClaim?: boolean;
+  /**
+   * Whether to run the dual-control assertions for `addSignature`. Defaults to
+   * whether the store implements it; set false to skip them explicitly.
+   */
+  supportsSignatures?: boolean;
+  /**
+   * Set false when the store implements `addSignature` but cannot make it
+   * atomic across concurrent callers. The concurrency assertions are then
+   * skipped rather than reported as failures.
+   *
+   * Default: true
+   */
+  supportsAtomicSignatures?: boolean;
   /** Set false to keep the report quiet. Default: true */
   log?: boolean;
 }
@@ -39,6 +57,9 @@ export interface ApprovalStoreContractResult {
 
 /** Number of parallel callers used to probe claim atomicity. */
 const CONCURRENT_CLAIMS = 8;
+
+/** Number of parallel signers used to probe signature atomicity. */
+const CONCURRENT_SIGNERS = 8;
 
 /**
  * Behavioral contract for an `ApprovalStore`.
@@ -133,7 +154,7 @@ export async function runApprovalStoreContract(
       'context round-trips, including security metadata',
     );
     check(
-      JSON.stringify(loaded?.args) === JSON.stringify(approval.args),
+      sameJson(loaded?.args, approval.args),
       'args round-trip with nested values and types intact',
       JSON.stringify(loaded?.args),
     );
@@ -356,6 +377,9 @@ export async function runApprovalStoreContract(
     fail('store keeps approvals independent', describe(err));
   }
 
+  // GROUPS 11-12: dual control, for stores that implement addSignature
+  await runSignatureGroups(options, { check, fail, skip });
+
   if (log) {
     console.log(
       `\n  📊 ${options.name} contract: ${result.passed} passed, ${result.failed} failed, ${result.skipped} skipped.\n`,
@@ -365,11 +389,186 @@ export async function runApprovalStoreContract(
   return result;
 }
 
+interface Reporter {
+  check(condition: boolean, assertion: string, detail?: string): void;
+  fail(assertion: string, detail?: string): void;
+  skip(assertion: string): void;
+}
+
+async function runSignatureGroups(options: ApprovalStoreContractOptions, report: Reporter): Promise<void> {
+  const { check, fail, skip } = report;
+  const probe = await options.createStore();
+  const supportsSignatures = options.supportsSignatures ?? typeof probe.addSignature === 'function';
+
+  if (!supportsSignatures) {
+    skip('addSignature() dual-control assertions (store does not implement it)');
+    return;
+  }
+
+  const sign = async (
+    store: ApprovalStore,
+    id: string,
+    userId: string,
+  ): Promise<ApprovalSignatureResult | null> => {
+    if (typeof store.addSignature !== 'function') {
+      throw new Error('supportsSignatures is set, but the store has no addSignature()');
+    }
+    return store.addSignature(id, signatureBy(userId));
+  };
+
+  // GROUP 11: signatures accumulate, deduplicate, and claim on the threshold
+  try {
+    const store = await options.createStore();
+    check((await sign(store, 'apr_sig_missing', 'alice')) === null, 'addSignature() returns null for an unknown id');
+
+    await store.save(buildApproval({ id: 'apr_sig', requiredApprovals: 2 }));
+    const stored = await store.get('apr_sig');
+    check(stored?.requiredApprovals === 2, 'requiredApprovals round-trips');
+
+    const first = await sign(store, 'apr_sig', 'alice');
+    check(first?.status === 'pending', 'the first of two signatures leaves the approval pending', first?.status);
+    check(
+      first?.approval.signatures?.length === 1 && first.approval.signatures[0].actor.userId === 'alice',
+      'a pending result carries the recorded signature',
+    );
+    check(
+      first?.approval.signatures?.[0]?.signedAt instanceof Date,
+      'signedAt comes back as a Date, not a string',
+      `received ${typeof first?.approval.signatures?.[0]?.signedAt}`,
+    );
+
+    const afterFirst = await store.get('apr_sig');
+    check(afterFirst?.signatures?.length === 1, 'a recorded signature is visible to get()');
+    check(
+      afterFirst?.signatures?.[0]?.signedAt instanceof Date,
+      'get() revives signedAt as a Date',
+      `received ${typeof afterFirst?.signatures?.[0]?.signedAt}`,
+    );
+
+    const repeated = await sign(store, 'apr_sig', 'alice');
+    check(repeated?.status === 'duplicate', 'a repeated signature from the same userId is reported as duplicate', repeated?.status);
+    check((await store.get('apr_sig'))?.signatures?.length === 1, 'a duplicate signature is not counted twice');
+
+    const second = await sign(store, 'apr_sig', 'bob');
+    check(second?.status === 'complete', 'the signature that meets the threshold completes the approval', second?.status);
+    check(
+      second?.approval.signatures?.map((s) => s.actor.userId).join(',') === 'alice,bob',
+      'the completed approval carries every signature, oldest first',
+      second?.approval.signatures?.map((s) => s.actor.userId).join(','),
+    );
+    check(
+      Array.isArray(second?.approval.signatures?.[0]?.actor.roles) &&
+        sameJson(second?.approval.args, buildApproval({ id: 'apr_sig' }).args),
+      'signing does not re-encode the record: empty arrays and nested args survive',
+      JSON.stringify(second?.approval.signatures?.[0]?.actor),
+    );
+    check((await store.get('apr_sig')) === null, 'completing removes the approval, like claim()');
+    check((await store.claim('apr_sig')) === null, 'a completed approval cannot also be claimed');
+    check((await sign(store, 'apr_sig', 'carol')) === null, 'a completed approval accepts no further signatures');
+  } catch (err) {
+    fail('addSignature() accumulates signatures to a threshold', describe(err));
+  }
+
+  // GROUP 11b: signatures survive claim() and save()
+  try {
+    const store = await options.createStore();
+    await store.save(buildApproval({ id: 'apr_sig_claim', requiredApprovals: 3 }));
+    await sign(store, 'apr_sig_claim', 'alice');
+    const claimed = await store.claim('apr_sig_claim');
+    check(
+      claimed?.signatures?.[0]?.actor.userId === 'alice' && claimed.signatures[0].signedAt instanceof Date,
+      'claim() returns the signatures collected so far',
+    );
+
+    const signed = buildApproval({ id: 'apr_sig_restore', requiredApprovals: 3 });
+    signed.signatures = [signatureBy('alice'), signatureBy('bob')];
+    await store.save(signed);
+    const restored = await store.get('apr_sig_restore');
+    check(
+      restored?.signatures?.map((s) => s.actor.userId).join(',') === 'alice,bob' &&
+        restored.signatures.every((s) => s.signedAt instanceof Date),
+      'save() persists signatures, so a refused settlement can restore them',
+    );
+
+    const atThreshold = buildApproval({ id: 'apr_sig_stuck', requiredApprovals: 2 });
+    atThreshold.signatures = [signatureBy('alice'), signatureBy('bob')];
+    await store.save(atThreshold);
+    const recovered = await sign(store, 'apr_sig_stuck', 'alice');
+    check(
+      recovered?.status === 'complete',
+      'a record already at its threshold is completed by the next call, even a duplicate',
+      recovered?.status,
+    );
+
+    await store.save(buildApproval({ id: 'apr_sig_single' }));
+    const single = await sign(store, 'apr_sig_single', 'alice');
+    check(
+      single?.status === 'complete',
+      'an approval without requiredApprovals completes on its first signature',
+      single?.status,
+    );
+  } catch (err) {
+    fail('signatures survive claim() and save()', describe(err));
+  }
+
+  // GROUP 12: signature accumulation is atomic under concurrent callers
+  if (options.supportsAtomicSignatures === false) {
+    skip('addSignature() is atomic under concurrent signers');
+    return;
+  }
+  try {
+    const store = await options.createStore();
+    await store.save(buildApproval({ id: 'apr_sig_race', requiredApprovals: 3 }));
+
+    const results = await Promise.all(
+      Array.from({ length: CONCURRENT_SIGNERS }, (_, i) => sign(store, 'apr_sig_race', `user_${i}`)),
+    );
+    const complete = results.filter((r) => r?.status === 'complete');
+    const pending = results.filter((r) => r?.status === 'pending');
+    const signers = complete[0]?.approval.signatures?.map((s) => s.actor.userId) ?? [];
+
+    check(
+      complete.length === 1,
+      'addSignature() is atomic under concurrent signers: exactly one completes',
+      `${complete.length} of ${CONCURRENT_SIGNERS} callers completed`,
+    );
+    check(
+      signers.length === 3 && new Set(signers).size === 3,
+      'the completed approval holds exactly the required number of distinct signatures',
+      signers.join(','),
+    );
+    check(pending.length === 2, 'every signature below the threshold reports pending', `${pending.length} pending`);
+    check((await store.get('apr_sig_race')) === null, 'the raced approval is consumed exactly once');
+
+    await store.save(buildApproval({ id: 'apr_sig_dupes', requiredApprovals: 3 }));
+    const dupes = await Promise.all(
+      Array.from({ length: CONCURRENT_SIGNERS }, () => sign(store, 'apr_sig_dupes', 'mallory')),
+    );
+    check(
+      dupes.filter((r) => r?.status === 'pending').length === 1 &&
+        dupes.filter((r) => r?.status === 'duplicate').length === CONCURRENT_SIGNERS - 1,
+      'concurrent signatures from one userId are recorded once',
+      dupes.map((r) => r?.status).join(','),
+    );
+    check(
+      (await store.get('apr_sig_dupes'))?.signatures?.length === 1,
+      'the approval holds a single signature after a concurrent duplicate burst',
+    );
+  } catch (err) {
+    fail('addSignature() is atomic under concurrent signers', describe(err));
+  }
+}
+
+function signatureBy(userId: string): ApprovalSignature {
+  return { actor: { userId, tenantId: 'tenant_1', roles: [] }, signedAt: new Date() };
+}
+
 /** Builds a representative approval, exercising nested and typed values. */
 function buildApproval(overrides: {
   id: string;
   expiresAt?: Date;
   withCheckpoint?: boolean;
+  requiredApprovals?: number;
 }): PendingApproval {
   const context: AgentContext = {
     sessionId: 'contract_session',
@@ -393,6 +592,7 @@ function buildApproval(overrides: {
       dryRun: false,
       note: null,
       tags: ['high-value', 'manual'],
+      attachments: [],
       metadata: { requestedBy: 'agent', attempt: 1 },
     },
     context,
@@ -403,6 +603,10 @@ function buildApproval(overrides: {
 
   if (overrides.expiresAt) {
     approval.expiresAt = overrides.expiresAt;
+  }
+
+  if (overrides.requiredApprovals !== undefined) {
+    approval.requiredApprovals = overrides.requiredApprovals;
   }
 
   if (overrides.withCheckpoint) {
@@ -428,6 +632,25 @@ function buildApproval(overrides: {
   }
 
   return approval;
+}
+
+/**
+ * Structural equality for JSON data. Key order is not significant: PostgreSQL
+ * `jsonb`, for one, stores object keys in its own order.
+ */
+function sameJson(a: unknown, b: unknown): boolean {
+  const sorted = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(sorted);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.keys(value as Record<string, unknown>)
+          .sort()
+          .map((key) => [key, sorted((value as Record<string, unknown>)[key])]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
 }
 
 function describe(err: unknown): string {

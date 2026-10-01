@@ -27,6 +27,7 @@ import { runModelResilienceTests } from './model-resilience.spec';
 import { runMessageReducerTests } from './message-reducer.spec';
 import { runDurabilityTests } from './durability.spec';
 import { runObserverErrorRedactionTests } from './observer-error-redaction.spec';
+import { runDualControlTests } from './dual-control.spec';
 
 async function runAllCoreTests() {
   console.log('====================================================');
@@ -63,9 +64,10 @@ async function runAllCoreTests() {
     await runDurabilityTests();
     await runMessageReducerTests();
     await runObserverErrorRedactionTests();
+    await runDualControlTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 29 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 30 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

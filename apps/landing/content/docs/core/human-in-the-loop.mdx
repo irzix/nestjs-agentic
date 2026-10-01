@@ -198,3 +198,61 @@ approvals: { requireAuthorizer: true }
 ```
 
 Every settlement is then refused unless an `ApprovalAuthorizer` is registered, so a misconfigured deployment fails closed rather than silently ungoverned.
+
+---
+
+## Dual Control (N-of-M Approvals)
+
+High-risk actions often need more than one reviewer. A policy asks for that by returning `requiredApprovals` on its `require_approval` decision:
+
+```typescript
+class WireTransferPolicy implements ToolPolicy {
+  async evaluate(ctx: AgentContext, toolName: string, args: Record<string, unknown>): Promise<PolicyResult> {
+    if (Number(args.amount) > 100_000) {
+      return { decision: 'require_approval', reason: 'Large wires need two treasury officers.', requiredApprovals: 2 };
+    }
+    return { decision: 'allow' };
+  }
+}
+```
+
+The withheld tool runs only after that many **distinct** approvers have signed off. Each reviewer calls `approve()` as usual:
+
+```typescript
+const first = await approvals.approve(id, { actor: { userId: 'alice', tenantId: 'bank' } });
+// { success: false, status: 'pending_approval', signatures: 1, requiredApprovals: 2, ... }
+
+const final = await approvals.approve(id, { actor: { userId: 'bob', tenantId: 'bank' } });
+// The tool runs and the turn resumes, exactly as with a single approver.
+```
+
+What the framework guarantees:
+
+- **Distinct people, not repeated calls.** Signatures are told apart by `actor.userId`. A second signature from the same `userId` throws `ApprovalNotAuthorizedError` and is not counted, whatever its tenant or roles. A signature without a `userId` is refused, because it cannot be shown to come from a different person.
+- **Every signature is governed.** Each one goes through your `ApprovalAuthorizer`, tenant isolation, and separation of duties, so the requester cannot be one of the signers when `enforceSeparationOfDuties` is on.
+- **Exactly once.** The signature that meets the threshold is also the claim, in one atomic store operation, so concurrent approvers execute the tool once. Signatures recorded before the threshold is met return `pending_approval`; calls that arrive after it was met get `ApprovalNotFoundError`, as with concurrent single approvals.
+- **Signatures are tied to what was approved.** Each signature records a digest of the approval as its signer saw it. If the record changes afterwards, earlier signatures do not count toward the changed record, and completing it is refused.
+- **Never fewer signatures than required.** Every path that settles an approval checks the signature count before the tool runs.
+- **Cancellation is safe.** A `signal` aborted before a store write stops the call. Once a write is issued it is awaited, and if it consumed the approval while the caller cancelled, the approval is put back without that signature.
+- **One rejection is a veto.** A single authorized `reject()` settles the approval however many signatures it has.
+- **Visible progression.** Every counted signature is recorded as an `approval_signed` audit event (`signatures` of `requiredApprovals`), and the final `approval_settled` event lists every approver in `signatures`.
+- **Expiry still applies.** A dual-control approval past its `expiresAt` is consumed and reported with `ApprovalExpiredError`, the same as a single-approver one.
+
+### Combining policies
+
+When several policies on a tool ask for approval, for example a module-wide `defaultPolicies` entry and a method-level dual-control policy, every policy still runs. A later `deny` wins over an earlier approval requirement, and the approval takes the strictest terms: the most approvers and the shortest `ttlSeconds`. Policies after an approval requirement run when the call is requested, because an approved call runs without re-evaluating policies.
+
+### Store support
+
+Collecting signatures needs `ApprovalStore.addSignature`, which appends a signature and, on the threshold, removes the approval in the same atomic step.
+
+| Store | Dual control |
+| --- | --- |
+| `InMemoryApprovalStore` | Yes (atomic within one process) |
+| `PostgresApprovalStore` | Yes (conditional `UPDATE`, then `DELETE ... RETURNING` on the threshold) |
+| `RedisApprovalStore` | Yes when a script can run: the client's `eval` (ioredis form) or an `evalFn` adapter, e.g. for node-redis v4. The approval and its signatures share one key, so it works on Redis Cluster |
+| Third-party stores | Only if they implement `addSignature` |
+
+Deploy a release with dual control to every instance before a policy asks for more than one approver. An older instance does not know `requiredApprovals` and would settle such an approval with one person.
+
+A store without `addSignature` keeps working for single-approver approvals. When a policy asks for more than one approver on such a store, the tool call is **denied** with a reason naming the missing capability, rather than quietly settled by one person. Run `runApprovalStoreContract` against a custom store to check its `addSignature` for atomicity and duplicate handling.
