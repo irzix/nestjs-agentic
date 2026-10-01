@@ -92,8 +92,11 @@ export interface ApprovalSettledAuditEvent extends AuditEventBase {
   /** Who made the decision, when the application supplied it. */
   actor?: AuditActor;
   /**
-   * Every approver who signed a dual-control approval, in signing order. The
-   * last one is `actor`. Absent for single-approver approvals.
+   * Every approver who signed a dual-control approval, in signing order.
+   * Absent for single-approver approvals. `actor` is whoever settled the
+   * approval, usually the final signer. It need not appear here: a reviewer
+   * who rejects does not sign, and a caller who completes a record that
+   * already met its threshold settles it without adding a signature.
    */
   signatures?: AuditActor[];
   /** Rejection reason, or the reason approval was required. */

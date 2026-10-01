@@ -230,7 +230,7 @@ What the framework guarantees:
 
 - **Distinct people, not repeated calls.** Signatures are told apart by `actor.userId`. A second signature from the same `userId` throws `ApprovalNotAuthorizedError` and is not counted, whatever its tenant or roles. A signature without a `userId` is refused, because it cannot be shown to come from a different person.
 - **Every signature is governed.** Each one goes through your `ApprovalAuthorizer`, tenant isolation, and separation of duties, so the requester cannot be one of the signers when `enforceSeparationOfDuties` is on.
-- **Exactly once.** The signature that meets the threshold is also the claim, in one atomic store operation, so concurrent approvers execute the tool once. The others get `ApprovalNotFoundError`, as with concurrent single approvals.
+- **Exactly once.** The signature that meets the threshold is also the claim, in one atomic store operation, so concurrent approvers execute the tool once. Signatures recorded before the threshold is met return `pending_approval`; calls that arrive after it was met get `ApprovalNotFoundError`, as with concurrent single approvals.
 - **Signatures are tied to what was approved.** Each signature records a digest of the approval as its signer saw it. If the record changes afterwards, earlier signatures do not count toward the changed record, and completing it is refused.
 - **Never fewer signatures than required.** Every path that settles an approval checks the signature count before the tool runs.
 - **Cancellation is safe.** A `signal` aborted before a store write stops the call. Once a write is issued it is awaited, and if it consumed the approval while the caller cancelled, the approval is put back without that signature.
