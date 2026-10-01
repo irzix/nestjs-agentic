@@ -15,6 +15,7 @@ import {
 import type {
   AgentConfig,
   AgentErrorEvent,
+  ErrorRedactor,
   AgentObserver,
   AgentProvider,
   AgenticModuleOptions,
@@ -74,6 +75,11 @@ class NoopToolSet {
   @Tool({ name: 'noop', description: 'Does nothing' })
   noop(@Param('x') x: string) {
     return { x };
+  }
+
+  @Tool({ name: 'explode', description: 'Fails like an HTTP client would' })
+  explode() {
+    throw new Error(`request failed with Authorization: Bearer ${OPENAI_KEY}`);
   }
 }
 
@@ -368,6 +374,132 @@ export async function runObserverErrorRedactionTests() {
     );
   } catch (err: unknown) {
     assert(false, 'Test 7: Default redactor edge cases', (err as Error).message);
+  }
+
+  // TEST 8: credential shapes found in review
+  try {
+    const shapes: Array<[string, string]> = [
+      ['DB_PASSWORD=hunter2 OPENAI_API_KEY=abc123xyz GITHUB_TOKEN=tok', 'DB_PASSWORD=[REDACTED] OPENAI_API_KEY=[REDACTED] GITHUB_TOKEN=[REDACTED]'],
+      ['{"db_password":"hunter2","aws_secret_access_key":"wJalrXUtnFEMI"}', '{"db_password":"[REDACTED]","aws_secret_access_key":"[REDACTED]"}'],
+      ['private_key: abc123', 'private_key: [REDACTED]'],
+      ['https://a.blob.core.windows.net/c?sv=2021&sig=abc%2Bdef&se=2026', 'https://a.blob.core.windows.net/c?sv=2021&sig=[REDACTED]&se=2026'],
+      ['postgres://admin:ab/cd+ef@db.host:5432/app', 'postgres://[REDACTED]@db.host:5432/app'],
+      ['postgres://admin:p@ss@db.host', 'postgres://[REDACTED]@db.host'],
+      ['header bearer abcdefghijklmnop', 'header bearer [REDACTED]'],
+      ['password = "correct horse battery"', 'password = "[REDACTED]"'],
+      ['{\\"api_key\\":\\"abcdefgh12345\\"}', '{\\"api_key\\":\\"[REDACTED]\\"}'],
+    ];
+    for (const [input, expected] of shapes) {
+      const out = defaultErrorRedactor(new Error(input)).message;
+      assert(out === expected, `Test 8: ${input.slice(0, 40)} is masked`, out);
+    }
+  } catch (err: unknown) {
+    assert(false, 'Test 8: Credential shapes', (err as Error).message);
+  }
+
+  // TEST 9: truncation and stack frames cannot be used to get around the cap
+  try {
+    const token = `ghp_${'A'.repeat(36)}`;
+    const straddle = `cookie: ${'x'.repeat(1890)}\nend ${'y'.repeat(100 - token.length / 2)}${token} tail`;
+    const cut = defaultErrorRedactor(new Error(straddle)).message;
+    assert(!cut.includes('ghp_A'), 'Test 9a: A shrinking mask cannot pull a partial secret into the kept text', cut.slice(-60));
+
+    const quoted = Array.from({ length: 40 }, (_, i) => `    at remote${i} prompt: confidential user text ${i}`).join('\n');
+    const embedded = defaultErrorRedactor(new Error(`upstream failed\n${quoted}`));
+    assert(
+      !(embedded.stack ?? '').includes('remote10') && (embedded.stack ?? '').length < 6000,
+      'Test 9b: Message lines that look like frames are not kept as frames',
+      String((embedded.stack ?? '').length),
+    );
+
+    const deep = new Error('boom');
+    deep.stack = `Error: boom\n    at ${'Very'.repeat(100)}.method (/app/node_modules/pkg/dist/file.js:123:45)`;
+    const tuned = createErrorRedactor({ maxMessageLength: 0 })(deep);
+    const frameLine = (tuned.stack ?? '').split('\n')[1] ?? '';
+    assert(
+      frameLine.endsWith('file.js:123:45)') && frameLine.length <= 301,
+      'Test 9c: Long frames keep their location, and frames do not follow maxMessageLength',
+      frameLine,
+    );
+
+    const withNullCause = Object.assign(new Error('x'), { cause: null });
+    assert((defaultErrorRedactor(withNullCause) as RedactedError).cause === undefined, 'Test 9d: cause: null is not turned into a fake cause');
+  } catch (err: unknown) {
+    assert(false, 'Test 9: Truncation and frames', (err as Error).message);
+  }
+
+  // TEST 10: failed tool results carry error text too
+  try {
+    const results: unknown[] = [];
+    const ends: unknown[] = [];
+    await runAgainst(
+      {
+        async generate(request) {
+          const answered = request.messages.some((m) => m.role === 'tool');
+          return answered
+            ? { content: 'done' }
+            : { content: '', toolCalls: [{ id: 'c1', name: 'explode', args: {} }] };
+        },
+      },
+      {
+        onToolResult: (event) => void results.push(event.result),
+        onAgentEnd: (event) => void ends.push(event.result.toolCalls[0]?.result),
+      },
+    );
+    assert(
+      JSON.stringify(results[0]).includes('Authorization: [REDACTED]') && !JSON.stringify(results[0]).includes('sk-proj'),
+      'Test 10a: onToolResult receives a redacted tool error',
+      JSON.stringify(results[0]),
+    );
+    assert(!JSON.stringify(ends[0]).includes('sk-proj'), 'Test 10b: onAgentEnd tool calls are redacted too', JSON.stringify(ends[0]));
+  } catch (err: unknown) {
+    assert(false, 'Test 10: Tool failures', (err as Error).message);
+  }
+
+  // TEST 11: misbehaving redactors and configuration
+  try {
+    const reasons: string[] = [];
+    const sloppy = new ObserverNotifier([{ onCircuitStateChange: (event) => void reasons.push(event.reason) }], {
+      errorRedaction: (() => undefined) as unknown as ErrorRedactor,
+    });
+    let threw = false;
+    try {
+      await sloppy.notifyCircuitStateChange({ circuitName: 'm', from: 'closed', to: 'open', failures: 5, reason: OPENAI_KEY, timestamp: new Date() });
+    } catch {
+      threw = true;
+    }
+    assert(!threw && reasons[0] === '[error redaction failed]', 'Test 11a: A redactor returning nothing cannot crash the circuit breaker path');
+
+    const customText = new ObserverNotifier([{ onCircuitStateChange: (event) => void reasons.push(event.reason) }], {
+      errorRedaction: Object.assign(() => new Error('x'), { redactText: (text: string) => text.replace(/\d+/, 'N') }),
+    });
+    await customText.notifyCircuitStateChange({ circuitName: 'm', from: 'closed', to: 'open', failures: 5, reason: '5 consecutive failures', timestamp: new Date() });
+    assert(reasons[1] === 'N consecutive failures', 'Test 11b: A custom redactText decides the reason text', reasons[1]);
+
+    for (const bad of [false, 'off', 0]) {
+      let rejected = false;
+      try {
+        new ObserverNotifier([], { errorRedaction: bad as unknown as ErrorRedactor });
+      } catch {
+        rejected = true;
+      }
+      assert(rejected, `Test 11c: errorRedaction ${JSON.stringify(bad)} is rejected instead of failing open`);
+    }
+
+    let calls = 0;
+    const counting = new ObserverNotifier([{ onAgentStart: () => undefined }], {
+      errorRedaction: (err) => {
+        calls++;
+        return err as Error;
+      },
+    });
+    await counting.notifyError({ agentName: 'a', sessionId: 's', traceId: 't', error: new Error('x'), durationMs: 1, timestamp: new Date() });
+    assert(calls === 0, 'Test 11d: Nothing is redacted when no observer has the hook');
+
+    const sticky = createErrorRedactor({ patterns: [/foo/y] })(new Error('xx foo foo')).message;
+    assert(sticky === 'xx [REDACTED] [REDACTED]', 'Test 11e: Sticky custom patterns match anywhere', sticky);
+  } catch (err: unknown) {
+    assert(false, 'Test 11: Redactor robustness', (err as Error).message);
   }
 
   console.log(`\n  📊 Observer Error Redaction Test Results: ${passed} passed, ${failed} failed.\n`);

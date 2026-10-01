@@ -1327,10 +1327,14 @@ Observers can be registered globally via `AgenticModule.forRoot({ observers: [..
 
 ### Error Redaction
 
-`ObserverNotifier` redacts every error-carrying field before dispatch: `AgentErrorEvent.error`, `ModelRetryEvent.error`, and `CircuitBreakerEvent.reason`. Provider SDK errors often carry request headers, API keys, and prompt content, and observers usually forward events to third-party telemetry.
+`ObserverNotifier` redacts every error-carrying field before dispatch: `AgentErrorEvent.error`, `ModelRetryEvent.error`, `CircuitBreakerEvent.reason`, and the `error` text of failed tool results in `ToolResultEvent` and `AgentEndEvent`. Provider SDK errors often carry request headers, API keys, and prompt content, and observers usually forward events to third-party telemetry.
 
 ```typescript
-type ErrorRedactor = (error: unknown) => Error;
+interface ErrorRedactor {
+  (error: unknown): Error;
+  // For free text embedding an error message (circuit reasons, tool errors).
+  redactText?(text: string): string;
+}
 
 interface ObservabilityOptions {
   errorRedaction?: ErrorRedactor | 'none';
@@ -1346,7 +1350,7 @@ function createErrorRedactor(options?: {
 const defaultErrorRedactor: ErrorRedactor;
 ```
 
-The default returns a `RedactedError` holding only `name`, a masked and capped `message`, numeric `status`/`statusCode`, a short `code`, stack frames, and a redacted `cause`. Every other property is dropped. If a redactor throws, observers receive a placeholder, never the raw error. See [Observability](../apps/landing/content/docs/core/observability-and-tracing.mdx) for the full list of what observers do and do not receive.
+The default returns a `RedactedError` holding only `name`, a masked and capped `message`, numeric `status`/`statusCode`, a short `code`, stack frames, and a redacted `cause`. Every other property is dropped. If a redactor throws or returns nothing, observers receive a placeholder, never the raw error. Values other than a function or `'none'` are rejected. See [Observability](../apps/landing/content/docs/core/observability-and-tracing.mdx) for the full list of what observers do and do not receive.
 
 ## Durability
 

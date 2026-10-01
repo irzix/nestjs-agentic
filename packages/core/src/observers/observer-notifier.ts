@@ -12,6 +12,8 @@ import type {
 } from '../interfaces/observer.interface';
 import { defaultErrorRedactor, RedactedError, type ErrorRedactor } from './error-redaction';
 
+const REDACTION_FAILED = '[error redaction failed]';
+
 type ObserverMethod<K extends keyof AgentObserver> = NonNullable<AgentObserver[K]>;
 
 /**
@@ -68,7 +70,14 @@ export class ObserverNotifier {
       throw new Error(`Observer timeoutMs must be a non-negative finite number, received ${options.timeoutMs}.`);
     }
     this.timeoutMs = options.timeoutMs;
+    // Validated rather than coerced: a stray `false` from untyped config must
+    // not quietly turn redaction off.
     const redaction = options.errorRedaction ?? defaultErrorRedactor;
+    if (redaction !== 'none' && typeof redaction !== 'function') {
+      throw new Error(
+        `Observer errorRedaction must be an ErrorRedactor function or 'none', received ${String(redaction)}.`,
+      );
+    }
     this.redactError = redaction === 'none' ? undefined : redaction;
   }
 
@@ -86,8 +95,9 @@ export class ObserverNotifier {
   }
 
   async notifyAgentEnd(event: AgentEndEvent): Promise<void> {
-    if (!this.isEnabled) return;
-    await this.dispatch('onAgentEnd', event);
+    if (!this.isEnabled || !this.hasHook('onAgentEnd')) return;
+    const toolCalls = event.result.toolCalls?.map((call) => ({ ...call, result: this.redactToolFailure(call.result) }));
+    await this.dispatch('onAgentEnd', toolCalls ? { ...event, result: { ...event.result, toolCalls } } : event);
   }
 
   async notifyModelRequest(event: ModelRequestEvent): Promise<void> {
@@ -101,15 +111,14 @@ export class ObserverNotifier {
   }
 
   async notifyModelRetry(event: ModelRetryEvent): Promise<void> {
-    if (!this.isEnabled) return;
+    if (!this.isEnabled || !this.hasHook('onModelRetry')) return;
     await this.dispatch('onModelRetry', { ...event, error: this.redact(event.error) });
   }
 
   async notifyCircuitStateChange(event: CircuitBreakerEvent): Promise<void> {
-    if (!this.isEnabled) return;
+    if (!this.isEnabled || !this.hasHook('onCircuitStateChange')) return;
     // The reason embeds the failing call's error message.
-    const reason = this.redactError ? this.redact(new Error(event.reason)).message : event.reason;
-    await this.dispatch('onCircuitStateChange', { ...event, reason });
+    await this.dispatch('onCircuitStateChange', { ...event, reason: this.redactText(event.reason) });
   }
 
   async notifyToolCall(event: ToolCallEvent): Promise<void> {
@@ -118,26 +127,59 @@ export class ObserverNotifier {
   }
 
   async notifyToolResult(event: ToolResultEvent): Promise<void> {
-    if (!this.isEnabled) return;
-    await this.dispatch('onToolResult', event);
+    if (!this.isEnabled || !this.hasHook('onToolResult')) return;
+    await this.dispatch('onToolResult', { ...event, result: this.redactToolFailure(event.result) });
   }
 
   async notifyError(event: AgentErrorEvent): Promise<void> {
-    if (!this.isEnabled) return;
+    if (!this.isEnabled || !this.hasHook('onError')) return;
     await this.dispatch('onError', { ...event, error: this.redact(event.error) });
   }
 
+  /** Whether any observer implements `hook`, so nothing is redacted for no one. */
+  private hasHook(hook: keyof AgentObserver): boolean {
+    return this.observers.some((observer) => typeof observer[hook] === 'function');
+  }
+
   /**
-   * Applies the configured redactor. A redactor that throws yields a
-   * placeholder: falling back to the raw error would defeat the point.
+   * Applies the configured redactor. A redactor that throws, or returns
+   * something that is not an object, yields a placeholder: falling back to the
+   * raw error would defeat the point.
    */
   private redact<T>(error: T): T | Error {
     if (!this.redactError) return error;
     try {
-      return this.redactError(error);
+      const redacted: unknown = this.redactError(error);
+      return typeof redacted === 'object' && redacted !== null
+        ? (redacted as Error)
+        : new RedactedError('Error', REDACTION_FAILED);
     } catch {
-      return new RedactedError('Error', '[error redaction failed]');
+      return new RedactedError('Error', REDACTION_FAILED);
     }
+  }
+
+  /**
+   * Redacts free text that embeds an error message, with the redactor's
+   * `redactText` when it has one. Never throws.
+   */
+  private redactText(text: string): string {
+    if (!this.redactError) return text;
+    try {
+      if (this.redactError.redactText) return this.redactError.redactText(text);
+      const message = (this.redactError(new Error(text)) as { message?: unknown } | null | undefined)?.message;
+      return typeof message === 'string' ? message : REDACTION_FAILED;
+    } catch {
+      return REDACTION_FAILED;
+    }
+  }
+
+  /** Redacts the `error` text of a failed tool's result, which is a thrown error's message. */
+  private redactToolFailure(result: unknown): unknown {
+    if (!this.redactError || typeof result !== 'object' || result === null) return result;
+    const failure = result as { status?: unknown; error?: unknown };
+    return failure.status === 'error' && typeof failure.error === 'string'
+      ? { ...failure, error: this.redactText(failure.error) }
+      : result;
   }
 
   private async dispatch<K extends keyof AgentObserver>(
