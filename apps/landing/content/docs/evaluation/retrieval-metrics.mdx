@@ -1,0 +1,156 @@
+---
+title: Retrieval-Quality Metrics
+description: Recall@k, precision@k, hit rate, MRR, nDCG, and faithfulness for RAG pipelines, with a CI-ready benchmark runner.
+---
+
+Agent benchmarks score what an agent did. They cannot tell you whether the retrieval feeding it found the right passages. `@nestjs-agentic/evaluation` scores retrieval directly: label which documents answer each query, run the queries through your `RAGPipeline` or `KnowledgeBase`, and get standard IR metrics per query and averaged over the set.
+
+## A runnable example
+
+```typescript
+import { HybridVectorStore, KnowledgeBase, RAGPipeline } from '@nestjs-agentic/rag';
+import { RetrievalBenchmarkRunner, type RetrievalEvalDatasetItem } from '@nestjs-agentic/evaluation';
+
+const kb = new KnowledgeBase({ vectorStore: new HybridVectorStore() });
+await kb.ingestDocument({ id: 'refund-policy', title: 'Refunds', rawContent: 'Refunds are issued within five business days of approval.' });
+await kb.ingestDocument({ id: 'shipping-policy', title: 'Shipping', rawContent: 'Orders ship within two days by courier.' });
+await kb.ingestDocument({ id: 'privacy-policy', title: 'Privacy', rawContent: 'We never sell personal data to third parties.' });
+
+const dataset: RetrievalEvalDatasetItem[] = [
+  { id: 'refund', query: 'how long do refunds take', relevantIds: ['refund-policy'] },
+  { id: 'ship', query: 'when do orders ship', relevantIds: ['shipping-policy'] },
+];
+
+const pipeline = new RAGPipeline({ knowledgeBase: kb });
+const summary = await new RetrievalBenchmarkRunner(pipeline, { topK: 3, matchOn: 'parentId' }).run(dataset);
+
+console.log(summary.metricAverages);
+// { 'Recall@3': 1, 'Precision@3': 0.3333, 'MRR@3': 1, 'nDCG@3': 1 }
+```
+
+The runner accepts:
+
+- a `RAGPipeline`, so pre- and post-retrieval strategies (query expansion, reranking, compression) are evaluated with it,
+- a `KnowledgeBase`, to evaluate the raw vector or hybrid search on its own,
+- or any `Retriever` function `(query, topK, filter) => RetrievalContext`, for retrieval that lives elsewhere.
+
+Each dataset item's `filter` is forwarded to the retriever, so tenant-scoped retrieval can be benchmarked per tenant. Anything else throws a `TypeError` when the runner is constructed.
+
+## Labeling ground truth
+
+`relevantIds` names what answers the query. By default these are chunk ids. Splitters usually generate chunk ids, so it is often easier to label **documents**: set `matchOn: 'parentId'` and use the ids you passed to `ingestDocument`. Retrieved chunks are then replaced by their parent document ids, keeping each document's best rank, so a document counts once however many of its chunks come back.
+
+`matchOn` also takes a function from a retrieved chunk to the id your labels use. `ParentChildSplitter` children, for instance, have a section rather than the document as their parent:
+
+```typescript
+const matchOn = (chunk: RetrievedChunk) => chunk.parentId?.replace(/_parent_\d+$/, '') ?? chunk.id;
+```
+
+Whatever `matchOn` returns, each id is ranked once, at its best position.
+
+When matching documents, several chunks of one document collapse into one rank, so a retrieval of `topK` chunks can yield fewer than `topK` documents. Retrieve more chunks than you score by setting `k` below `topK`:
+
+```typescript
+new RetrievalBenchmarkRunner(pipeline, { topK: 10, k: 5, matchOn: 'parentId' }); // Recall@5, Precision@5, ...
+```
+
+An item with no `relevantIds` fails every rank-based metric rather than scoring a vacuous 1.
+
+## Metrics
+
+| Metric | Class | Measures |
+| --- | --- | --- |
+| `Recall@k` | `RecallAtKMetric` | Share of the relevant ids found in the top `k` |
+| `Precision@k` | `PrecisionAtKMetric` | Share of the top `k` slots holding a relevant id. Divides by `k`, so returning fewer results is not rewarded |
+| `HitRate@k` | `HitRateAtKMetric` | 1 if any relevant id is in the top `k` |
+| `MRR@k` / `MRR` | `ReciprocalRankMetric` | `1 / rank` of the first relevant id in the top `k` (anywhere, without `k`). Averaged by the runner, this is the Mean Reciprocal Rank |
+| `nDCG@k` | `NdcgAtKMetric` | Ranking quality against the ideal order. Uses `relevanceGrades` when given, with gain `2^grade − 1` (grades capped at 30) |
+| `Faithfulness` | `FaithfulnessMetric` | Whether a generated answer is grounded in the retrieved context, scored by a judge you supply |
+
+### Ranking
+
+By default, results are **ranked by `context.scores`** when present, highest first, because post-retrieval strategies may reorder `chunks` for prompt layout (for example U-shaped context) rather than relevance. Without scores, `chunks` order is the rank.
+
+Some strategies rerank `chunks` without rewriting their scores, such as MMR diversity reranking. To score the order such a pipeline produces, set `rankBy: 'order'` on the runner (or on a metric) and `chunks` order is the rank regardless of scores. Chunks whose score is missing or not a number rank after the scored ones.
+
+### Pass and fail
+
+Every metric takes a `threshold` (default `0.5` for rank-based metrics, `0.7` for faithfulness) that decides `passed` per item. The defaults, when you pass no `metrics`, are `Recall@k`, `Precision@k`, `MRR@k`, and `nDCG@k`, with the runner's `k` (default `topK`), `matchOn`, and `rankBy`.
+
+`Precision@k` reports the raw share, but decides `passed` against the best share achievable: with one relevant document and `k = 3`, a perfect retrieval scores `0.3333`, which is all it can score, so it passes. Its `details.maxAchievable` shows that bound.
+
+Metric names key `metricAverages`, so the runner rejects two metrics with the same name. To report one metric twice with different settings, pass `name`:
+
+```typescript
+metrics: [
+  new RecallAtKMetric({ k: 5, matchOn: 'parentId' }),
+  new RecallAtKMetric({ k: 5, matchOn: 'parentId', rankBy: 'order', name: 'Recall@5 (MMR order)' }),
+],
+```
+
+### Graded relevance
+
+```typescript
+{
+  id: 'refund',
+  query: 'how long do refunds take',
+  relevantIds: ['refund-policy', 'faq'],
+  relevanceGrades: { 'refund-policy': 3, faq: 1 }, // the policy is the better answer
+}
+```
+
+### Faithfulness
+
+Faithfulness needs an answer, so give the runner an `answer` function, typically your generation step or an agent run, and a judge, typically an LLM call:
+
+```typescript
+import { FaithfulnessMetric, RecallAtKMetric, RetrievalBenchmarkRunner } from '@nestjs-agentic/evaluation';
+
+const runner = new RetrievalBenchmarkRunner(pipeline, {
+  topK: 5,
+  matchOn: 'parentId',
+  answer: async (item, context) => generateAnswer(item.query, context.chunks ?? []),
+  metrics: [
+    new RecallAtKMetric({ k: 5, matchOn: 'parentId' }),
+    new FaithfulnessMetric(async ({ query, answer, contexts }) => {
+      const verdict = await judgeModel.grade({ query, answer, contexts });
+      return { score: verdict.supportedClaimsRatio, reason: verdict.explanation };
+    }),
+  ],
+});
+```
+
+The judge receives the context generation saw: the retrieved passages in relevance order (`maxContexts` caps how many), followed by any hydrated parent context, compressed context, graph context, and relational facts the pipeline produced. It also gets the item's `expectedAnswer` when labeled. If your generation step builds its prompt from something else, pass `contexts: (context) => [...]` to hand the judge exactly that.
+
+A judge that throws or returns a non-finite score fails the metric instead of the benchmark. If the `answer` function throws, the item records `answerError`, answer-level metrics fail, and the rank-based metrics still score the retrieval.
+
+## Gating CI
+
+A retrieval failure for one query scores that item 0 and records `error`, rather than aborting the run, so one bad query does not hide the rest. A metric that throws or returns a non-finite score fails for that item only. Gate on the averages:
+
+```typescript
+const summary = await runner.run(dataset);
+
+const floors = { 'Recall@5': 0.8, 'MRR@5': 0.6 };
+for (const [metric, floor] of Object.entries(floors)) {
+  if (summary.metricAverages[metric] < floor) {
+    console.error(`${metric} ${summary.metricAverages[metric]} is below ${floor}`);
+    process.exit(1);
+  }
+}
+```
+
+`summary.itemResults` keeps each query's ranked `retrievedIds`, its per-metric scores, and the generated `answer` (or `answerError`), which is what you need to see why a query regressed.
+
+## Writing a metric
+
+Implement `RetrievalEvalMetric`. It is separate from the agent-facing `EvalMetric` because it scores retrieval output, not an `AgentResult`:
+
+```typescript
+interface RetrievalEvalMetric {
+  name: string;
+  evaluate(item: RetrievalEvalDatasetItem, context: RetrievalContext, answer?: string): MetricResult | Promise<MetricResult>;
+}
+```
+
+`RetrievalContext` is structural, and `RAGContext` from `@nestjs-agentic/rag` satisfies it, so the evaluation package does not depend on the RAG package. Use `rankedIds(context, matchOn, rankBy)` to get the same ranking the built-in metrics use, or `rankedChunks(context, rankBy)` for the chunks themselves.

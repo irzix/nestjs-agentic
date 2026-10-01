@@ -21,6 +21,10 @@ The `@nestjs-agentic/evaluation` package provides rigorous statistical benchmark
   - Vector cosine similarity and Sørensen-Dice token overlap metrics.
 - **Benchmark Suite Runner (`BenchmarkRunner`) & Reporting (`EvalReporter`)**:
   - Multi-trial variance analysis ($\mu$, $\sigma$, pass-rate) with automated Markdown/JSON benchmark reports.
+- **Retrieval-Quality Metrics (`RetrievalBenchmarkRunner`)**:
+  - Recall@k, Precision@k, HitRate@k, MRR, and nDCG@k (graded relevance) against a labeled query set, labeled per chunk or per document.
+  - `FaithfulnessMetric` with a pluggable judge, to check generated answers are grounded in what was retrieved.
+  - Runs a `RAGPipeline`, a `KnowledgeBase`, or any retriever function, for CI quality gates on retrieval changes.
 
 ---
 
@@ -94,6 +98,19 @@ const precisionResult = precisionMetric.evaluate(evalItem, agentResult);
 console.log('Trajectory Passed:', inspectorResult.passed);
 console.log('Step Efficiency:', inspectorResult.details.stepEfficiency);
 console.log('Tool Precision:', precisionResult.details.precision);
+```
+
+### 3. Retrieval-Quality Benchmark (RAG)
+
+```typescript
+import { RetrievalBenchmarkRunner } from '@nestjs-agentic/evaluation';
+
+const summary = await new RetrievalBenchmarkRunner(ragPipeline, { topK: 5, matchOn: 'parentId' }).run([
+  { id: 'refund', query: 'how long do refunds take', relevantIds: ['refund-policy'] },
+  { id: 'ship', query: 'when do orders ship', relevantIds: ['shipping-policy'] },
+]);
+
+console.log(summary.metricAverages); // { 'Recall@5': …, 'Precision@5': …, 'MRR@5': …, 'nDCG@5': … }
 ```
 
 ---

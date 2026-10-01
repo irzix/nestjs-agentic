@@ -3,7 +3,8 @@
   "pages": [
     "index",
     "debiased-llm-judge",
-    "automated-benchmarks"
+    "automated-benchmarks",
+    "retrieval-metrics"
   ],
   "defaultOpen": false
 }

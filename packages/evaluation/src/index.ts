@@ -1,4 +1,5 @@
 export * from './interfaces/evaluation.interface';
+export * from './interfaces/retrieval.interface';
 export * from './metrics/safety-policy.metric';
 export * from './metrics/accuracy.metric';
 export * from './metrics/efficiency.metric';
@@ -6,5 +7,7 @@ export * from './metrics/trajectory-inspector.metric';
 export * from './metrics/tool-precision.metric';
 export * from './metrics/llm-as-judge.metric';
 export * from './judge/pairwise-debiased-judge';
+export * from './metrics/retrieval';
 export * from './runner/benchmark.runner';
+export * from './runner/retrieval-benchmark.runner';
 export * from './reporter/eval-reporter';
