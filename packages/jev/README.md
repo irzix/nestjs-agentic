@@ -28,6 +28,7 @@ export const RefundGate = JevActionGate({
   allowAt: 0.95,                                // p(safe) >= 0.95: runs
   denyBelow: 0.1,                               // p(safe) < 0.1: refused
   requiredApprovals: (p) => (p < 0.5 ? 2 : 1),  // in between: 1 or 2 approvers
+  onErrorRequiredApprovals: 2,                  // Jev unavailable: treat as risky
 });
 
 @Module({

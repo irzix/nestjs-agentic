@@ -240,7 +240,7 @@ What the framework guarantees:
 
 ### Combining policies
 
-When several policies on a tool ask for approval, for example a module-wide `defaultPolicies` entry and a method-level dual-control policy, every policy still runs. A later `deny` wins over an earlier approval requirement, and the approval takes the strictest terms: the most approvers and the shortest `ttlSeconds`. Policies after an approval requirement run when the call is requested, because an approved call runs without re-evaluating policies.
+When several policies on a tool ask for approval, for example a module-wide `defaultPolicies` entry and a method-level dual-control policy, every policy still runs. A later `deny` wins over an earlier approval requirement, and the approval takes the strictest terms: the most approvers and the shortest lifetime, where a policy without its own `ttlSeconds` counts with the module's `approvalTtlSeconds`. Policies after an approval requirement run when the call is requested, because an approved call runs without re-evaluating policies.
 
 ### Store support
 

@@ -59,6 +59,7 @@ const RefundGate = JevActionGate({
   name: 'RefundGate',
   tools: ['refund'],
   requiredApprovals: (p) => (p < 0.5 ? 2 : 1),
+  onErrorRequiredApprovals: 2,
 });
 
 const InjectionGate = JevOutputGate({ name: 'InjectionGate' });
@@ -186,7 +187,7 @@ export async function runJevTests() {
   try {
     const tiered = (p: number) =>
       new JevActionGatePolicy(
-        { requiredApprovals: (q) => (q < 0.5 ? 2 : 1), approvalTtlSeconds: 600, allowAt: 0.8, denyBelow: 0.2 },
+        { requiredApprovals: (q) => (q < 0.5 ? 2 : 1), onErrorRequiredApprovals: 2, approvalTtlSeconds: 600, allowAt: 0.8, denyBelow: 0.2 },
         new FakeJev(() => noul('safe', p)),
       ).evaluate(ctx, 'refund', {});
     const risky = await tiered(0.3);
@@ -429,27 +430,34 @@ export async function runJevTests() {
       'Test 11a: A cancelled run throws ExecutionCancelledError from both gates without calling Jev',
     );
 
-    // An outage keeps dual control: the strictest tier applies.
+    // An outage keeps dual control: the configured count for unjudged calls applies.
     const down = new FakeJev(() => {
       throw new Error('503');
     });
     const fixed = await new JevActionGatePolicy({ requiredApprovals: 2 }, down).evaluate(ctx, 'refund', {});
-    const tiered = await new JevActionGatePolicy({ requiredApprovals: (p) => (p < 0.5 ? 3 : 1) }, down).evaluate(ctx, 'refund', {});
-    const banded = await new JevActionGatePolicy(
-      { requiredApprovals: (p) => (p >= 0.4 && p < 0.6 ? 2 : 1) },
+    const tiered = await new JevActionGatePolicy(
+      { requiredApprovals: (p) => (p >= 0.5034 && p < 0.5035 ? 3 : 1), onErrorRequiredApprovals: 3 },
       down,
     ).evaluate(ctx, 'refund', {});
     assert(
       fixed.decision === 'require_approval' && fixed.requiredApprovals === 2 &&
-        tiered.decision === 'require_approval' && tiered.requiredApprovals === 3 &&
-        banded.decision === 'require_approval' && banded.requiredApprovals === 2,
-      'Test 11b: A call Jev could not judge needs the most approvers the band asks for',
-      JSON.stringify([fixed, tiered, banded]),
+        tiered.decision === 'require_approval' && tiered.requiredApprovals === 3,
+      'Test 11b: A call Jev could not judge needs the configured approvers, however narrow the function\'s strict band',
+      JSON.stringify([fixed, tiered]),
+    );
+    const unset = throws(() => new JevActionGatePolicy({ requiredApprovals: (p) => (p < 0.5 ? 2 : 1) }, down));
+    const unsetDeny = throws(() => new JevActionGatePolicy({ requiredApprovals: (p) => (p < 0.5 ? 2 : 1), onError: 'deny' }, down));
+    const invalidUnjudged = throws(() => new JevActionGatePolicy({ onErrorRequiredApprovals: 0 }, down));
+    assert(
+      unset instanceof Error && unset.message.includes('onErrorRequiredApprovals') && unsetDeny === undefined && invalidUnjudged instanceof RangeError,
+      'Test 11b2: A function requiredApprovals needs an explicit onErrorRequiredApprovals, unless outages are denied',
+      String(unset),
     );
 
     // Invalid approver counts reach core, which refuses them, instead of becoming one approver.
-    const zero = await new JevActionGatePolicy({ requiredApprovals: () => 0 }, new FakeJev(() => noul('safe', 0.5))).evaluate(ctx, 'refund', {});
-    const nan = await new JevActionGatePolicy({ requiredApprovals: () => Number.NaN }, down).evaluate(ctx, 'refund', {});
+    const half = new FakeJev(() => noul('safe', 0.5));
+    const zero = await new JevActionGatePolicy({ requiredApprovals: () => 0, onErrorRequiredApprovals: 1 }, half).evaluate(ctx, 'refund', {});
+    const nan = await new JevActionGatePolicy({ requiredApprovals: () => Number.NaN, onErrorRequiredApprovals: 1 }, half).evaluate(ctx, 'refund', {});
     assert(
       zero.decision === 'require_approval' && zero.requiredApprovals === 0 &&
         nan.decision === 'require_approval' && Number.isNaN(nan.requiredApprovals),

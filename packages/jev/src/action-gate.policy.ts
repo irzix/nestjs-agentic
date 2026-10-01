@@ -39,11 +39,18 @@ export interface JevActionGateOptions extends JevCallOptions {
    * Approvers needed for a call in the review band, between `denyBelow` and
    * `allowAt`. A positive integer, or a function of the probability so
    * riskier calls can need more people (dual control). Anything else is
-   * passed on for core to refuse the call. A call Jev could not judge needs
-   * the most approvers this asks for anywhere in the band. Needs
-   * `@nestjs-agentic/core` 1.6.0 or later when above 1. Default: `1`
+   * passed on for core to refuse the call. Needs `@nestjs-agentic/core`
+   * 1.6.0 or later when above 1. Default: `1`
    */
   requiredApprovals?: number | ((probability: number) => number);
+  /**
+   * Approvers needed for a call Jev could not judge, under the default
+   * `onError: 'require_approval'`. Defaults to a numeric `requiredApprovals`.
+   * Required when `requiredApprovals` is a function, since an outage leaves
+   * no probability to call it with; set it to the most approvers the
+   * function can ask for, so an outage never lowers the bar.
+   */
+  onErrorRequiredApprovals?: number;
   /** Lifetime of the resulting approval, in seconds. Defaults to the module's `approvalTtlSeconds`. */
   approvalTtlSeconds?: number;
   /**
@@ -110,7 +117,23 @@ export class JevActionGatePolicy implements ToolPolicy {
         `Jev gate thresholds must satisfy 0 <= denyBelow <= allowAt <= 1, received denyBelow ${this.denyBelow} and allowAt ${this.allowAt}.`,
       );
     }
-    if (options.requiredApprovals !== undefined && options.requiredApprovals !== 1) {
+    const unjudged = options.onErrorRequiredApprovals;
+    if (unjudged !== undefined && !(Number.isInteger(unjudged) && unjudged >= 1)) {
+      throw new RangeError(`${this.name}: onErrorRequiredApprovals must be a positive integer, received ${String(unjudged)}.`);
+    }
+    if (
+      typeof options.requiredApprovals === 'function' &&
+      unjudged === undefined &&
+      (options.onError ?? 'require_approval') === 'require_approval'
+    ) {
+      throw new Error(
+        `${this.name}: requiredApprovals is a function, so set onErrorRequiredApprovals to the approvers a call needs when Jev cannot judge it.`,
+      );
+    }
+    if (
+      (options.requiredApprovals !== undefined && options.requiredApprovals !== 1) ||
+      (unjudged !== undefined && unjudged > 1)
+    ) {
       assertDualControlSupported(this.name);
     }
     this.tools = options.tools ? new Set(options.tools) : undefined;
@@ -183,31 +206,15 @@ export class JevActionGatePolicy implements ToolPolicy {
     return typeof setting === 'function' ? setting(probability) : setting;
   }
 
-  /**
-   * The most approvers asked for anywhere in the review band: an unjudged
-   * call is treated like the riskiest call Jev could have sent to review.
-   */
-  private strictestRequiredApprovals(): number {
-    const setting = this.options.requiredApprovals ?? 1;
-    if (typeof setting !== 'function') return setting;
-    const steps = this.allowAt > this.denyBelow ? 100 : 1;
-    let strictest = 1;
-    for (let i = 0; i < steps; i++) {
-      const required = setting(this.denyBelow + ((this.allowAt - this.denyBelow) * i) / steps);
-      // An invalid count wins, so core refuses the call rather than trusting a smaller one.
-      if (!(Number.isInteger(required) && required >= 1)) return required;
-      if (required > strictest) strictest = required;
-    }
-    return strictest;
-  }
-
   private fallback(error: string): PolicyResult {
     const mode = this.options.onError ?? 'require_approval';
     if (mode === 'allow') {
       return { decision: 'allow', reason: `Jev could not judge this call (${error}), so it was allowed by onError.` };
     }
     const reason = `Jev could not judge this call (${error}), so it was ${mode === 'deny' ? 'refused' : 'sent to human review'}.`;
-    return mode === 'deny' ? { decision: 'deny', reason } : this.review(reason, this.strictestRequiredApprovals());
+    const setting = this.options.requiredApprovals;
+    const required = this.options.onErrorRequiredApprovals ?? (typeof setting === 'number' ? setting : 1);
+    return mode === 'deny' ? { decision: 'deny', reason } : this.review(reason, required);
   }
 }
 
@@ -223,6 +230,7 @@ export class JevActionGatePolicy implements ToolPolicy {
  *   question: 'Is this refund routine enough to issue without a supervisor?',
  *   allowAt: 0.95,
  *   requiredApprovals: (p) => (p < 0.5 ? 2 : 1),
+ *   onErrorRequiredApprovals: 2, // when Jev cannot judge, treat the call as risky
  * });
  *
  * @UsePolicies(RefundGate)

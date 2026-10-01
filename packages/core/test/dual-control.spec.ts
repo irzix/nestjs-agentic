@@ -478,6 +478,15 @@ export async function runDualControlTests() {
       'Test 10c: Each policy that required approval is on the audit trail',
     );
 
+    const inherited = await suspendWire({ defaultPolicies: [GlobalReviewPolicy], approvalTtlSeconds: 60 });
+    const inheritedRecord = await inherited.approvalStore.get(inherited.approvalId);
+    assert(
+      inheritedRecord?.expiresAt !== undefined &&
+        inheritedRecord.expiresAt.getTime() - inheritedRecord.createdAt.getTime() === 60_000,
+      "Test 10e: A policy inheriting the module's shorter default lifetime is not outlived by another policy's explicit one",
+      String(inheritedRecord?.expiresAt && inheritedRecord.expiresAt.getTime() - inheritedRecord.createdAt.getTime()),
+    );
+
     const sanctioned = await suspendWire({ defaultPolicies: [GlobalReviewPolicy, SanctionsPolicy], amount: 66_666 });
     assert(
       (sanctioned.toolResult as { status?: string }).status === 'denied' && sanctioned.approvalId === '',

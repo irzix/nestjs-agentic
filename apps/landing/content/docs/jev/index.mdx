@@ -42,6 +42,8 @@ export const RefundGate = JevActionGate({
   denyBelow: 0.1,
   // Riskier calls need two approvers (dual control).
   requiredApprovals: (p) => (p < 0.5 ? 2 : 1),
+  // A call Jev could not judge is treated as risky.
+  onErrorRequiredApprovals: 2,
 });
 
 @ToolSet({ name: 'billing' })
@@ -93,7 +95,7 @@ JevActionGate({
 
 If Jev is unreachable, slower than `timeoutMs` (default 5000 ms), or answers in an unexpected shape, the gate follows `onError`:
 
-- `'require_approval'` (default): the call goes to a human. An outage slows things down but neither blocks nor waves calls through. The call needs the most approvers `requiredApprovals` asks for anywhere in the review band, so an outage cannot be used to get past dual control.
+- `'require_approval'` (default): the call goes to a human. An outage slows things down but neither blocks nor waves calls through. The call needs `onErrorRequiredApprovals` approvers, which defaults to a numeric `requiredApprovals`. When `requiredApprovals` is a function there is no probability to call it with, so `onErrorRequiredApprovals` is required: set it to the most approvers the function can ask for, and an outage cannot be used to get past dual control.
 - `'deny'`: fail closed.
 - `'allow'`: fail open. Use this only for gates that are advisory.
 
@@ -164,6 +166,7 @@ The faithfulness judge shows Jev the query, the answer, and the passages, but no
 | `question`, `criteria` | both | a general safety question / a prompt-injection question |
 | `allowAt`, `denyBelow` | action | `0.9`, `0.1` |
 | `requiredApprovals` | action | `1`, or a function of the probability |
+| `onErrorRequiredApprovals` | action | a numeric `requiredApprovals`; required with a function |
 | `approvalTtlSeconds` | action | the module's `approvalTtlSeconds` |
 | `denyAt` | output | `0.5` |
 | `describe` | both | `{ tool, arguments }` / `{ tool, output }` |
