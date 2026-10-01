@@ -35,6 +35,54 @@ gantt
 
 ---
 
+## What Observers Receive About Errors
+
+Observers usually forward events to external telemetry such as Langfuse, OpenTelemetry collectors, or Datadog. Provider SDK errors routinely carry request configuration, headers, response bodies, and prompt content, so `ObserverNotifier` redacts every error before dispatch. This happens in one place, for every error-carrying event:
+
+| Event | Field |
+| --- | --- |
+| `onError` | `AgentErrorEvent.error` |
+| `onModelRetry` | `ModelRetryEvent.error` |
+| `onCircuitStateChange` | `CircuitBreakerEvent.reason` (it embeds the failing call's message) |
+| `onToolResult` | the `error` text of a failed tool's result |
+| `onAgentEnd` | the `error` text of failed tool results in `result.toolCalls` |
+
+With the default `defaultErrorRedactor`, observers receive a `RedactedError` that holds only:
+
+- `name`
+- `message`, with credential-shaped values masked, then capped at 500 characters. Masked values include `Bearer`/`Basic` tokens, `sk-` keys, `Authorization`, `Cookie`, and key/value pairs whose key names a credential, prefixed or not (`api_key=`, `DB_PASSWORD=`, `"aws_secret_access_key": "…"`, escaped JSON, Azure `sig=`). Also URL credentials, JWTs, GitHub, AWS, Google and Slack tokens, and PEM private keys.
+- `status` and `statusCode` when numeric, and a short `code` such as `ECONNRESET`
+- `stack` frames (the `at …` lines after the message, each kept to its last 300 characters), under a header line rebuilt from the redacted name and message
+- `cause`, redacted the same way, up to 3 links deep
+
+Observers do **not** receive any other property: request config, headers, response bodies, non-enumerable and `Symbol`-keyed fields, and the `errors` of an `AggregateError` are all dropped. The original error is not mutated, and it still propagates to the caller of `run()` unchanged.
+
+Tune the default, supply your own redactor, or opt out:
+
+```typescript
+import { AgenticModule, createErrorRedactor } from '@nestjs-agentic/core';
+
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  observability: {
+    // Keep longer messages and mask an internal identifier too.
+    errorRedaction: createErrorRedactor({ maxMessageLength: 1000, patterns: [/tenant-\d+/g] }),
+  },
+});
+
+// A local debug observer that never leaves the process can opt out explicitly.
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  observability: { errorRedaction: 'none' },
+});
+```
+
+A custom redactor is any `(error: unknown) => Error`. Free text that embeds an error message, such as a circuit reason or a tool's error, goes through its optional `redactText(text)` method. Without one, the text is wrapped in an `Error`, redacted, and its `message` kept. If a redactor throws or returns nothing, observers receive the placeholder `[error redaction failed]`, never the raw value. Any value other than a function or `'none'` is rejected when the notifier is created, so a stray `false` in untyped config cannot turn redaction off. Redaction only runs when some observer implements the hook.
+
+This redaction covers error text only. `onToolCall` receives the validated tool arguments, and a successful `onToolResult` receives the result exactly as the model sees it, after output policies have run. To keep secrets or PII out of those, use output policies such as `SecretRedactionPolicy` and `PiiRedactionPolicy`.
+
+---
+
 ## The ExecutionTracer
 
 For internal logging and markdown accordion telemetry (as seen in the Njent PR reviewer), use `ExecutionTracer`:
