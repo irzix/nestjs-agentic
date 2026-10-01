@@ -443,6 +443,41 @@ async function main() {
     assert(false, 'Test 10: Injected client', err.message);
   }
 
+  // TEST 11: outputFormat is sent as a json_schema response_format
+  try {
+    const { fetch, calls } = createRecorder([
+      () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"label":"billing"}' } }] }),
+      () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: 'plain' } }] }),
+    ]);
+    const adapter = buildAdapter(fetch);
+    const schema = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'] };
+
+    await adapter.generate(
+      buildRequest({
+        outputFormat: { type: 'json_schema', name: 'ticket', schema, description: 'Ticket label', strict: true },
+      }),
+    );
+    await adapter.generate(buildRequest());
+
+    assert(adapter.supportsStructuredOutput === true, 'Test 11a: The adapter declares native structured output');
+    assert(
+      JSON.stringify(calls[0].body.response_format) ===
+        JSON.stringify({
+          type: 'json_schema',
+          json_schema: { name: 'ticket', schema, strict: true, description: 'Ticket label' },
+        }),
+      'Test 11b: outputFormat maps to response_format.json_schema',
+      JSON.stringify(calls[0].body.response_format),
+    );
+    assert(
+      Array.isArray(calls[0].body.tools),
+      'Test 11c: response_format is sent alongside tools, so the model can still call them',
+    );
+    assert(calls[1].body.response_format === undefined, 'Test 11d: No response_format without an outputFormat');
+  } catch (err: any) {
+    assert(false, 'Test 11: Structured output request', err.message);
+  }
+
   console.log(`\n  📊 OpenAI Adapter Results: ${passed} passed, ${failed} failed.\n`);
 
   if (failed > 0) {

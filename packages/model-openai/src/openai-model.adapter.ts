@@ -81,6 +81,8 @@ export interface OpenAiModelAdapterOptions {
  */
 @Injectable()
 export class OpenAiModelAdapter implements ModelAdapter {
+  /** `outputFormat` is sent as `response_format: { type: 'json_schema' }`. */
+  readonly supportsStructuredOutput = true;
   private readonly client: OpenAI;
   private readonly options: OpenAiModelAdapterOptions;
   private readonly includeStreamUsage: boolean;
@@ -189,12 +191,26 @@ export class OpenAiModelAdapter implements ModelAdapter {
 
   private buildBaseParams(request: ModelRequest) {
     const tools = toOpenAiTools(request.tools);
+    const format = request.outputFormat;
 
     return {
       ...this.options.extraBody,
       model: request.model.model,
       messages: toOpenAiMessages(request.messages),
       ...(tools.length > 0 ? { tools } : {}),
+      ...(format
+        ? {
+            response_format: {
+              type: 'json_schema' as const,
+              json_schema: {
+                name: format.name,
+                schema: format.schema,
+                strict: format.strict,
+                ...(format.description !== undefined ? { description: format.description } : {}),
+              },
+            },
+          }
+        : {}),
       ...(this.options.temperature !== undefined
         ? { temperature: this.options.temperature }
         : {}),

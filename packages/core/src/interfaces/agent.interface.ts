@@ -2,6 +2,7 @@ import type { ExecutionLimits, ToolErrorHandling } from './execution.interface';
 import type { ModelConfig } from './runtime.interface';
 import type { CascadeConfig } from './cascade.interface';
 import type { AgentMessageReducer } from './message-reducer.interface';
+import type { JsonSchema, StructuredOutputOptions } from './structured-output.interface';
 
 export interface AgentConfig {
   instructions: string;
@@ -34,6 +35,15 @@ export interface AgentConfig {
    * and approval resume stay unreduced.
    */
   messageReducer?: AgentMessageReducer;
+  /**
+   * JSON Schema the agent's final answer must satisfy. The answer is parsed
+   * and validated, non-conforming answers are repaired by re-prompting, and
+   * the parsed value is returned as `AgentResult.structured`. Requires the
+   * built-in runtime (a registered `ModelAdapter`). A run may override it.
+   */
+  outputSchema?: JsonSchema;
+  /** Tuning for `outputSchema`: provider name, strict mode, repair attempts, custom validator. */
+  structuredOutput?: StructuredOutputOptions;
 }
 
 export interface AgentProvider {

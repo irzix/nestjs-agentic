@@ -1,0 +1,110 @@
+---
+title: Structured Output
+description: Constrain an agent's final answer to a JSON Schema, with validation and bounded repair.
+---
+
+Applications often need an agent's final answer in a known shape rather than as prose. Give the agent an `outputSchema` and the built-in runtime takes care of the rest: it asks the model for that shape, validates the answer, re-prompts with the specific problems when it does not conform, and returns the parsed value.
+
+```typescript
+@Agent({ name: 'triage', description: 'Classifies support tickets' })
+export class TriageAgent implements AgentProvider {
+  constructor(private readonly tools: SupportTools) {}
+
+  define(): AgentConfig {
+    return {
+      instructions: 'Classify the customer ticket.',
+      tools: [this.tools],
+      outputSchema: {
+        type: 'object',
+        properties: {
+          category: { enum: ['billing', 'technical', 'other'] },
+          priority: { type: 'integer', minimum: 1, maximum: 5 },
+          summary: { type: 'string' },
+        },
+        required: ['category', 'priority', 'summary'],
+        additionalProperties: false,
+      },
+    };
+  }
+}
+
+interface Triage {
+  category: 'billing' | 'technical' | 'other';
+  priority: number;
+  summary: string;
+}
+
+const result = await runner.run<Triage>('triage', { sessionId, message: 'I was charged twice.' });
+result.structured; // { category: 'billing', priority: 2, summary: '…' }
+result.output;     // the raw text the model returned
+```
+
+`outputSchema` is plain JSON Schema, so it can come from anywhere: written by hand, or generated with `zod-to-json-schema`, TypeBox, or a class-validator converter. A run can override it with its own `outputSchema` and `structuredOutput` options.
+
+## How a turn produces a conforming answer
+
+1. **Ask.** Every model request carries `outputFormat` with the schema. An adapter that declares `supportsStructuredOutput` forwards it to the provider's native mechanism. `OpenAiModelAdapter` sends it as `response_format: { type: 'json_schema' }`, alongside tools, so the model can still call them. For any other adapter, the executor adds the schema to the system prompt of that request only. The stored transcript is unchanged.
+2. **Parse.** The final answer is parsed as JSON. Surrounding whitespace, a Markdown code fence, or a sentence around a single JSON object is tolerated.
+3. **Validate.** The parsed value is checked against the schema.
+4. **Repair.** When it does not conform, the model sees its own answer followed by the list of issues (for example `$.priority: expected integer, received string`) and is asked again. This repeats up to `maxRepairAttempts` times (default 2).
+5. **Give up loudly.** If no conforming answer arrives, the turn fails with `StructuredOutputError`, which carries the last `output`, its `issues`, and the number of `attempts`. As with any failed turn, nothing is written to session history.
+
+Repair rounds are real model calls. They count toward `usage` and toward `maxIterations`, `maxTotalTokens`, and `timeoutMs`.
+
+Session history records the question and the conforming answer, not the rejected answers and repair prompts, so later turns are not padded with them. The one exception is when the model answers a repair prompt by calling a tool. The exchange is then kept in history, in order, because the conversation actually continued from it.
+
+## Options
+
+```typescript
+structuredOutput: {
+  name: 'ticket_triage',   // provider-facing schema name. Default 'response'
+  description: 'Ticket classification',
+  strict: true,            // provider strict mode. Default false
+  maxRepairAttempts: 1,    // default 2; 0 disables repair
+  validate: (value) => …,  // replaces the built-in validator
+}
+```
+
+`strict` asks the provider for schema-constrained decoding. It is off by default because strict modes accept only a subset of JSON Schema: OpenAI requires every property to be listed in `required` and `additionalProperties: false`, and rejects other schemas with a 400. The answer is validated either way.
+
+## Validation
+
+The built-in validator has no dependencies and covers what providers' structured-output modes use, plus common constraints: `type` (including `integer` and type arrays), `enum`, `const`, `properties`, `required`, `additionalProperties`, `items`, `prefixItems`, `minItems`/`maxItems`, `uniqueItems`, `minLength`/`maxLength`, `pattern`, `minimum`/`maximum` and their exclusive forms, `multipleOf`, `anyOf`, `oneOf`, `allOf`, `not`, boolean schemas, and local `$ref`s into `$defs`. Other keywords, `format` included, are ignored rather than rejected. It is exported as `validateJsonSchema` if you want it elsewhere.
+
+For full JSON Schema coverage, or to reuse a schema library you already have, plug in your own validator. It can also transform the value it returns:
+
+```typescript
+import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+
+const Triage = z.object({ category: z.enum(['billing', 'technical', 'other']), priority: z.number().int() });
+
+define(): AgentConfig {
+  return {
+    instructions: 'Classify the customer ticket.',
+    tools: [],
+    outputSchema: zodToJsonSchema(Triage) as JsonSchema,
+    structuredOutput: {
+      validate: (value) => {
+        const parsed = Triage.safeParse(value);
+        return parsed.success
+          ? { valid: true, value: parsed.data }
+          : { valid: false, issues: parsed.error.issues.map((i) => `$.${i.path.join('.')}: ${i.message}`) };
+      },
+    },
+  };
+}
+```
+
+## Streaming
+
+`runStream()` streams tokens as usual, so the tokens of a rejected answer have already been sent by the time it is rejected. The executor then emits `{ type: 'output_rejected', attempt, issues }` before the repair round: discard what you buffered for the previous answer. `final_answer` carries the validated value as `structured`.
+
+## Approvals and runtimes
+
+- A turn that suspends for approval has no final answer yet, so `structured` is absent on that result. When the approval settles and the turn resumes, the final answer is validated against the **agent's** `outputSchema`. A run-level override is not carried across the suspension.
+- Structured output needs the built-in runtime, which means a registered `ModelAdapter`. A turn that would run through a `RuntimeAdapter` throws `StructuredOutputNotSupportedError` instead of returning unvalidated text.
+
+## Writing an adapter
+
+Adapters need no changes to keep working: `ModelRequest.outputFormat` is optional and the executor validates regardless. To use a provider's native structured output, read `request.outputFormat` (`{ type: 'json_schema', name, schema, description?, strict }`) and declare `readonly supportsStructuredOutput = true` so the executor stops describing the schema in the prompt.

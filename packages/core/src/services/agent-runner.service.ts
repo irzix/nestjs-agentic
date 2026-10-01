@@ -17,6 +17,7 @@ import {
   CheckpointNotFoundError,
   ExecutionCancelledError,
   RuntimeNotConfiguredError,
+  StructuredOutputNotSupportedError,
 } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
 import { DeferredWriteQueue } from '../utils/deferred-write-queue';
@@ -67,6 +68,12 @@ import type { ObservabilityOptions } from '../observers/error-redaction';
 import type { ModelResilienceOptions } from '../adapters/resilient-model.adapter';
 
 import { STATE_STORE, type StateStore } from '../interfaces/state-store.interface';
+import type {
+  JsonSchema,
+  StructuredOutputOptions,
+  StructuredOutputSpec,
+} from '../interfaces/structured-output.interface';
+import { resolveStructuredOutput } from '../utils/structured-output';
 import { AgentExecutor } from './agent-executor.service';
 
 export interface AgenticModuleOptions {
@@ -234,6 +241,13 @@ export interface RunInput {
   history?: boolean;
   /** Overrides the module `durability` setting for this run. */
   durability?: DurabilityMode;
+  /**
+   * Overrides the agent's `outputSchema` for this run. Not carried across an
+   * approval suspension: a resumed turn uses the agent's own schema.
+   */
+  outputSchema?: JsonSchema;
+  /** Overrides fields of the agent's `structuredOutput` options for this run. */
+  structuredOutput?: StructuredOutputOptions;
   /** Cancels the run when aborted. Honored by the built-in runtime. */
   signal?: AbortSignal;
 }
@@ -260,6 +274,7 @@ export interface PreparedRun {
   limits?: ExecutionLimits;
   toolErrorHandling?: ToolErrorHandling;
   messageReducer?: AgentMessageReducer;
+  structuredOutput?: StructuredOutputSpec;
 }
 
 @Injectable()
@@ -469,6 +484,7 @@ export class AgentRunner {
       limits: config.limits ?? this.options.limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer: config.messageReducer ?? this.options.messageReducer,
+      structuredOutput: resolveStructuredOutput([config]),
       signal: options?.signal,
       onCheckpoint: (checkpoint) => this.saveInFlightCheckpoint(pending.context, checkpoint),
       onTranscript: store
@@ -724,6 +740,7 @@ export class AgentRunner {
         input.toolErrorHandling ?? config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer:
         input.messageReducer ?? config.messageReducer ?? this.options.messageReducer,
+      structuredOutput: resolveStructuredOutput([config, input]),
     };
   }
 
@@ -742,7 +759,11 @@ export class AgentRunner {
     return this.runtimeAdapter;
   }
 
-  async run(agentName: string, input: RunInput): Promise<AgentResult> {
+  /**
+   * Runs one agent turn. With an `outputSchema`, `result.structured` holds the
+   * validated answer; pass its type as `T` to read it without a cast.
+   */
+  async run<T = unknown>(agentName: string, input: RunInput): Promise<AgentResult<T>> {
     const prepared = await this.prepare(agentName, input);
     const notifier = this.getNotifier();
     const startAt = Date.now();
@@ -781,6 +802,7 @@ export class AgentRunner {
           limits: prepared.limits,
           toolErrorHandling: prepared.toolErrorHandling,
           messageReducer: prepared.messageReducer,
+          structuredOutput: prepared.structuredOutput,
           signal: input.signal,
           observerNotifier: notifier,
           history: withHistory ? await this.loadHistory(prepared.context) : undefined,
@@ -800,6 +822,9 @@ export class AgentRunner {
         });
         await writes?.flush();
       } else {
+        if (prepared.structuredOutput) {
+          throw new StructuredOutputNotSupportedError(agentName);
+        }
         result = await this.requireRuntimeAdapter().execute({
           sessionId: input.sessionId,
           message: input.message,
@@ -824,7 +849,9 @@ export class AgentRunner {
         context: prepared.context,
       });
 
-      return { ...result, durationMs };
+      // `T` is the caller's description of the schema; the value was validated
+      // against the schema at runtime, not by the compiler.
+      return { ...result, durationMs } as AgentResult<T>;
     } catch (err: unknown) {
       const durationMs = Date.now() - startAt;
       await notifier.notifyError({
@@ -865,6 +892,7 @@ export class AgentRunner {
         const withHistory = this.historyEnabled(input);
         let finalUsage: ModelUsage | undefined;
         let finalOutput = '';
+        let finalStructured: unknown;
         let wasSuspended = false;
         const writes = this.openWriteQueue(prepared.context, input);
 
@@ -882,6 +910,7 @@ export class AgentRunner {
           limits: prepared.limits,
           toolErrorHandling: prepared.toolErrorHandling,
           messageReducer: prepared.messageReducer,
+          structuredOutput: prepared.structuredOutput,
           signal: input.signal,
           observerNotifier: notifier,
           history: withHistory ? await this.loadHistory(prepared.context) : undefined,
@@ -903,6 +932,7 @@ export class AgentRunner {
           if (event.type === 'final_answer') {
             finalOutput = event.output;
             finalUsage = event.usage;
+            finalStructured = event.structured;
           }
           yield event;
         }
@@ -914,6 +944,7 @@ export class AgentRunner {
           output: finalOutput,
           toolCalls: [],
           usage: finalUsage,
+          ...(finalStructured !== undefined ? { structured: finalStructured } : {}),
         };
 
         await notifier.notifyAgentEnd({
@@ -932,6 +963,9 @@ export class AgentRunner {
         return;
       }
 
+      if (prepared.structuredOutput) {
+        throw new StructuredOutputNotSupportedError(agentName);
+      }
       const adapter = this.requireRuntimeAdapter();
       const adapterInput = {
         sessionId: input.sessionId,
@@ -1048,6 +1082,7 @@ export class AgentRunner {
       limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer: config.messageReducer ?? this.options.messageReducer,
+      structuredOutput: resolveStructuredOutput([config]),
       signal: options?.signal,
       onCheckpoint: (cp) => this.saveInFlightCheckpoint(context, cp),
       onTranscript: sessionStore

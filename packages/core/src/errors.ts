@@ -248,3 +248,41 @@ export class CascadeConfigurationError extends CascadeError {
     super(`Invalid Model Cascade configuration: ${reason}`);
   }
 }
+
+/**
+ * Raised when a turn with an `outputSchema` ends without a conforming answer
+ * after every repair attempt. The turn fails, so nothing is persisted to
+ * session history.
+ */
+export class StructuredOutputError extends AgenticError {
+  /**
+   * @param output The last answer the model gave, unparsed.
+   * @param issues Why it did not conform.
+   * @param attempts Repair attempts made before giving up.
+   */
+  constructor(
+    readonly output: string,
+    readonly issues: string[],
+    readonly attempts: number,
+  ) {
+    super(
+      `The final answer did not match the output schema after ${attempts} repair attempt(s): ${issues
+        .slice(0, 3)
+        .join('; ')}`,
+    );
+  }
+}
+
+/**
+ * Raised when an `outputSchema` is requested but the turn would run through a
+ * `RuntimeAdapter`, which owns its own loop and cannot be made to validate or
+ * repair the answer. Thrown instead of silently returning unvalidated output.
+ */
+export class StructuredOutputNotSupportedError extends AgenticError {
+  constructor(readonly agentName: string) {
+    super(
+      `Agent "${agentName}" requests an outputSchema, which needs the built-in runtime. ` +
+        `Register a ModelAdapter, or remove the outputSchema.`,
+    );
+  }
+}

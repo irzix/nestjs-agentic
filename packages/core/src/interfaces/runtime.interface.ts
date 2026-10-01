@@ -29,13 +29,19 @@ export interface AgentRunInput {
   instructions?: string;
 }
 
-export interface AgentResult {
+export interface AgentResult<TStructured = unknown> {
   sessionId: string;
   output: string;
   toolCalls: ToolCallRecord[];
   usage?: ModelUsage;
   /** Wall-clock duration of a completed run when measured by the runner. */
   durationMs?: number;
+  /**
+   * The final answer parsed and validated against the turn's `outputSchema`.
+   * Absent when no schema was requested, and when the turn suspended for
+   * approval instead of answering. `output` still holds the raw text.
+   */
+  structured?: TStructured;
 }
 
 /**

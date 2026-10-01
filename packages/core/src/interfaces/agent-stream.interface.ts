@@ -22,7 +22,19 @@ export type AgentStreamEvent =
   | { type: 'thought'; thought: string }
   | { type: 'action_call'; id?: string; toolName: string; args: Record<string, unknown> }
   | { type: 'action_observation'; id?: string; toolName: string; result: ToolExecutionResult }
-  | { type: 'final_answer'; sessionId: string; output: string; usage?: ModelUsage }
+  | {
+      type: 'final_answer';
+      sessionId: string;
+      output: string;
+      usage?: ModelUsage;
+      /** Parsed and validated answer, when the turn has an `outputSchema`. */
+      structured?: unknown;
+    }
+  /**
+   * A final answer failed `outputSchema` validation and the model is being
+   * asked to repair it. Tokens streamed for that answer should be discarded.
+   */
+  | { type: 'output_rejected'; attempt: number; issues: string[] }
   // Token Streaming
   | { type: 'token'; text: string }
   // Governance & Approvals
