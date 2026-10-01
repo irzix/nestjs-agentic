@@ -1,5 +1,15 @@
 # @nestjs-agentic/mcp
 
+## 1.6.0
+
+### Patch Changes
+
+- Updated dependencies [22276c8]
+- Updated dependencies [68218ea]
+- Updated dependencies [f81f32e]
+- Updated dependencies [cf18702]
+  - @nestjs-agentic/core@1.6.0
+
 ## 1.5.0
 
 ### Patch Changes
