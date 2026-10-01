@@ -107,6 +107,12 @@ export interface ModelResponse {
   toolCalls?: ModelToolCall[];
   usage?: ModelUsage;
   finishReason?: ModelFinishReason;
+  /**
+   * The model's refusal to answer, when the provider reports one separately
+   * from `content` (OpenAI structured outputs do). A turn with an
+   * `outputSchema` fails on a refusal instead of asking for a repair.
+   */
+  refusal?: string;
   [key: string]: unknown;
 }
 

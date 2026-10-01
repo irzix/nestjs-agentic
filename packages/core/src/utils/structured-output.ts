@@ -1,36 +1,56 @@
 import type {
   JsonSchema,
+  StoredStructuredOutput,
   StructuredOutputOptions,
   StructuredOutputSpec,
   StructuredOutputValidation,
 } from '../interfaces/structured-output.interface';
 import type { ModelOutputFormat } from '../interfaces/model.interface';
-import { validateJsonSchema } from './json-schema.validator';
+import { InvalidOutputSchemaError } from '../errors';
+import { canonicalize } from '../audit/hash-chain-audit.sink';
+import { findSchemaProblems, validateJsonSchema } from './json-schema.validator';
 
 const DEFAULT_NAME = 'response';
 const DEFAULT_MAX_REPAIR_ATTEMPTS = 2;
 /** Upper bound on issues echoed back to the model in a repair prompt. */
 const MAX_REPAIR_ISSUES = 10;
 
+/** Schemas already checked by `resolveStructuredOutput`. */
+const checkedSchemas = new WeakSet<object>();
+
 /**
- * Combines an `outputSchema` with its options, run-level values taking
- * precedence over agent-level ones. Returns `undefined` when no schema is set.
+ * Combines an `outputSchema` with its options. Later layers win, so callers
+ * pass `[agent, run]`. A layer that sets its own `outputSchema` starts its
+ * options afresh, since options such as `validate` belong to the schema they
+ * were written for; a layer that only sets options adjusts the schema it
+ * inherits. Returns `undefined` when no schema is set.
+ *
+ * Throws `InvalidOutputSchemaError` for a schema no answer could satisfy
+ * (an invalid pattern, an unresolvable `$ref`), before any model is called.
  */
 export function resolveStructuredOutput(
   layers: Array<{ outputSchema?: JsonSchema; structuredOutput?: StructuredOutputOptions } | undefined>,
 ): StructuredOutputSpec | undefined {
   let schema: JsonSchema | undefined;
   let options: StructuredOutputOptions = {};
-  // Later layers win, so callers pass [agent, run].
   for (const layer of layers) {
     if (!layer) continue;
-    if (layer.outputSchema !== undefined) schema = layer.outputSchema;
-    if (layer.structuredOutput) options = { ...options, ...layer.structuredOutput };
+    if (layer.outputSchema !== undefined) {
+      schema = layer.outputSchema;
+      options = { ...layer.structuredOutput };
+    } else if (layer.structuredOutput) {
+      options = { ...options, ...layer.structuredOutput };
+    }
   }
   if (schema === undefined) return undefined;
 
   if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
     throw new TypeError('outputSchema must be a JSON Schema object.');
+  }
+  if (!checkedSchemas.has(schema)) {
+    const problems = findSchemaProblems(schema);
+    if (problems.length > 0) throw new InvalidOutputSchemaError(problems);
+    checkedSchemas.add(schema);
   }
   const attempts = options.maxRepairAttempts ?? DEFAULT_MAX_REPAIR_ATTEMPTS;
   if (!(Number.isInteger(attempts) && attempts >= 0)) {
@@ -55,10 +75,37 @@ export function toOutputFormat(spec: StructuredOutputSpec): ModelOutputFormat {
   };
 }
 
+/** Openings tried when extracting JSON from prose, a bound on the work. */
+const MAX_EXTRACTION_ATTEMPTS = 20;
+
+/**
+ * The balanced `{…}` or `[…]` starting at `start`, skipping brackets inside
+ * strings, or `undefined` if it never closes.
+ */
+function balancedAt(text: string, start: number): string | undefined {
+  const stack: string[] = [];
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') stack.push(ch === '{' ? '}' : ']');
+    else if (ch === '}' || ch === ']') {
+      if (stack.pop() !== ch) return undefined;
+      if (stack.length === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
 /**
  * Parses a final answer as JSON. Tolerates what models commonly wrap around
- * it: surrounding whitespace, a Markdown code fence, or a sentence before or
- * after a single JSON object or array.
+ * it: surrounding whitespace, a Markdown code fence, or prose before or after
+ * the JSON object or array, brackets in that prose included.
  */
 export function parseJsonAnswer(content: string): { ok: true; value: unknown } | { ok: false; issue: string } {
   const candidates: string[] = [];
@@ -68,11 +115,12 @@ export function parseJsonAnswer(content: string): { ok: true; value: unknown } |
   const fenced = /```(?:json|JSON)?\s*\n?([\s\S]*?)```/.exec(trimmed);
   if (fenced) candidates.push(fenced[1].trim());
 
-  const start = trimmed.search(/[[{]/);
-  if (start !== -1) {
-    const close = trimmed[start] === '{' ? '}' : ']';
-    const end = trimmed.lastIndexOf(close);
-    if (end > start) candidates.push(trimmed.slice(start, end + 1));
+  let attempts = 0;
+  for (let i = 0; i < trimmed.length && attempts < MAX_EXTRACTION_ATTEMPTS; i++) {
+    if (trimmed[i] !== '{' && trimmed[i] !== '[') continue;
+    attempts++;
+    const candidate = balancedAt(trimmed, i);
+    if (candidate) candidates.push(candidate);
   }
 
   let lastError = 'the answer is empty';
@@ -97,7 +145,9 @@ export async function checkStructuredOutput(
 
   if (spec.validate) {
     const verdict = await spec.validate(parsed.value);
-    return verdict.valid || verdict.issues.length > 0
+    if (verdict.valid) return verdict;
+    // A validator that rejects without saying why still gives the model something.
+    return Array.isArray(verdict.issues) && verdict.issues.length > 0
       ? verdict
       : { valid: false, issues: ['$: rejected by the custom validator'] };
   }
@@ -126,4 +176,26 @@ export function repairPrompt(issues: string[]): string {
     ...listed,
     'Reply again with only a JSON value that satisfies the schema, with no other text.',
   ].join('\n');
+}
+
+/** The part of a spec that survives storage: everything but `validate`. */
+export function toStoredStructuredOutput(spec: StructuredOutputSpec | undefined): StoredStructuredOutput | undefined {
+  if (!spec) return undefined;
+  const { validate: _validate, ...stored } = spec;
+  return stored;
+}
+
+/**
+ * The spec a resumed or recovered turn runs under. The agent's own spec wins
+ * when it has the same schema, keeping its `validate`; a schema the original
+ * run set itself comes from storage and is checked by the built-in
+ * validator, since a function cannot be stored.
+ */
+export function restoreStructuredOutput(
+  stored: StoredStructuredOutput | undefined,
+  agentSpec: StructuredOutputSpec | undefined,
+): StructuredOutputSpec | undefined {
+  if (!stored) return agentSpec;
+  if (agentSpec && canonicalize(agentSpec.schema) === canonicalize(stored.schema)) return agentSpec;
+  return { ...stored };
 }

@@ -478,6 +478,59 @@ async function main() {
     assert(false, 'Test 11: Structured output request', err.message);
   }
 
+  // TEST 12: structured output edge cases
+  try {
+    const objectSchema = { type: 'object', properties: { a: { type: 'number' } }, required: ['a'] };
+    const prompt = createRecorder([() => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"a":1}' } }] })]);
+    const promptAdapter = buildAdapter(prompt.fetch, { structuredOutput: 'prompt' });
+    await promptAdapter.generate(buildRequest({ outputFormat: { type: 'json_schema', name: 'r', schema: objectSchema, strict: false } }));
+    assert(
+      promptAdapter.supportsStructuredOutput === false && prompt.calls[0].body.response_format === undefined,
+      "Test 12a: structuredOutput 'prompt' sends no response_format and lets the core describe the schema",
+    );
+
+    const refusing = createRecorder([
+      () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: null, refusal: 'I cannot help with that.' } }] }),
+    ]);
+    const refused = await buildAdapter(refusing.fetch).generate(
+      buildRequest({ outputFormat: { type: 'json_schema', name: 'r', schema: objectSchema, strict: true } }),
+    );
+    assert(refused.refusal === 'I cannot help with that.' && refused.content === '', 'Test 12b: A refusal is reported, not turned into an empty answer');
+
+    const streamRefusal = createRecorder([
+      () =>
+        sseResponse([
+          'data: {"choices":[{"index":0,"delta":{"refusal":"I cannot "}}]}\n\n',
+          'data: {"choices":[{"index":0,"delta":{"refusal":"help."}}]}\n\n',
+          'data: {"choices":[{"index":0,"finish_reason":"stop","delta":{}}]}\n\n',
+          'data: [DONE]\n\n',
+        ]),
+    ]);
+    let streamed: any;
+    for await (const chunk of buildAdapter(streamRefusal.fetch).stream(buildRequest())) {
+      if (chunk.type === 'response') streamed = chunk.response;
+    }
+    assert(streamed?.refusal === 'I cannot help.', 'Test 12c: A streamed refusal is accumulated', JSON.stringify(streamed));
+
+    const arraySchema = { type: 'array', items: { $ref: '#/$defs/n' }, $defs: { n: { type: 'number' } } };
+    const wrapped = createRecorder([() => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"value":[1,2]}' } }] })]);
+    const unwrapped = await buildAdapter(wrapped.fetch).generate(
+      buildRequest({ outputFormat: { type: 'json_schema', name: 'r', schema: arraySchema, strict: true } }),
+    );
+    const sent = wrapped.calls[0].body.response_format.json_schema.schema;
+    assert(
+      sent.type === 'object' &&
+        sent.required[0] === 'value' &&
+        sent.properties.value.items.$ref === '#/$defs/n' &&
+        sent.$defs.n.type === 'number',
+      'Test 12d: A non-object root is sent wrapped in an object, with its definitions moved to the new root',
+      JSON.stringify(sent),
+    );
+    assert(unwrapped.content === '[1,2]', 'Test 12e: The wrapped answer is unwrapped again', unwrapped.content);
+  } catch (err: any) {
+    assert(false, 'Test 12: Structured output edge cases', err.message);
+  }
+
   console.log(`\n  📊 OpenAI Adapter Results: ${passed} passed, ${failed} failed.\n`);
 
   if (failed > 0) {

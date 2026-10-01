@@ -7,6 +7,7 @@ import {
   ApprovalNotFoundError,
   ApprovalSignaturesUnsupportedError,
   ExecutionCancelledError,
+  StructuredOutputError,
 } from '../errors';
 import { auditEnvelope, requiredApprovalsOf } from '../interfaces';
 import type {
@@ -441,6 +442,12 @@ export class ApprovalService {
     try {
       result = await this.runner.settleApproval(claimed, decision, options);
     } catch (err) {
+      // The decision was applied and the turn resumed; only the model's final
+      // answer missed its outputSchema. The approval is settled.
+      if (err instanceof StructuredOutputError) {
+        await this.recordSettled(claimed, decision, outcome, options?.actor);
+        throw err;
+      }
       // The claim already consumed the approval, so this cannot be retried and
       // the tool may have applied part of its side effect. Worth alerting on.
       await this.audit?.record({
@@ -457,22 +464,30 @@ export class ApprovalService {
       throw err;
     }
 
+    await this.recordSettled(claimed, decision, outcome, options?.actor);
+    return result;
+  }
+
+  private async recordSettled(
+    claimed: PendingApproval,
+    decision: { approved: true } | { approved: false; reason?: string },
+    outcome: 'approved' | 'rejected',
+    actor?: AuditActor,
+  ): Promise<void> {
     await this.audit?.record({
       ...auditEnvelope(claimed.context),
       type: 'approval_settled',
-      approvalId,
+      approvalId: claimed.id,
       agentName: claimed.agentName,
       toolName: claimed.toolName,
       outcome,
-      actor: options?.actor,
+      actor,
       ...(claimed.signatures?.length
         ? { signatures: claimed.signatures.map((signature) => signature.actor) }
         : {}),
       reason: decision.approved ? claimed.reason : decision.reason ?? claimed.reason,
       args: claimed.args,
     });
-
-    return result;
   }
 
   /**

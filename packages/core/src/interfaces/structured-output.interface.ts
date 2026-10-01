@@ -53,3 +53,9 @@ export interface StructuredOutputOptions<T = unknown> {
 export interface StructuredOutputSpec<T = unknown> extends StructuredOutputOptions<T> {
   schema: JsonSchema;
 }
+
+/**
+ * A spec as stored on an approval or in-flight checkpoint, so a resumed turn
+ * keeps the schema the run asked for. `validate` cannot be stored.
+ */
+export type StoredStructuredOutput = Omit<StructuredOutputSpec, 'validate'>;

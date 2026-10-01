@@ -70,10 +70,11 @@ import type { ModelResilienceOptions } from '../adapters/resilient-model.adapter
 import { STATE_STORE, type StateStore } from '../interfaces/state-store.interface';
 import type {
   JsonSchema,
+  StoredStructuredOutput,
   StructuredOutputOptions,
   StructuredOutputSpec,
 } from '../interfaces/structured-output.interface';
-import { resolveStructuredOutput } from '../utils/structured-output';
+import { resolveStructuredOutput, restoreStructuredOutput } from '../utils/structured-output';
 import { AgentExecutor } from './agent-executor.service';
 
 export interface AgenticModuleOptions {
@@ -242,8 +243,9 @@ export interface RunInput {
   /** Overrides the module `durability` setting for this run. */
   durability?: DurabilityMode;
   /**
-   * Overrides the agent's `outputSchema` for this run. Not carried across an
-   * approval suspension: a resumed turn uses the agent's own schema.
+   * Overrides the agent's `outputSchema` for this run. Kept across an approval
+   * suspension and checkpoint recovery; a run-level `validate` function cannot
+   * be stored, so a resumed turn checks this schema with the built-in validator.
    */
   outputSchema?: JsonSchema;
   /** Overrides fields of the agent's `structuredOutput` options for this run. */
@@ -484,7 +486,7 @@ export class AgentRunner {
       limits: config.limits ?? this.options.limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer: config.messageReducer ?? this.options.messageReducer,
-      structuredOutput: resolveStructuredOutput([config]),
+      structuredOutput: restoreStructuredOutput(pending.checkpoint?.structuredOutput, resolveStructuredOutput([config])),
       signal: options?.signal,
       onCheckpoint: (checkpoint) => this.saveInFlightCheckpoint(pending.context, checkpoint),
       onTranscript: store
@@ -492,7 +494,8 @@ export class AgentRunner {
         : undefined,
       // A resumed turn can suspend again on a further approval, which needs its
       // own checkpoint.
-      onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+      onSuspend: (approvalId, messages, extras) =>
+            this.saveCheckpoint(approvalId, messages, extras?.structuredOutput),
     });
   }
 
@@ -504,7 +507,11 @@ export class AgentRunner {
    * the checkpoint to it. Runs before the suspended turn returns, so no caller
    * can hold the `approvalId` yet and there is nothing to race with.
    */
-  private async saveCheckpoint(approvalId: string, messages: ModelMessage[]): Promise<void> {
+  private async saveCheckpoint(
+    approvalId: string,
+    messages: ModelMessage[],
+    structuredOutput?: StoredStructuredOutput,
+  ): Promise<void> {
     if (!this.approvalStore) return;
 
     try {
@@ -519,6 +526,7 @@ export class AgentRunner {
           // messages are dropped because instructions are re-derived from the
           // agent's config on resume.
           messages: withoutSystemMessages(messages),
+          ...(structuredOutput ? { structuredOutput } : {}),
         },
       });
     } catch {
@@ -818,7 +826,8 @@ export class AgentRunner {
             : undefined,
           // Independent of history being enabled: an approval must stay resumable
           // even for a stateless turn. Always synchronous for the same reason.
-          onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+          onSuspend: (approvalId, messages, extras) =>
+            this.saveCheckpoint(approvalId, messages, extras?.structuredOutput),
         });
         await writes?.flush();
       } else {
@@ -924,7 +933,8 @@ export class AgentRunner {
                   this.saveHistory(prepared.context, messages),
                 )
             : undefined,
-          onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+          onSuspend: (approvalId, messages, extras) =>
+            this.saveCheckpoint(approvalId, messages, extras?.structuredOutput),
         })) {
           if (event.type === 'approval_required') {
             wasSuspended = true;
@@ -1082,13 +1092,14 @@ export class AgentRunner {
       limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer: config.messageReducer ?? this.options.messageReducer,
-      structuredOutput: resolveStructuredOutput([config]),
+      structuredOutput: restoreStructuredOutput(checkpoint.structuredOutput, resolveStructuredOutput([config])),
       signal: options?.signal,
       onCheckpoint: (cp) => this.saveInFlightCheckpoint(context, cp),
       onTranscript: sessionStore
         ? (messages) => this.saveHistory(context, messages)
         : undefined,
-      onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+      onSuspend: (approvalId, messages, extras) =>
+            this.saveCheckpoint(approvalId, messages, extras?.structuredOutput),
     });
   }
 

@@ -11,8 +11,10 @@ export interface JsonSchemaValidationOptions {
   maxIssues?: number;
 }
 
-/** Guards against `$ref` cycles that never consume input. */
-const MAX_DEPTH = 64;
+/** `$ref`s followed in a row without moving into the value: past this, it is a cycle. */
+const MAX_REF_CHAIN = 32;
+/** Nesting of the value itself, a guard against stack exhaustion. */
+const MAX_VALUE_DEPTH = 256;
 
 type SchemaNode = JsonSchema | boolean;
 
@@ -67,19 +69,88 @@ function resolveRef(root: JsonSchema, ref: string): SchemaNode | undefined {
     : undefined;
 }
 
+const compiledPatterns = new Map<string, RegExp | null>();
+
+/**
+ * Compiles a schema `pattern`. JSON Schema patterns are ECMA-262 regular
+ * expressions; the Unicode flag is tried first, and patterns that are only
+ * valid without it (such as `[\w-.]`) are compiled without it. Returns `null`
+ * for a pattern that is invalid either way.
+ */
+function compilePattern(pattern: string): RegExp | null {
+  let compiled = compiledPatterns.get(pattern);
+  if (compiled === undefined) {
+    try {
+      compiled = new RegExp(pattern, 'u');
+    } catch {
+      try {
+        compiled = new RegExp(pattern);
+      } catch {
+        compiled = null;
+      }
+    }
+    compiledPatterns.set(pattern, compiled);
+  }
+  return compiled;
+}
+
+/**
+ * Problems in a schema itself, which no answer could fix: patterns that are
+ * not valid regular expressions and `$ref`s that do not resolve locally.
+ * Empty when the schema is usable.
+ */
+export function findSchemaProblems(schema: JsonSchema): string[] {
+  const problems: string[] = [];
+  const seen = new Set<object>();
+
+  const visit = (node: unknown, at: string): void => {
+    if (typeof node !== 'object' || node === null || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => visit(item, `${at}/${i}`));
+      return;
+    }
+    const s = node as Record<string, unknown>;
+    if (typeof s.pattern === 'string' && compilePattern(s.pattern) === null) {
+      problems.push(`${at || '/'}: pattern ${JSON.stringify(s.pattern)} is not a valid regular expression`);
+    }
+    if (typeof s.$ref === 'string' && resolveRef(schema, s.$ref) === undefined) {
+      problems.push(`${at || '/'}: $ref "${s.$ref}" does not resolve within the schema`);
+    }
+    if (typeof s.patternProperties === 'object' && s.patternProperties !== null) {
+      for (const key of Object.keys(s.patternProperties)) {
+        if (compilePattern(key) === null) {
+          problems.push(`${at || '/'}: patternProperties key ${JSON.stringify(key)} is not a valid regular expression`);
+        }
+      }
+    }
+    for (const [key, value] of Object.entries(s)) {
+      // `const`, `enum`, and `default` hold data, not subschemas.
+      if (key === 'const' || key === 'enum' || key === 'default' || key === 'examples') continue;
+      visit(value, `${at}/${key}`);
+    }
+  };
+
+  visit(schema, '');
+  return problems;
+}
+
 /**
  * Validates a value against a JSON Schema, without dependencies.
  *
  * Covers the subset that provider structured-output modes use, plus common
- * constraints: `type` (one or several, `integer` included), `enum`, `const`,
- * `properties`, `required`, `additionalProperties`, `minProperties`,
- * `maxProperties`, `items`, `prefixItems`, `minItems`, `maxItems`,
- * `uniqueItems`, `minLength`, `maxLength`, `pattern`, `minimum`, `maximum`,
- * `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `anyOf`, `oneOf`,
- * `allOf`, `not`, boolean schemas, and local `$ref`s into `$defs` or
- * `definitions`. Other keywords, `format` included, are ignored rather than
- * rejected. For full JSON Schema coverage, plug a validator such as Ajv into
- * `StructuredOutputOptions.validate`.
+ * constraints: `type` (one or several, `integer` included), `nullable`
+ * (OpenAPI), `enum`, `const`, `properties`, `patternProperties`, `required`,
+ * `additionalProperties`, `minProperties`, `maxProperties`, `items` (a schema,
+ * or a draft-07 tuple with `additionalItems`), `prefixItems`, `minItems`,
+ * `maxItems`, `uniqueItems`, `minLength`, `maxLength` (counted in code
+ * points), `pattern`, `minimum`, `maximum`, `exclusiveMinimum`,
+ * `exclusiveMaximum`, `multipleOf`, `anyOf`, `oneOf`, `allOf`, `not`, boolean
+ * schemas, and local `$ref`s into `$defs` or `definitions`. Other keywords,
+ * `format` included, are ignored rather than rejected. For full JSON Schema
+ * coverage, plug a validator such as Ajv into `StructuredOutputOptions.validate`.
+ *
+ * Problems in the schema itself are reported by `findSchemaProblems`.
  */
 export function validateJsonSchema(
   value: unknown,
@@ -94,18 +165,23 @@ export function validateJsonSchema(
   };
 
   /** Runs `node` against `instance` into a scratch list, for anyOf/oneOf/not. */
-  const probe = (instance: unknown, node: SchemaNode, path: string, depth: number): string[] => {
+  const probe = (instance: unknown, node: SchemaNode, path: string, depth: number, refChain: number): string[] => {
     const saved = issues.splice(0, issues.length);
-    walk(instance, node, path, depth);
+    walk(instance, node, path, depth, refChain);
     const found = issues.splice(0, issues.length);
     issues.push(...saved);
     return found;
   };
 
-  function walk(instance: unknown, node: SchemaNode, path: string, depth: number): void {
+  /**
+   * @param depth How deep `instance` is nested in the value.
+   * @param refChain `$ref`s followed at this same position without moving
+   *   into the value; only a chain that never consumes input can loop.
+   */
+  function walk(instance: unknown, node: SchemaNode, path: string, depth: number, refChain: number): void {
     if (issues.length >= maxIssues) return;
-    if (depth > MAX_DEPTH) {
-      report(path, 'schema nesting is too deep (possible $ref cycle)');
+    if (depth > MAX_VALUE_DEPTH) {
+      report(path, `the value is nested more than ${MAX_VALUE_DEPTH} levels deep`);
       return;
     }
     if (node === true) return;
@@ -115,6 +191,8 @@ export function validateJsonSchema(
     }
 
     const s = node as Record<string, unknown>;
+    const into = (child: unknown, sub: SchemaNode, at: string): void => walk(child, sub, at, depth + 1, 0);
+    const here = (sub: SchemaNode): void => walk(instance, sub, path, depth, refChain);
 
     if (typeof s.$ref === 'string') {
       const target = resolveRef(schema, s.$ref);
@@ -122,8 +200,14 @@ export function validateJsonSchema(
         report(path, `unresolvable $ref "${s.$ref}"`);
         return;
       }
-      walk(instance, target, path, depth + 1);
+      if (refChain >= MAX_REF_CHAIN) {
+        report(path, `$ref "${s.$ref}" loops without matching any value`);
+        return;
+      }
+      walk(instance, target, path, depth, refChain + 1);
     }
+
+    if (instance === null && s.nullable === true) return;
 
     if (s.type !== undefined) {
       const types = Array.isArray(s.type) ? (s.type as string[]) : [s.type as string];
@@ -141,20 +225,18 @@ export function validateJsonSchema(
     }
 
     if (typeof instance === 'string') {
-      if (typeof s.minLength === 'number' && instance.length < s.minLength) {
+      // JSON Schema counts characters as code points, so an emoji is one.
+      const length = Array.from(instance).length;
+      if (typeof s.minLength === 'number' && length < s.minLength) {
         report(path, `must be at least ${s.minLength} characters`);
       }
-      if (typeof s.maxLength === 'number' && instance.length > s.maxLength) {
+      if (typeof s.maxLength === 'number' && length > s.maxLength) {
         report(path, `must be at most ${s.maxLength} characters`);
       }
       if (typeof s.pattern === 'string') {
-        let matches = true;
-        try {
-          matches = new RegExp(s.pattern, 'u').test(instance);
-        } catch {
-          report(path, `schema pattern ${JSON.stringify(s.pattern)} is not a valid regular expression`);
-        }
-        if (!matches) report(path, `must match pattern ${JSON.stringify(s.pattern)}`);
+        const regex = compilePattern(s.pattern);
+        // An invalid pattern is a schema problem (see findSchemaProblems), not the answer's.
+        if (regex && !regex.test(instance)) report(path, `must match pattern ${JSON.stringify(s.pattern)}`);
       }
     }
 
@@ -184,13 +266,21 @@ export function validateJsonSchema(
         const duplicate = instance.findIndex((item, i) => instance.findIndex((other) => deepEqual(item, other)) !== i);
         if (duplicate !== -1) report(childPath(path, duplicate), 'duplicates an earlier item');
       }
-      const prefix = Array.isArray(s.prefixItems) ? (s.prefixItems as SchemaNode[]) : [];
+      // Draft 2020-12 `prefixItems` + `items`, or the draft-07 tuple form,
+      // `items: [...]` + `additionalItems`.
+      const tuple = Array.isArray(s.prefixItems)
+        ? (s.prefixItems as SchemaNode[])
+        : Array.isArray(s.items)
+          ? (s.items as SchemaNode[])
+          : [];
+      const rest = Array.isArray(s.prefixItems)
+        ? (s.items as SchemaNode | undefined)
+        : Array.isArray(s.items)
+          ? (s.additionalItems as SchemaNode | undefined)
+          : (s.items as SchemaNode | undefined);
       instance.forEach((item, i) => {
-        if (i < prefix.length) {
-          walk(item, prefix[i], childPath(path, i), depth + 1);
-        } else if (s.items !== undefined && !Array.isArray(s.items)) {
-          walk(item, s.items as SchemaNode, childPath(path, i), depth + 1);
-        }
+        if (i < tuple.length) into(item, tuple[i], childPath(path, i));
+        else if (rest !== undefined) into(item, rest, childPath(path, i));
       });
     }
 
@@ -198,6 +288,9 @@ export function validateJsonSchema(
       const record = instance as Record<string, unknown>;
       const keys = Object.keys(record);
       const properties = (s.properties ?? {}) as Record<string, SchemaNode>;
+      const patternProperties = Object.entries((s.patternProperties ?? {}) as Record<string, SchemaNode>)
+        .map(([pattern, sub]) => [compilePattern(pattern), sub] as const)
+        .filter((entry): entry is readonly [RegExp, SchemaNode] => entry[0] !== null);
 
       if (Array.isArray(s.required)) {
         for (const key of s.required as string[]) {
@@ -213,27 +306,38 @@ export function validateJsonSchema(
         report(path, `must have at most ${s.maxProperties} properties`);
       }
       for (const key of keys) {
+        const at = childPath(path, key);
+        let matched = false;
         if (Object.prototype.hasOwnProperty.call(properties, key)) {
-          walk(record[key], properties[key], childPath(path, key), depth + 1);
-        } else if (s.additionalProperties === false) {
-          report(childPath(path, key), 'is not an allowed property');
+          into(record[key], properties[key], at);
+          matched = true;
+        }
+        for (const [regex, sub] of patternProperties) {
+          if (regex.test(key)) {
+            into(record[key], sub, at);
+            matched = true;
+          }
+        }
+        if (matched) continue;
+        if (s.additionalProperties === false) {
+          report(at, 'is not an allowed property');
         } else if (typeof s.additionalProperties === 'object' && s.additionalProperties !== null) {
-          walk(record[key], s.additionalProperties as SchemaNode, childPath(path, key), depth + 1);
+          into(record[key], s.additionalProperties as SchemaNode, at);
         }
       }
     }
 
     if (Array.isArray(s.allOf)) {
-      for (const sub of s.allOf as SchemaNode[]) walk(instance, sub, path, depth + 1);
+      for (const sub of s.allOf as SchemaNode[]) here(sub);
     }
     if (Array.isArray(s.anyOf)) {
-      const branches = (s.anyOf as SchemaNode[]).map((sub) => probe(instance, sub, path, depth + 1));
+      const branches = (s.anyOf as SchemaNode[]).map((sub) => probe(instance, sub, path, depth, refChain));
       if (!branches.some((found) => found.length === 0)) {
         report(path, `must match at least one schema in anyOf (${summarize(branches)})`);
       }
     }
     if (Array.isArray(s.oneOf)) {
-      const branches = (s.oneOf as SchemaNode[]).map((sub) => probe(instance, sub, path, depth + 1));
+      const branches = (s.oneOf as SchemaNode[]).map((sub) => probe(instance, sub, path, depth, refChain));
       const matched = branches.filter((found) => found.length === 0).length;
       if (matched !== 1) {
         report(
@@ -244,12 +348,12 @@ export function validateJsonSchema(
         );
       }
     }
-    if (s.not !== undefined && probe(instance, s.not as SchemaNode, path, depth + 1).length === 0) {
+    if (s.not !== undefined && probe(instance, s.not as SchemaNode, path, depth, refChain).length === 0) {
       report(path, 'must not match the schema in "not"');
     }
   }
 
-  walk(value, schema, '$', 0);
+  walk(value, schema, '$', 0, 0);
   return { valid: issues.length === 0, issues };
 }
 

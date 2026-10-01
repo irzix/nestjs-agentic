@@ -11,4 +11,6 @@ Add structured output: constrain an agent's final answer to a JSON Schema, with 
 - Streaming emits `output_rejected` before each repair round and `structured` on `final_answer`.
 - A dependency-free `validateJsonSchema` covering the subset providers' structured-output modes use, plus `parseJsonAnswer`.
 - A turn that would run through a `RuntimeAdapter` with an `outputSchema` throws `StructuredOutputNotSupportedError` instead of returning unvalidated text.
-- `OpenAiModelAdapter` sends `outputFormat` as `response_format: { type: 'json_schema' }` and declares `supportsStructuredOutput`.
+- A run that sets its own `outputSchema` does not inherit the agent's options (its `validate` in particular). Schemas with an invalid pattern or an unresolvable `$ref` throw `InvalidOutputSchemaError` before any model call. A refusal (`ModelResponse.refusal`) fails the turn without repair. A failed turn's conversation is still saved, and an approval whose resumed answer misses its schema is recorded as settled. The schema and repair state survive approval resume and checkpoint recovery.
+- The validator also covers `patternProperties`, OpenAPI `nullable`, draft-07 tuples, code-point string lengths, patterns that need the non-Unicode regex mode, and deep recursive `$ref`s.
+- `OpenAiModelAdapter` sends `outputFormat` as `response_format: { type: 'json_schema' }` (non-object roots wrapped as `{ value }`), reports refusals, and takes `structuredOutput: 'prompt'` for servers without `json_schema` support.

@@ -54,6 +54,17 @@ export interface OpenAiModelAdapterOptions {
   /** Extra body fields merged into every request payload. */
   extraBody?: Record<string, unknown>;
   /**
+   * How an agent's `outputSchema` reaches the model.
+   *
+   * - `'native'` (default): sent as `response_format: { type: 'json_schema' }`.
+   * - `'prompt'`: not sent as a parameter, so the core runtime describes the
+   *   schema in the prompt instead. Use it for compatible servers or models
+   *   that reject or ignore `json_schema` response formats.
+   *
+   * Either way the core runtime validates and repairs the answer.
+   */
+  structuredOutput?: 'native' | 'prompt';
+  /**
    * Pre-configured SDK client. Use this for Azure via `AzureOpenAI`, custom
    * transports, proxies, or deterministic tests.
    * When provided, connection options above are ignored.
@@ -81,8 +92,11 @@ export interface OpenAiModelAdapterOptions {
  */
 @Injectable()
 export class OpenAiModelAdapter implements ModelAdapter {
-  /** `outputFormat` is sent as `response_format: { type: 'json_schema' }`. */
-  readonly supportsStructuredOutput = true;
+  /**
+   * Whether `outputFormat` is sent as `response_format: { type: 'json_schema' }`,
+   * per the `structuredOutput` option.
+   */
+  readonly supportsStructuredOutput: boolean;
   private readonly client: OpenAI;
   private readonly options: OpenAiModelAdapterOptions;
   private readonly includeStreamUsage: boolean;
@@ -90,6 +104,7 @@ export class OpenAiModelAdapter implements ModelAdapter {
   constructor(@Optional() options?: OpenAiModelAdapterOptions) {
     this.options = options ?? {};
     this.includeStreamUsage = this.options.includeStreamUsage ?? true;
+    this.supportsStructuredOutput = (this.options.structuredOutput ?? 'native') === 'native';
     this.client = this.options.client ?? this.createClient(this.options);
   }
 
@@ -121,12 +136,14 @@ export class OpenAiModelAdapter implements ModelAdapter {
       });
 
       const choice = completion.choices?.[0];
+      const refusal = choice?.message?.refusal;
 
       return {
-        content: choice?.message?.content ?? '',
+        content: unwrapStructuredContent(request, choice?.message?.content ?? '', this.supportsStructuredOutput),
         toolCalls: toModelToolCalls(choice?.message?.tool_calls),
         usage: toModelUsage(completion.usage),
         finishReason: toModelFinishReason(choice?.finish_reason),
+        ...(refusal ? { refusal } : {}),
       };
     } catch (err) {
       throw OpenAiModelError.from(err, request.model.model);
@@ -142,6 +159,7 @@ export class OpenAiModelAdapter implements ModelAdapter {
 
     const accumulator = new ToolCallAccumulator();
     let content = '';
+    let refusal = '';
     let finishReason: string | null | undefined;
     let usage: ModelResponse['usage'];
 
@@ -167,6 +185,10 @@ export class OpenAiModelAdapter implements ModelAdapter {
           content += text;
           yield { type: 'token', text };
         }
+        const refused = (choice.delta as { refusal?: string | null } | undefined)?.refusal;
+        if (refused) {
+          refusal += refused;
+        }
 
         accumulator.add(choice.delta?.tool_calls);
       }
@@ -179,9 +201,10 @@ export class OpenAiModelAdapter implements ModelAdapter {
     yield {
       type: 'response',
       response: {
-        content,
+        content: unwrapStructuredContent(request, content, this.supportsStructuredOutput),
         toolCalls,
         usage,
+        ...(refusal ? { refusal } : {}),
         finishReason: toModelFinishReason(
           finishReason ?? (toolCalls.length > 0 ? 'tool_calls' : 'stop'),
         ),
@@ -191,7 +214,7 @@ export class OpenAiModelAdapter implements ModelAdapter {
 
   private buildBaseParams(request: ModelRequest) {
     const tools = toOpenAiTools(request.tools);
-    const format = request.outputFormat;
+    const format = this.supportsStructuredOutput ? request.outputFormat : undefined;
 
     return {
       ...this.options.extraBody,
@@ -204,7 +227,7 @@ export class OpenAiModelAdapter implements ModelAdapter {
               type: 'json_schema' as const,
               json_schema: {
                 name: format.name,
-                schema: format.schema,
+                schema: needsWrapping(format.schema) ? wrapSchema(format.schema) : format.schema,
                 strict: format.strict,
                 ...(format.description !== undefined ? { description: format.description } : {}),
               },
@@ -223,4 +246,41 @@ export class OpenAiModelAdapter implements ModelAdapter {
           : {}),
     };
   }
+}
+
+/**
+ * OpenAI accepts only an object at the root of a `json_schema` response
+ * format. Any other root (an array, a string) is sent wrapped as the
+ * `value` property of an object, and unwrapped again in the response.
+ */
+function needsWrapping(schema: Record<string, unknown>): boolean {
+  return schema.type !== 'object';
+}
+
+function wrapSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  // Local `$ref`s point at the root, so definitions move to the new root.
+  const { $defs, definitions, ...inner } = schema;
+  return {
+    type: 'object',
+    properties: { value: inner },
+    required: ['value'],
+    additionalProperties: false,
+    ...($defs !== undefined ? { $defs } : {}),
+    ...(definitions !== undefined ? { definitions } : {}),
+  };
+}
+
+/** Undoes `wrapSchema` on the model's answer. Anything else passes through. */
+function unwrapStructuredContent(request: ModelRequest, content: string, native: boolean): string {
+  const format = request.outputFormat;
+  if (!native || !format || !needsWrapping(format.schema) || !content) return content;
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && 'value' in parsed) {
+      return JSON.stringify((parsed as { value: unknown }).value);
+    }
+  } catch {
+    // Not the wrapped shape; the core runtime reports it.
+  }
+  return content;
 }

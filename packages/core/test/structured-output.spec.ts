@@ -6,8 +6,11 @@ import {
   AgenticModule,
   AgentRunner,
   ApprovalService,
+  AgentExecutor,
   ExecutionLimitExceededError,
   InMemoryApprovalStore,
+  InMemoryAuditSink,
+  InvalidOutputSchemaError,
   LocalToolProvider,
   MockRuntimeAdapter,
   Param,
@@ -25,6 +28,7 @@ import type {
   AgentProvider,
   AgentStreamEvent,
   AgenticModuleOptions,
+  InFlightCheckpoint,
   JsonSchema,
   ModelAdapter,
   ModelRequest,
@@ -305,7 +309,10 @@ export async function runStructuredOutputTests() {
       String(err),
     );
     assert(adapter.requests.length === 3, 'Test 5b: One answer plus two repairs were requested', String(adapter.requests.length));
-    assert(sessions.writes.length === 0, 'Test 5c: A failed turn persists no history');
+    assert(
+      sessions.writes.length === 1 && sessions.writes[0].messages.some((m) => m.content === 'not json at all'),
+      'Test 5c: The conversation is still saved, so tool calls in it are not repeated',
+    );
 
     agentOptions = { maxRepairAttempts: 0 };
     const once = new ScriptedAdapter(['nope']);
@@ -445,6 +452,164 @@ export async function runStructuredOutputTests() {
     assert(err instanceof StructuredOutputNotSupportedError, 'Test 10: A RuntimeAdapter turn with an outputSchema throws', String(err));
   } catch (err) {
     assert(false, 'Test 10: RuntimeAdapter', String(err));
+  }
+
+  // TEST 11: validator coverage found in review
+  try {
+    const patterned: JsonSchema = { type: 'object', patternProperties: { '^x_': { type: 'number' } }, additionalProperties: false };
+    assert(validateJsonSchema({ x_1: 1 }, patterned).valid, 'Test 11a: patternProperties keys are allowed under additionalProperties: false');
+    assert(!validateJsonSchema({ x_1: 'a' }, patterned).valid, 'Test 11b: …and validated against their schema');
+
+    assert(validateJsonSchema(null, { type: 'string', nullable: true } as JsonSchema).valid, 'Test 11c: OpenAPI nullable accepts null');
+    const tuple: JsonSchema = { type: 'array', items: [{ type: 'number' }, { type: 'number' }], additionalItems: false };
+    assert(!validateJsonSchema(['x', 'y'], tuple).valid && !validateJsonSchema([1, 2, 3], tuple).valid, 'Test 11d: Draft-07 tuples and additionalItems are enforced');
+    assert(validateJsonSchema('😀', { type: 'string', maxLength: 1 }).valid, 'Test 11e: Lengths count code points, so an emoji is one character');
+    assert(validateJsonSchema('a-b.c', { type: 'string', pattern: '^[\\w-.]+$' }).valid, 'Test 11f: Patterns only valid without the Unicode flag still work');
+
+    let tree: Record<string, unknown> = { name: 'leaf', children: [] };
+    for (let i = 0; i < 40; i++) tree = { name: `n${i}`, children: [tree] };
+    const recursive: JsonSchema = {
+      $ref: '#/$defs/node',
+      $defs: { node: { type: 'object', properties: { name: { type: 'string' }, children: { type: 'array', items: { $ref: '#/$defs/node' } } }, required: ['name'] } },
+    };
+    assert(validateJsonSchema(tree, recursive).valid, 'Test 11g: A deeply nested valid answer is not mistaken for a $ref cycle', JSON.stringify(validateJsonSchema(tree, recursive).issues));
+    const loop = validateJsonSchema({}, { $ref: '#/$defs/a', $defs: { a: { $ref: '#/$defs/b' }, b: { $ref: '#/$defs/a' } } } as JsonSchema);
+    assert(!loop.valid && loop.issues[0].includes('loops'), 'Test 11h: A real $ref cycle is still caught', loop.issues[0]);
+
+    const parsed = parseJsonAnswer('Answer [final]: {"a":1} — see [1].');
+    assert(parsed.ok && (parsed.value as { a?: number }).a === 1, 'Test 11i: Brackets in surrounding prose do not break extraction');
+  } catch (err) {
+    assert(false, 'Test 11: Validator coverage', String(err));
+  }
+
+  // TEST 12: a broken schema fails before any model call
+  try {
+    reset();
+    agentSchema = { type: 'object', properties: { code: { type: 'string', pattern: '(' } } };
+    const adapter = new ScriptedAdapter([VALID]);
+    const err = await expectError((await boot(adapter)).runner.run('triage', { sessionId: 's12', message: 'x' }));
+    assert(
+      err instanceof InvalidOutputSchemaError && adapter.requests.length === 0,
+      'Test 12a: An invalid pattern is a configuration error, not something to repair',
+      String(err),
+    );
+    agentSchema = { type: 'object', properties: { a: { $ref: '#/$defs/missing' } } };
+    const missing = await expectError((await boot(new ScriptedAdapter([VALID]))).runner.run('triage', { sessionId: 's12b', message: 'x' }));
+    assert(missing instanceof InvalidOutputSchemaError, 'Test 12b: An unresolvable $ref is a configuration error', String(missing));
+  } catch (err) {
+    assert(false, 'Test 12: Schema problems', String(err));
+  }
+
+  // TEST 13: options belong to the schema they were written for
+  try {
+    reset();
+    agentOptions = { validate: () => ({ valid: true, value: 'agent validator' }) };
+    const runSchema: JsonSchema = { type: 'array' };
+    const adapter = new ScriptedAdapter(['{"not":"an array"}', '[1]']);
+    const result = await (await boot(adapter)).runner.run('triage', { sessionId: 's13', message: 'x', outputSchema: runSchema });
+    assert(
+      adapter.requests.length === 2 && JSON.stringify(result.structured) === '[1]',
+      "Test 13a: A run's own schema is not validated by the agent's validator",
+      JSON.stringify(result.structured),
+    );
+
+    agentOptions = { validate: () => ({ valid: false }) as never, maxRepairAttempts: 1 };
+    const silent = new ScriptedAdapter(['{}', '{}']);
+    await expectError((await boot(silent)).runner.run('triage', { sessionId: 's13b', message: 'x' }));
+    assert(
+      silent.requests[1]?.messages.some((m) => m.content.includes('$: rejected by the custom validator')) === true,
+      'Test 13b: A validator rejecting without issues does not crash the turn',
+    );
+  } catch (err) {
+    assert(false, 'Test 13: Option scoping', String(err));
+  }
+
+  // TEST 14: empty answers and refusals
+  try {
+    reset();
+    const empty = new ScriptedAdapter(['', VALID]);
+    await (await boot(empty)).runner.run('triage', { sessionId: 's14', message: 'x' });
+    assert(
+      !empty.requests[1].messages.some((m) => m.role === 'assistant' && m.content === ''),
+      'Test 14a: An empty answer is not replayed as an empty assistant message',
+    );
+
+    const sessions = new RecordingSessionStore();
+    const refusing = new ScriptedAdapter([{ content: '', refusal: 'I cannot help with that.' }]);
+    const refused = await expectError((await boot(refusing, { sessionStore: sessions })).runner.run('triage', { sessionId: 's14b', message: 'x' }));
+    assert(
+      refused instanceof StructuredOutputError && refused.refusal === 'I cannot help with that.' && refusing.requests.length === 1,
+      'Test 14b: A refusal fails the turn at once instead of asking for a repair',
+      String(refused),
+    );
+  } catch (err) {
+    assert(false, 'Test 14: Empty answers and refusals', String(err));
+  }
+
+  // TEST 15: a run's schema survives suspension and recovery
+  try {
+    reset();
+    const runSchema: JsonSchema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] };
+    const adapter = new ScriptedAdapter([
+      { content: '', toolCalls: [{ id: 'r1', name: 'refund', args: { amount: 20 } }] },
+      '{"ok":true}',
+    ]);
+    const audit = new InMemoryAuditSink();
+    const { runner, approvals } = await boot(adapter, { auditSinks: [audit] });
+    const suspended = await runner.run('triage', { sessionId: 's15', message: 'refund me', outputSchema: runSchema });
+    const approvalId = (suspended.toolCalls[0]?.result as { approvalId?: string }).approvalId!;
+    const resumed = (await approvals.approve(approvalId)) as { structured?: { ok?: boolean } };
+    assert(resumed.structured?.ok === true, "Test 15a: The resumed turn is validated against the run's own schema", JSON.stringify(resumed.structured));
+
+    const failing = new ScriptedAdapter([
+      { content: '', toolCalls: [{ id: 'r2', name: 'refund', args: { amount: 5 } }] },
+      'still not json',
+    ]);
+    agentOptions = { maxRepairAttempts: 0 };
+    const second = await boot(failing, { auditSinks: [audit] });
+    const pending = await second.runner.run('triage', { sessionId: 's15b', message: 'refund again' });
+    const id = (pending.toolCalls[0]?.result as { approvalId?: string }).approvalId!;
+    const err = await expectError(second.approvals.approve(id));
+    assert(
+      err instanceof StructuredOutputError &&
+        audit.ofType('approval_settled').some((e) => e.approvalId === id) &&
+        !audit.ofType('approval_settlement_failed').some((e) => e.approvalId === id),
+      'Test 15b: When only the resumed answer misses its schema, the approval is recorded as settled',
+    );
+
+    const checkpoints: InFlightCheckpoint[] = [];
+    const executor = new AgentExecutor(new ScriptedAdapter(['nope', VALID]));
+    const spec = { schema: TRIAGE_SCHEMA, maxRepairAttempts: 1 };
+    await executor.execute({
+      sessionId: 's15c',
+      message: 'x',
+      model: { provider: 'mock', model: 'm' },
+      tools: [],
+      structuredOutput: spec,
+      onCheckpoint: (cp) => void checkpoints.push(cp),
+    });
+    const afterRejection = checkpoints[0];
+    assert(
+      afterRejection?.repairAttempts === 1 && afterRejection.repair?.length === 2 && afterRejection.structuredOutput?.schema === TRIAGE_SCHEMA,
+      'Test 15c: A rejection is checkpointed with its repair state and schema',
+      JSON.stringify(afterRejection && { r: afterRejection.repairAttempts, n: afterRejection.repair?.length }),
+    );
+    const recovered = await expectError(
+      new AgentExecutor(new ScriptedAdapter(['still bad'])).resumeCheckpoint({
+        sessionId: 's15c',
+        model: { provider: 'mock', model: 'm' },
+        tools: [],
+        checkpoint: afterRejection,
+        structuredOutput: spec,
+      }),
+    );
+    assert(
+      recovered instanceof StructuredOutputError && recovered.attempts === 1,
+      'Test 15d: A recovered turn keeps its spent repair budget',
+      String(recovered),
+    );
+  } catch (err) {
+    assert(false, 'Test 15: Persistence', String(err));
   }
 
   reset();
