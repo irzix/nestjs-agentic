@@ -542,6 +542,7 @@ interface PendingApproval {
 interface ApprovalSignature {
   actor: AuditActor & { userId: string }; // userId is what makes signatures distinct
   signedAt: Date;
+  approvalVersion?: string; // digest of the approval as signed; set by ApprovalService
 }
 
 type ApprovalSignatureResult =
@@ -605,7 +606,7 @@ Behavior of `approve()` and `reject()`:
 
 **Dual control (N-of-M).** A policy can return `requiredApprovals: N` on a `require_approval` decision. The tool then runs only after `N` distinct approvers have called `approve()`. Each call before the threshold records one signature and returns a `pending_approval` `ToolExecutionResult` carrying `signatures` and `requiredApprovals`; the call that meets the threshold settles the approval as usual. Every signature runs through the `ApprovalAuthorizer`, tenant isolation, and separation-of-duties checks, must come from an identified `actor.userId`, and a repeated signature from the same `userId` throws `ApprovalNotAuthorizedError` instead of counting twice. A single authorized `reject()` vetoes. Each counted signature is audited as `approval_signed`, and `approval_settled` lists every approver in `signatures`.
 
-Signatures are collected with `ApprovalStore.addSignature`, which appends a signature and, on the threshold, removes the approval in the same atomic step, so exactly one caller settles it. The method is optional: a store without it keeps working for single-approver approvals, while a policy that asks for more than one approver on such a store is **denied** at the boundary rather than settled by one person, and `approve()` on such a record throws `ApprovalSignaturesUnsupportedError`. `InMemoryApprovalStore` and `PostgresApprovalStore` implement it; `RedisApprovalStore` implements it when its client exposes `eval`.
+Signatures are collected with `ApprovalStore.addSignature`, which appends a signature and, on the threshold, removes the approval in the same atomic step, so exactly one caller settles it. The method is optional: a store without it keeps working for single-approver approvals, while a policy that asks for more than one approver on such a store is **denied** at the boundary rather than settled by one person, and `approve()` on such a record throws `ApprovalSignaturesUnsupportedError`. `InMemoryApprovalStore` and `PostgresApprovalStore` implement it; `RedisApprovalStore` implements it when its client exposes `eval` or an `evalFn` adapter is given. Each signature records the version of the approval it was given for, so it cannot count toward a record that changed afterwards. When several policies require approval for one call, all of them run: a later `deny` wins, and the approval takes the most approvers and the shortest `ttlSeconds`.
 
 ```typescript
 const outcome = await approvalService.approve(approvalId);

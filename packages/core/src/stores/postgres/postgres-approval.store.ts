@@ -26,6 +26,13 @@ export interface PostgresApprovalStoreOptions {
 }
 
 /**
+ * Marker the signature that meets an approval's threshold sets, naming its
+ * signer, before the approval is deleted. Only that signer can then complete
+ * it, so a concurrent caller cannot take the completion over.
+ */
+const COMPLETING = 'completingSigner';
+
+/**
  * PostgreSQL-backed `ApprovalStore`.
  *
  * Implements atomic, exactly-once claiming using PostgreSQL single-statement `DELETE ... RETURNING`.
@@ -33,10 +40,10 @@ export interface PostgresApprovalStoreOptions {
  * Dual control (`addSignature`) appends with a single conditional `UPDATE`,
  * which row-locks the approval, so concurrent signatures serialize and a
  * duplicate `userId` or a signature past the threshold is refused. The
- * signature that meets the threshold claims the approval with a conditional
- * `DELETE ... RETURNING`, so exactly one caller completes it, and a record
- * left at its threshold by a crash between the two statements is completed by
- * the next call.
+ * signature that meets the threshold also marks the record with its signer,
+ * then claims it with `DELETE ... RETURNING`, so exactly one caller completes
+ * it. If that signer's process stops between the two statements, its next
+ * call completes the approval.
  */
 @Injectable()
 export class PostgresApprovalStore implements ApprovalStore {
@@ -145,60 +152,93 @@ export class PostgresApprovalStore implements ApprovalStore {
   async addSignature(id: string, signature: ApprovalSignature): Promise<ApprovalSignatureResult | null> {
     await this.ensureTable();
     const key = this.getKey(id);
+    const signer = signature.actor.userId;
 
-    // A record can change between the refused UPDATE and the read that
-    // classifies the refusal; retrying a few times settles that race.
+    // A refused UPDATE is classified by reading the record, which can change in
+    // between; a few attempts settle that race.
     for (let attempt = 0; attempt < 3; attempt++) {
+      // Appends the signature unless the signer already signed, the record is
+      // at its threshold, or another signer is completing it. The signature
+      // that meets the threshold also marks the record as being completed by
+      // this signer, so no one else can complete it in the meantime.
       const appended = await this.client.query(
         `UPDATE ${this.tableName}
-         SET data = jsonb_set(data, '{signatures}', COALESCE(data->'signatures', '[]'::jsonb) || jsonb_build_array($2::jsonb))
+         SET data = CASE
+           WHEN jsonb_array_length(COALESCE(data->'signatures', '[]'::jsonb)) + 1 >= COALESCE((data->>'requiredApprovals')::int, 1)
+           THEN jsonb_set(jsonb_set(data, '{signatures}', COALESCE(data->'signatures', '[]'::jsonb) || jsonb_build_array($2::jsonb)), '{${COMPLETING}}', to_jsonb($3::text))
+           ELSE jsonb_set(data, '{signatures}', COALESCE(data->'signatures', '[]'::jsonb) || jsonb_build_array($2::jsonb))
+         END
          WHERE id = $1
            AND (expires_at IS NULL OR expires_at > NOW())
+           AND NOT (data ? '${COMPLETING}')
            AND jsonb_array_length(COALESCE(data->'signatures', '[]'::jsonb)) < COALESCE((data->>'requiredApprovals')::int, 1)
            AND NOT COALESCE(data->'signatures', '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('userId', $3::text)))
          RETURNING data`,
-        [key, JSON.stringify(signature), signature.actor.userId],
+        [key, JSON.stringify(signature), signer],
       );
 
       if (appended.rows.length > 0) {
-        const approval = this.deserialize(appended.rows[0].data)!;
-        if (signatureCount(approval) >= requiredApprovalsOf(approval)) {
-          return this.completeSigned(key);
-        }
-        return { status: 'pending', approval };
+        const data = safeDeserialize<Record<string, unknown>>(appended.rows[0].data);
+        return data[COMPLETING] === signer
+          ? this.finishCompletion(key, signer)
+          : { status: 'pending', approval: this.deserialize(data)! };
       }
 
-      const current = await this.get(id);
+      const current = await this.readRaw(key);
       if (!current) return null;
-      if (signatureCount(current) >= requiredApprovalsOf(current)) {
-        return this.completeSigned(key);
+      if (current[COMPLETING] !== undefined) {
+        // This signer's own completion, interrupted between statements, is
+        // finished now. Anyone else's is theirs to finish.
+        return current[COMPLETING] === signer ? this.finishCompletion(key, signer) : null;
       }
-      if (hasSigned(current, signature.actor.userId)) {
-        return { status: 'duplicate', approval: current };
+      const approval = this.deserialize(current)!;
+      if (signatureCount(approval) >= requiredApprovalsOf(approval)) {
+        // At its threshold without a completer, e.g. restored by save(). Take
+        // the completion only if no one else has.
+        const marked = await this.client.query(
+          `UPDATE ${this.tableName}
+           SET data = jsonb_set(data, '{${COMPLETING}}', to_jsonb($2::text))
+           WHERE id = $1
+             AND (expires_at IS NULL OR expires_at > NOW())
+             AND NOT (data ? '${COMPLETING}')
+             AND jsonb_array_length(COALESCE(data->'signatures', '[]'::jsonb)) >= COALESCE((data->>'requiredApprovals')::int, 1)
+           RETURNING data`,
+          [key, signer],
+        );
+        if (marked.rows.length > 0) return this.finishCompletion(key, signer);
+        continue;
+      }
+      if (hasSigned(approval, signer)) {
+        return { status: 'duplicate', approval };
       }
     }
     return null;
   }
 
-  /**
-   * Claims an approval that holds enough signatures. Of several callers racing
-   * to complete it, only the one whose DELETE removes the row receives it.
-   */
-  private async completeSigned(key: string): Promise<ApprovalSignatureResult | null> {
+  /** Claims an approval this signer marked as completing. */
+  private async finishCompletion(key: string, signer: string): Promise<ApprovalSignatureResult | null> {
     const result = await this.client.query(
       `DELETE FROM ${this.tableName}
-       WHERE id = $1
-         AND (expires_at IS NULL OR expires_at > NOW())
-         AND jsonb_array_length(COALESCE(data->'signatures', '[]'::jsonb)) >= COALESCE((data->>'requiredApprovals')::int, 1)
+       WHERE id = $1 AND data->>'${COMPLETING}' = $2
        RETURNING data`,
-      [key],
+      [key, signer],
     );
     if (result.rows.length === 0) return null;
     return { status: 'complete', approval: this.deserialize(result.rows[0].data)! };
   }
 
+  /** The stored JSON as-is, including the completion marker. */
+  private async readRaw(key: string): Promise<Record<string, unknown> | null> {
+    const result = await this.client.query(
+      `SELECT data FROM ${this.tableName} WHERE id = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
+      [key],
+    );
+    return result.rows.length === 0 ? null : safeDeserialize<Record<string, unknown>>(result.rows[0].data);
+  }
+
   private deserialize(raw: unknown): PendingApproval | null {
     if (!raw) return null;
-    return reviveApproval(safeDeserialize<PendingApproval>(raw));
+    const { [COMPLETING]: _completing, ...approval } = safeDeserialize<Record<string, unknown>>(raw);
+    return reviveApproval(approval as unknown as PendingApproval);
   }
 }

@@ -8,14 +8,22 @@ import type {
 import { reviveApproval, reviveSignature } from '../approval-records';
 import type { GenericRedisClient } from './redis-state.store';
 
+/** Runs a Lua script server-side, given its keys and arguments. */
+export type RedisEvalFn = (script: string, keys: string[], args: (string | number)[]) => Promise<unknown>;
+
 /**
- * Records one signature in a single atomic step. The value is the approval's
- * JSON on the first line and one signature's JSON per following line, so the
- * script appends without re-encoding the approval (cjson would turn empty
- * arrays into objects and round large numbers).
+ * Records one signature in a single atomic step, without decoding JSON.
  *
- * KEYS[1] approval key. ARGV[1] signer userId, ARGV[2] signature JSON.
- * Returns nil when absent, else { status, value }.
+ * The stored value is the approval's JSON on the first line, written with
+ * `requiredApprovals` as its first key so the script can read it with an
+ * anchored match, then one line per signature: the JSON-encoded signer
+ * userId, a tab, and the signature's JSON. JSON never contains a raw tab or
+ * newline, so the separators are unambiguous. Avoiding cjson means a record
+ * cjson cannot parse (a lone surrogate in a transcript) can still be signed,
+ * and a large checkpoint is never decoded inside Redis.
+ *
+ * KEYS[1] approval key. ARGV[1] JSON-encoded signer userId, ARGV[2] the
+ * signature line. Returns nil when absent, else { status, value }.
  */
 const ADD_SIGNATURE_SCRIPT = `
 local raw = redis.call('GET', KEYS[1])
@@ -23,20 +31,14 @@ if not raw then return false end
 local newline = string.find(raw, '\\n', 1, true)
 local head = raw
 if newline then head = string.sub(raw, 1, newline - 1) end
-local ok, approval = pcall(cjson.decode, head)
-if not ok or type(approval) ~= 'table' then
-  return redis.error_reply('approval record is not valid JSON')
-end
-local required = tonumber(approval['requiredApprovals']) or 1
+local required = tonumber(string.match(head, '^{"requiredApprovals":(%d+)')) or 1
 local count = 0
 local duplicate = false
 if newline then
   for line in string.gmatch(string.sub(raw, newline + 1), '[^\\n]+') do
     count = count + 1
-    local okSig, sig = pcall(cjson.decode, line)
-    if okSig and type(sig) == 'table' and type(sig['actor']) == 'table' and sig['actor']['userId'] == ARGV[1] then
-      duplicate = true
-    end
+    local tab = string.find(line, '\\t', 1, true)
+    if tab and string.sub(line, 1, tab - 1) == ARGV[1] then duplicate = true end
   end
 end
 if count >= required then
@@ -60,6 +62,13 @@ end
 return { 'pending', updated }
 `;
 
+/** Atomic read-and-delete for servers or clients without `GETDEL`. */
+const CLAIM_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if raw then redis.call('DEL', KEYS[1]) end
+return raw
+`;
+
 export interface RedisApprovalStoreOptions {
   client: GenericRedisClient;
   keyPrefix?: string;
@@ -78,6 +87,19 @@ export interface RedisApprovalStoreOptions {
    * rather than a generic `ApprovalNotFoundError`. Defaults to 300 (5 minutes).
    */
   expiryGraceSeconds?: number;
+  /**
+   * Adapter for clients whose `eval` signature differs from the positional
+   * ioredis form, such as node-redis v4:
+   *
+   * ```typescript
+   * evalFn: (script, keys, args) => client.eval(script, { keys, arguments: args.map(String) })
+   * ```
+   *
+   * Takes precedence over `client.eval`. Needed for dual control
+   * (`addSignature`), and used for an atomic `claim()` when the client has no
+   * `getdel`.
+   */
+  evalFn?: RedisEvalFn;
 }
 
 /**
@@ -88,11 +110,16 @@ export interface RedisApprovalStoreOptions {
  * a process restart. Resolving it re-resolves the agent, its tools, and the
  * tool method through DI using `agentName` and `toolName`.
  *
- * Dual control (`addSignature`) is available when the client exposes `eval`,
- * since collecting a signature and claiming on the last one must be a single
- * atomic step. Without `eval` the method is absent, and a policy asking for
- * more than one approver is denied rather than downgraded. A dual-control
- * approval and its signatures share one key, so this works on Redis Cluster.
+ * Dual control (`addSignature`) is available when a script can be run (an
+ * `evalFn`, or a client exposing `eval`), since collecting a signature and
+ * claiming on the last one must be a single atomic step. Without it the
+ * method is absent, and a policy asking for more than one approver is denied
+ * rather than downgraded. A dual-control approval and its signatures share
+ * one key, so this works on Redis Cluster.
+ *
+ * Every instance must run a release that understands dual control before a
+ * policy asks for more than one approver: an older instance ignores
+ * `requiredApprovals`.
  */
 @Injectable()
 export class RedisApprovalStore implements ApprovalStore {
@@ -100,10 +127,11 @@ export class RedisApprovalStore implements ApprovalStore {
   private readonly keyPrefix: string;
   private readonly ttlSeconds?: number;
   private readonly expiryGraceSeconds: number;
+  private readonly evalFn?: RedisEvalFn;
 
   /**
    * Records one approver's sign-off, claiming the approval on the signature
-   * that meets its threshold. Present only when the client exposes `eval`.
+   * that meets its threshold. Present only when a script can be run.
    */
   readonly addSignature?: (id: string, signature: ApprovalSignature) => Promise<ApprovalSignatureResult | null>;
 
@@ -112,7 +140,13 @@ export class RedisApprovalStore implements ApprovalStore {
     this.keyPrefix = options.keyPrefix ?? 'agentic:approval:';
     this.ttlSeconds = options.ttlSeconds;
     this.expiryGraceSeconds = options.expiryGraceSeconds ?? 300;
-    if (typeof this.client.eval === 'function') {
+    const client = this.client;
+    this.evalFn =
+      options.evalFn ??
+      (typeof client.eval === 'function'
+        ? (script, keys, args) => client.eval!(script, keys.length, ...keys, ...args)
+        : undefined);
+    if (this.evalFn) {
       this.addSignature = (id, signature) => this.addSignatureAtomically(id, signature);
     }
   }
@@ -163,17 +197,21 @@ export class RedisApprovalStore implements ApprovalStore {
 
   /**
    * Atomically claims the approval so it can be settled at most once across
-   * instances. Uses Redis `GETDEL` when the client exposes it, which reads
-   * and removes the key in a single round trip. Falls back to a non-atomic
-   * get+del when `getdel` is unavailable; in that case concurrent callers on
-   * different instances could both observe the record, so prefer a client
-   * that supports `GETDEL` (Redis 6.2+) for the exactly-once guarantee.
+   * instances. Uses Redis `GETDEL` when the client exposes it, otherwise a
+   * GET-and-DEL script when one can be run. Falls back to a non-atomic
+   * get+del only when neither is available; concurrent callers on different
+   * instances could then both observe the record, so prefer a client that
+   * supports `GETDEL` (Redis 6.2+) or `eval` for the exactly-once guarantee.
    */
   async claim(id: string): Promise<PendingApproval | null> {
     const key = this.getKey(id);
 
     if (typeof this.client.getdel === 'function') {
       return this.deserialize(await this.client.getdel(key));
+    }
+    if (this.evalFn) {
+      const raw = await this.evalFn(CLAIM_SCRIPT, [key], []);
+      return this.deserialize(typeof raw === 'string' ? raw : null);
     }
 
     const raw = await this.client.get(key);
@@ -186,13 +224,10 @@ export class RedisApprovalStore implements ApprovalStore {
     id: string,
     signature: ApprovalSignature,
   ): Promise<ApprovalSignatureResult | null> {
-    const reply = await this.client.eval!(
-      ADD_SIGNATURE_SCRIPT,
-      1,
-      this.getKey(id),
-      signature.actor.userId,
-      JSON.stringify(signature),
-    );
+    const reply = await this.evalFn!(ADD_SIGNATURE_SCRIPT, [this.getKey(id)], [
+      JSON.stringify(signature.actor.userId),
+      signatureLine(signature),
+    ]);
     if (reply === null || reply === undefined) return null;
     if (!Array.isArray(reply) || reply.length !== 2) {
       throw new Error(`Unexpected reply from the addSignature script: ${JSON.stringify(reply)}`);
@@ -212,11 +247,10 @@ export class RedisApprovalStore implements ApprovalStore {
     // signatures, oldest first. Dates do not round-trip through JSON, so they
     // are restored here.
     const [head, ...lines] = raw.split('\n');
-    const parsed = JSON.parse(head) as PendingApproval;
+    const approval = reviveApproval(JSON.parse(head) as PendingApproval);
     const signatures = lines
       .filter((line) => line.length > 0)
-      .map((line) => reviveSignature(JSON.parse(line) as ApprovalSignature));
-    const approval = reviveApproval(parsed);
+      .map((line) => reviveSignature(JSON.parse(line.slice(line.indexOf('\t') + 1)) as ApprovalSignature));
     if (signatures.length > 0) {
       approval.signatures = signatures;
     }
@@ -225,10 +259,17 @@ export class RedisApprovalStore implements ApprovalStore {
 }
 
 /**
- * The approval's JSON, followed by one line per signature. A record without
- * signatures serializes exactly as it always has.
+ * The approval's JSON, then one line per signature. A record that needs one
+ * approver serializes exactly as it always has; one that needs more puts
+ * `requiredApprovals` first, where the signature script reads it.
  */
 function serialize(approval: PendingApproval): string {
-  const { signatures, ...rest } = approval;
-  return [JSON.stringify(rest), ...(signatures ?? []).map((signature) => JSON.stringify(signature))].join('\n');
+  const { signatures, requiredApprovals, ...rest } = approval;
+  const head =
+    requiredApprovals !== undefined ? JSON.stringify({ requiredApprovals, ...rest }) : JSON.stringify(rest);
+  return [head, ...(signatures ?? []).map(signatureLine)].join('\n');
+}
+
+function signatureLine(signature: ApprovalSignature): string {
+  return `${JSON.stringify(signature.actor.userId)}\t${JSON.stringify(signature)}`;
 }

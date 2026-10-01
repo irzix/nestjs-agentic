@@ -100,6 +100,13 @@ export interface PendingApproval {
 export interface ApprovalSignature {
   actor: AuditActor & { userId: string };
   signedAt: Date;
+  /**
+   * Digest of the approval as the signer saw it. A signature only counts
+   * toward the version of the record it was given for, so one collected
+   * before the record changed cannot complete the changed record. Set by
+   * `ApprovalService`; stores persist it as given.
+   */
+  approvalVersion?: string;
 }
 
 /**

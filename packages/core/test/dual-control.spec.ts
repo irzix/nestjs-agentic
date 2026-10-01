@@ -9,6 +9,7 @@ import {
   ApprovalService,
   ApprovalSignaturesUnsupportedError,
   AuditTrail,
+  ExecutionCancelledError,
   Context,
   InMemoryApprovalStore,
   InMemoryAuditSink,
@@ -107,6 +108,43 @@ class TamperingApprovalStore extends InMemoryApprovalStore {
   }
 }
 
+/** Reports an expired record on read, while the stored one is still valid, as if the clock moved back. */
+class ClockSkewStore extends InMemoryApprovalStore {
+  async get(id: string) {
+    const record = await super.get(id);
+    return record ? { ...record, expiresAt: new Date(Date.now() - 1000) } : null;
+  }
+}
+
+/** Aborts the caller's signal while a store write is in flight. */
+class AbortingStore extends InMemoryApprovalStore {
+  controller?: AbortController;
+  async addSignature(id: string, signature: ApprovalSignature) {
+    const result = await super.addSignature(id, signature);
+    this.controller?.abort();
+    return result;
+  }
+  async claim(id: string) {
+    const result = await super.claim(id);
+    this.controller?.abort();
+    return result;
+  }
+}
+
+/** Requires one approval for every call, from a module-wide policy. */
+class GlobalReviewPolicy implements ToolPolicy {
+  async evaluate(): Promise<PolicyResult> {
+    return { decision: 'require_approval', reason: 'Every wire is reviewed.', ttlSeconds: 3600 };
+  }
+}
+
+/** Refuses wires to sanctioned destinations. */
+class SanctionsPolicy implements ToolPolicy {
+  async evaluate(_ctx: AgentContext, _tool: string, args: Record<string, unknown>): Promise<PolicyResult> {
+    return args.amount === 66_666 ? { decision: 'deny', reason: 'Sanctioned destination.' } : { decision: 'allow' };
+  }
+}
+
 function isPending(result: unknown): result is Extract<ToolExecutionResult, { status: 'pending_approval' }> {
   return (result as { status?: string })?.status === 'pending_approval';
 }
@@ -145,9 +183,12 @@ export async function runDualControlTests() {
     authorizer?: ApprovalAuthorizer;
     enforceSeparationOfDuties?: boolean;
     approvalTtlSeconds?: number;
+    defaultPolicies?: Array<new (...args: unknown[]) => ToolPolicy>;
+    amount?: number;
   } = {}) {
+    const amount = options.amount ?? 50_000;
     const model = new MockModelAdapter();
-    model.whenAsked('Wire $50000').callTool('sendWire', { amount: 50_000 }).reply('Wire sent.');
+    model.whenAsked(`Wire $${amount}`).callTool('sendWire', { amount }).reply('Wire sent.');
 
     const approvalStore = options.store ?? new InMemoryApprovalStore();
     const auditSink = new InMemoryAuditSink();
@@ -157,10 +198,11 @@ export async function runDualControlTests() {
       defaultModel: { provider: 'mock', model: 'deterministic' },
       approvalTtlSeconds: options.approvalTtlSeconds,
       approvals: { enforceSeparationOfDuties: options.enforceSeparationOfDuties },
+      defaultPolicies: options.defaultPolicies,
     };
 
     const localToolProvider = new LocalToolProvider(
-      [new DualControlPolicy('required' in options ? options.required : 2)],
+      [new DualControlPolicy('required' in options ? options.required : 2), new GlobalReviewPolicy(), new SanctionsPolicy()],
       approvalStore,
       new ToolDiscoveryService(),
       moduleRef,
@@ -181,7 +223,7 @@ export async function runDualControlTests() {
 
     const suspended = await runner.run('treasurer', {
       sessionId: 'sess_wire',
-      message: 'Wire $50000',
+      message: `Wire $${amount}`,
       context: { userId: 'usr_requester', tenantId: 'bank' },
     });
     const toolResult = suspended.toolCalls[0]?.result as ToolExecutionResult;
@@ -410,12 +452,113 @@ export async function runDualControlTests() {
     );
     const restored = await store.get(approvalId);
     assert(
-      restored?.signatures?.map((s) => s.actor.userId).join(',') === 'alice',
-      'Test 9b: The approval is restored without the refused signature',
+      restored !== null && (restored.signatures ?? []).length === 0,
+      'Test 9b: The approval is restored without signatures given for another version of it',
       JSON.stringify(restored?.signatures),
     );
   } catch (err: unknown) {
     assert(false, 'Test 9: Fingerprint check on completion', String(err));
+  }
+
+  // TEST 10: every policy is evaluated, and the strictest approval terms win
+  try {
+    const layered = await suspendWire({ defaultPolicies: [GlobalReviewPolicy, SanctionsPolicy] });
+    const stored = await layered.approvalStore.get(layered.approvalId);
+    assert(
+      isPending(layered.toolResult) && layered.toolResult.requiredApprovals === 2 && stored?.requiredApprovals === 2,
+      'Test 10a: An earlier single-approver policy does not downgrade a later dual-control one',
+      JSON.stringify(layered.toolResult),
+    );
+    assert(
+      stored?.expiresAt !== undefined && stored.expiresAt.getTime() - stored.createdAt.getTime() === 3_600_000,
+      'Test 10b: The shortest policy lifetime applies',
+    );
+    assert(
+      layered.auditSink.ofType('tool_policy_decision').filter((e) => e.decision === 'require_approval').length === 2,
+      'Test 10c: Each policy that required approval is on the audit trail',
+    );
+
+    const sanctioned = await suspendWire({ defaultPolicies: [GlobalReviewPolicy, SanctionsPolicy], amount: 66_666 });
+    assert(
+      (sanctioned.toolResult as { status?: string }).status === 'denied' && sanctioned.approvalId === '',
+      'Test 10d: A later deny wins over an earlier approval requirement',
+      JSON.stringify(sanctioned.toolResult),
+    );
+  } catch (err: unknown) {
+    assert(false, 'Test 10: Policy combination', String(err));
+  }
+
+  // TEST 11: no settlement path runs the tool with too few signatures
+  try {
+    const store = new ClockSkewStore();
+    const { approvals, tools, approvalId } = await suspendWire({ store, approvalTtlSeconds: 600 });
+    const err = await expectError(approvals.approve(approvalId, { actor: alice }));
+    assert(
+      err instanceof ApprovalNotAuthorizedError && err.reason.includes('requires 2 approvers') && tools.wires.length === 0,
+      'Test 11a: An approval read as expired but claimed valid is refused, not run with one signature',
+      String(err),
+    );
+    assert((await store.claim(approvalId)) !== null, 'Test 11b: The refused approval is put back');
+  } catch (err: unknown) {
+    assert(false, 'Test 11: Threshold guard', String(err));
+  }
+
+  // TEST 12: signatures only count toward the version they were given for
+  try {
+    const { approvals, approvalStore, auditSink, tools, approvalId } = await suspendWire();
+    await approvals.approve(approvalId, { actor: alice });
+    const signedByAlice = await approvalStore.get(approvalId);
+    await approvalStore.save({ ...signedByAlice!, args: { amount: 9_000_000 } });
+
+    const err = await expectError(approvals.approve(approvalId, { actor: bob }));
+    assert(
+      err instanceof ApprovalNotAuthorizedError && err.reason.includes('changed after some approvers signed') && tools.wires.length === 0,
+      'Test 12a: A signature given before the record changed cannot complete it',
+      String(err),
+    );
+    assert((await approvalStore.get(approvalId))?.signatures?.length === 0, 'Test 12b: The stale signature is dropped when the approval is put back');
+    assert(
+      auditSink.ofType('approval_signed').every((e) => e.actor.userId === 'alice'),
+      'Test 12c: The refused final signature is not audited as signed',
+    );
+
+    await approvals.approve(approvalId, { actor: bob });
+    await approvals.approve(approvalId, { actor: carol });
+    assert(tools.wires.length === 1, 'Test 12d: Fresh signatures on the current version complete it');
+  } catch (err: unknown) {
+    assert(false, 'Test 12: Version binding', String(err));
+  }
+
+  // TEST 13: cancelling during a store write never loses the approval
+  try {
+    const store = new AbortingStore();
+    const { approvals, tools, approvalId } = await suspendWire({ store });
+    await approvals.approve(approvalId, { actor: alice });
+
+    store.controller = new AbortController();
+    const cancelled = await expectError(approvals.approve(approvalId, { actor: bob, signal: store.controller.signal }));
+    store.controller = undefined;
+    assert(cancelled instanceof ExecutionCancelledError && tools.wires.length === 0, 'Test 13a: Cancelling the final signature does not run the tool');
+    const kept = await store.get(approvalId);
+    assert(
+      kept?.signatures?.map((sig) => sig.actor.userId).join(',') === 'alice',
+      'Test 13b: The approval is put back without the cancelled signature',
+      JSON.stringify(kept?.signatures),
+    );
+    await approvals.approve(approvalId, { actor: bob });
+    assert(tools.wires.length === 1, 'Test 13c: The same approver can sign again and complete it');
+
+    const single = await suspendWire({ store: new AbortingStore(), required: 1 });
+    const singleStore = single.approvalStore as AbortingStore;
+    singleStore.controller = new AbortController();
+    const cancelledClaim = await expectError(single.approvals.approve(single.approvalId, { signal: singleStore.controller.signal }));
+    singleStore.controller = undefined;
+    assert(
+      cancelledClaim instanceof ExecutionCancelledError && (await singleStore.get(single.approvalId)) !== null,
+      'Test 13d: A claim cancelled in flight is put back, not consumed',
+    );
+  } catch (err: unknown) {
+    assert(false, 'Test 13: Cancellation', String(err));
   }
 
   console.log(`\n  📊 Dual Control Test Results: ${passed} passed, ${failed} failed.\n`);

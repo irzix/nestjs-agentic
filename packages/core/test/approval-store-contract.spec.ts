@@ -28,9 +28,9 @@ interface RecordedSet {
  * optional so both the atomic claim path and the get+del fallback can be
  * covered.
  *
- * `eval` mirrors the semantics of `RedisApprovalStore`'s addSignature script
- * in one synchronous step, which is what makes it atomic here, as a script is
- * in Redis. The Lua itself is not executed by this fake.
+ * `eval` mirrors the semantics of `RedisApprovalStore`'s addSignature and
+ * claim scripts in one synchronous step, which is what makes them atomic here,
+ * as a script is in Redis. The Lua itself is not executed by this fake.
  */
 function createFakeRedis(options: { withGetDel: boolean; withEval?: boolean }) {
   const storage = new Map<string, string>();
@@ -63,29 +63,35 @@ function createFakeRedis(options: { withGetDel: boolean; withEval?: boolean }) {
   }
 
   if (options.withEval ?? options.withGetDel) {
-    client.eval = async (script, _numKeys, ...args) => {
+    client.eval = async (script, numKeys, ...args) => {
+      const keys = args.slice(0, numKeys).map(String);
+      const argv = args.slice(numKeys).map(String);
+      const raw = storage.get(keys[0]);
+
       if (!script.includes('requiredApprovals')) {
-        throw new Error('fake Redis only emulates the addSignature script');
+        // The claim script: GET and DEL in one step.
+        storage.delete(keys[0]);
+        return raw ?? null;
       }
-      const [key, userId, signatureJson] = args.map(String);
-      const raw = storage.get(key);
+
+      const [signer, line] = argv;
       if (raw === undefined) return null;
       const [head, ...lines] = raw.split('\n');
-      const required = Number((JSON.parse(head) as PendingApproval).requiredApprovals) || 1;
-      const signed = lines.filter(Boolean).map((line) => JSON.parse(line) as ApprovalSignature);
+      const required = Number(/^\{"requiredApprovals":(\d+)/.exec(head)?.[1] ?? 1);
+      const signed = lines.filter(Boolean);
       if (signed.length >= required) {
-        storage.delete(key);
+        storage.delete(keys[0]);
         return ['complete', raw];
       }
-      if (signed.some((signature) => signature.actor.userId === userId)) {
+      if (signed.some((entry) => entry.slice(0, entry.indexOf('\t')) === signer)) {
         return ['duplicate', raw];
       }
-      const updated = `${raw}\n${signatureJson}`;
+      const updated = `${raw}\n${line}`;
       if (signed.length + 1 >= required) {
-        storage.delete(key);
+        storage.delete(keys[0]);
         return ['complete', updated];
       }
-      storage.set(key, updated);
+      storage.set(keys[0], updated);
       return ['pending', updated];
     };
   }
@@ -244,9 +250,27 @@ export async function runApprovalStoreContractTests() {
       client: createFakeRedis({ withGetDel: true, withEval: false }).client,
     });
     const withEval = new RedisApprovalStore({ client: createFakeRedis({ withGetDel: true }).client });
+    const viaEvalFn = new RedisApprovalStore({
+      client: createFakeRedis({ withGetDel: true, withEval: false }).client,
+      evalFn: async () => null,
+    });
     assert(
-      withoutEval.addSignature === undefined && typeof withEval.addSignature === 'function',
-      'Test 3c: addSignature exists only when the client can run it atomically (eval)',
+      withoutEval.addSignature === undefined &&
+        typeof withEval.addSignature === 'function' &&
+        typeof viaEvalFn.addSignature === 'function',
+      'Test 3c: addSignature exists only when a script can run atomically (eval or evalFn)',
+    );
+
+    const evalOnly = await runApprovalStoreContract({
+      name: 'RedisApprovalStore (eval, no GETDEL)',
+      log: false,
+      createStore: () =>
+        new RedisApprovalStore({ client: createFakeRedis({ withGetDel: false, withEval: true }).client }),
+    });
+    assert(
+      evalOnly.failed === 0 && evalOnly.skipped === 0,
+      'Test 3f: Without GETDEL, claim() stays atomic through eval, so dual control is safe',
+      evalOnly.failures.join(' | '),
     );
   } catch (err: any) {
     assert(false, 'Test 3c: Redis dual-control capability', err.message);
