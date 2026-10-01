@@ -1323,6 +1323,30 @@ Observers can be registered globally via `AgenticModule.forRoot({ observers: [..
 - `samplingRate`: Optional float between `0.0` (0%) and `1.0` (100%) to sample high-volume turns. Defaults to `1.0`.
 - Observer callbacks run concurrently with complete error isolation (`Promise.allSettled`), guaranteeing that monitoring exceptions never disrupt agent execution.
 - `observerTimeoutMs`: Optional upper bound, in milliseconds, on how long each hook waits for observers. Observers still finish in the background; the turn just stops waiting. `0` never waits. Unset waits for every observer, as before.
+- `observability.errorRedaction`: How errors are scrubbed before observers receive them. Defaults to `defaultErrorRedactor`. Accepts any `ErrorRedactor`, or `'none'` to deliver raw errors.
+
+### Error Redaction
+
+`ObserverNotifier` redacts every error-carrying field before dispatch: `AgentErrorEvent.error`, `ModelRetryEvent.error`, and `CircuitBreakerEvent.reason`. Provider SDK errors often carry request headers, API keys, and prompt content, and observers usually forward events to third-party telemetry.
+
+```typescript
+type ErrorRedactor = (error: unknown) => Error;
+
+interface ObservabilityOptions {
+  errorRedaction?: ErrorRedactor | 'none';
+}
+
+function createErrorRedactor(options?: {
+  maxMessageLength?: number; // default 500
+  maxCauseDepth?: number;    // default 3
+  patterns?: RegExp[];       // masked in addition to the built-in credential patterns
+  mask?: string;             // default '[REDACTED]'
+}): ErrorRedactor;
+
+const defaultErrorRedactor: ErrorRedactor;
+```
+
+The default returns a `RedactedError` holding only `name`, a masked and capped `message`, numeric `status`/`statusCode`, a short `code`, stack frames, and a redacted `cause`. Every other property is dropped. If a redactor throws, observers receive a placeholder, never the raw error. See [Observability](../apps/landing/content/docs/core/observability-and-tracing.mdx) for the full list of what observers do and do not receive.
 
 ## Durability
 

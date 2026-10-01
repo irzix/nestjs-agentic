@@ -35,6 +35,52 @@ gantt
 
 ---
 
+## What Observers Receive About Errors
+
+Observers usually forward events to external telemetry such as Langfuse, OpenTelemetry collectors, or Datadog. Provider SDK errors routinely carry request configuration, headers, response bodies, and prompt content, so `ObserverNotifier` redacts every error before dispatch. This happens in one place, for every error-carrying event:
+
+| Event | Field |
+| --- | --- |
+| `onError` | `AgentErrorEvent.error` |
+| `onModelRetry` | `ModelRetryEvent.error` |
+| `onCircuitStateChange` | `CircuitBreakerEvent.reason` (it embeds the failing call's message) |
+
+With the default `defaultErrorRedactor`, observers receive a `RedactedError` that holds only:
+
+- `name`
+- `message`, with credential-shaped values masked (`Bearer` tokens, `sk-` keys, `Authorization`, `Cookie`, `api_key=` and similar pairs, URL credentials, JWTs, GitHub, AWS, Google and Slack tokens, PEM private keys), then capped at 500 characters
+- `status` and `statusCode` when numeric, and a short `code` such as `ECONNRESET`
+- `stack` frames, under a header line rebuilt from the redacted name and message
+- `cause`, redacted the same way, up to 3 links deep
+
+Observers do **not** receive any other property: request config, headers, response bodies, non-enumerable and `Symbol`-keyed fields, and the `errors` of an `AggregateError` are all dropped. The original error is not mutated, and it still propagates to the caller of `run()` unchanged.
+
+Tune the default, supply your own redactor, or opt out:
+
+```typescript
+import { AgenticModule, createErrorRedactor } from '@nestjs-agentic/core';
+
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  observability: {
+    // Keep longer messages and mask an internal identifier too.
+    errorRedaction: createErrorRedactor({ maxMessageLength: 1000, patterns: [/tenant-\d+/g] }),
+  },
+});
+
+// A local debug observer that never leaves the process can opt out explicitly.
+AgenticModule.forRoot({
+  defaultModel: { provider: 'openai', model: 'gpt-4o' },
+  observability: { errorRedaction: 'none' },
+});
+```
+
+A custom redactor is any `(error: unknown) => Error`. If it throws, observers receive a placeholder `RedactedError('[error redaction failed]')`, never the raw error.
+
+This redaction covers errors only. `onToolCall` receives the validated tool arguments, and `onToolResult` receives the result exactly as the model sees it, after output policies have run. To keep secrets or PII out of those, use output policies such as `SecretRedactionPolicy` and `PiiRedactionPolicy`.
+
+---
+
 ## The ExecutionTracer
 
 For internal logging and markdown accordion telemetry (as seen in the Njent PR reviewer), use `ExecutionTracer`:

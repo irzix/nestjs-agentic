@@ -10,6 +10,7 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from '../interfaces/observer.interface';
+import { defaultErrorRedactor, RedactedError, type ErrorRedactor } from './error-redaction';
 
 type ObserverMethod<K extends keyof AgentObserver> = NonNullable<AgentObserver[K]>;
 
@@ -30,6 +31,12 @@ export interface ObserverNotifierOptions {
    * for every observer, which is the original behavior.
    */
   timeoutMs?: number;
+  /**
+   * How errors are scrubbed before observers see them. Defaults to
+   * `defaultErrorRedactor`; `'none'` dispatches the original error unchanged.
+   * See `ObservabilityOptions.errorRedaction`.
+   */
+  errorRedaction?: ErrorRedactor | 'none';
 }
 
 /**
@@ -37,12 +44,17 @@ export interface ObserverNotifierOptions {
  * Observers are executed concurrently using Promise.allSettled so that a slow or
  * failing observer never throws or disrupts the primary agent execution. Set
  * `timeoutMs` so a slow observer cannot delay it either.
+ *
+ * Errors are redacted here, once, for every error-carrying event, so no call
+ * site can forget to: `AgentErrorEvent.error`, `ModelRetryEvent.error`, and
+ * `CircuitBreakerEvent.reason`.
  */
 export class ObserverNotifier {
   private readonly observers: AgentObserver[];
   private readonly samplingRate: number;
   private readonly isSampled: boolean;
   private readonly timeoutMs?: number;
+  private readonly redactError?: ErrorRedactor;
 
   constructor(
     observers: AgentObserver[] = [],
@@ -56,6 +68,8 @@ export class ObserverNotifier {
       throw new Error(`Observer timeoutMs must be a non-negative finite number, received ${options.timeoutMs}.`);
     }
     this.timeoutMs = options.timeoutMs;
+    const redaction = options.errorRedaction ?? defaultErrorRedactor;
+    this.redactError = redaction === 'none' ? undefined : redaction;
   }
 
   get length(): number {
@@ -88,12 +102,14 @@ export class ObserverNotifier {
 
   async notifyModelRetry(event: ModelRetryEvent): Promise<void> {
     if (!this.isEnabled) return;
-    await this.dispatch('onModelRetry', event);
+    await this.dispatch('onModelRetry', { ...event, error: this.redact(event.error) });
   }
 
   async notifyCircuitStateChange(event: CircuitBreakerEvent): Promise<void> {
     if (!this.isEnabled) return;
-    await this.dispatch('onCircuitStateChange', event);
+    // The reason embeds the failing call's error message.
+    const reason = this.redactError ? this.redact(new Error(event.reason)).message : event.reason;
+    await this.dispatch('onCircuitStateChange', { ...event, reason });
   }
 
   async notifyToolCall(event: ToolCallEvent): Promise<void> {
@@ -108,7 +124,20 @@ export class ObserverNotifier {
 
   async notifyError(event: AgentErrorEvent): Promise<void> {
     if (!this.isEnabled) return;
-    await this.dispatch('onError', event);
+    await this.dispatch('onError', { ...event, error: this.redact(event.error) });
+  }
+
+  /**
+   * Applies the configured redactor. A redactor that throws yields a
+   * placeholder: falling back to the raw error would defeat the point.
+   */
+  private redact<T>(error: T): T | Error {
+    if (!this.redactError) return error;
+    try {
+      return this.redactError(error);
+    } catch {
+      return new RedactedError('Error', '[error redaction failed]');
+    }
   }
 
   private async dispatch<K extends keyof AgentObserver>(

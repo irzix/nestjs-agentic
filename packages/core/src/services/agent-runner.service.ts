@@ -63,6 +63,7 @@ import { trimHistory, withoutSystemMessages } from '../utils/session-history';
 import { scopeKey } from '../utils/scope-key';
 import type { ModelAdapter, ModelMessage, ModelUsage } from '../interfaces/model.interface';
 import { ObserverNotifier } from '../observers/observer-notifier';
+import type { ObservabilityOptions } from '../observers/error-redaction';
 import type { ModelResilienceOptions } from '../adapters/resilient-model.adapter';
 
 import { STATE_STORE, type StateStore } from '../interfaces/state-store.interface';
@@ -190,6 +191,12 @@ export interface AgenticModuleOptions {
    * waits for every observer.
    */
   observerTimeoutMs?: number;
+  /**
+   * What observers receive. By default errors are redacted before dispatch
+   * (`defaultErrorRedactor`), because observers usually forward events to
+   * external telemetry; set `errorRedaction: 'none'` to opt out.
+   */
+  observability?: ObservabilityOptions;
   /** Overrides for internal diagnostic logging (e.g. governance warnings). Defaults to `console`. */
   logger?: { warn?: (message: string) => void };
 }
@@ -288,6 +295,7 @@ export class AgentRunner {
     return new ObserverNotifier(unique, {
       samplingRate: this.options.samplingRate,
       timeoutMs: this.options.observerTimeoutMs,
+      errorRedaction: this.options.observability?.errorRedaction,
     });
   }
 

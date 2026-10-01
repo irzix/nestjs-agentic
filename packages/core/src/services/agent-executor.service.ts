@@ -270,6 +270,7 @@ export class AgentExecutor {
     if (!this.breaker) {
       this.moduleNotifier ??= new ObserverNotifier(this.injectedObservers ?? [], {
         timeoutMs: this.options?.observerTimeoutMs,
+        errorRedaction: this.options?.observability?.errorRedaction,
       });
       const notifier = this.moduleNotifier;
 
@@ -297,7 +298,10 @@ export class AgentExecutor {
     const observerNotifier =
       input.observerNotifier ??
       (input.observers?.length
-        ? new ObserverNotifier(input.observers, { timeoutMs: this.options?.observerTimeoutMs })
+        ? new ObserverNotifier(input.observers, {
+            timeoutMs: this.options?.observerTimeoutMs,
+            errorRedaction: this.options?.observability?.errorRedaction,
+          })
         : undefined);
 
     return {

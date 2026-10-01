@@ -26,6 +26,7 @@ import { runDistributedRateLimitTests } from './distributed-rate-limit.spec';
 import { runModelResilienceTests } from './model-resilience.spec';
 import { runMessageReducerTests } from './message-reducer.spec';
 import { runDurabilityTests } from './durability.spec';
+import { runObserverErrorRedactionTests } from './observer-error-redaction.spec';
 
 async function runAllCoreTests() {
   console.log('====================================================');
@@ -61,9 +62,10 @@ async function runAllCoreTests() {
     await runModelResilienceTests();
     await runDurabilityTests();
     await runMessageReducerTests();
+    await runObserverErrorRedactionTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 28 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 29 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
