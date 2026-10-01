@@ -225,7 +225,7 @@ All stores implement the shared `AgentMemoryStore` interface (`save(record)` / `
 
 `@nestjs-agentic/jev` adds judgment to the existing policy boundary without changing it. Jev answers typed questions with calibrated probabilities, which map onto the three governance outcomes:
 
-* **Action Gates (`JevActionGate`)**: A `ToolPolicy` that allows a call above `allowAt`, refuses it below `denyBelow`, and sends it to human review in between, optionally to several approvers through dual control.
+* **Action Gates (`JevActionGate`)**: A `ToolPolicy` that allows a call at or above `allowAt`, refuses it below `denyBelow`, and sends it to human review in between, optionally to several approvers through dual control.
 * **Output Rails (`JevOutputGate`)**: Withholds tool output, by default prompt injections, before the model sees it.
 * **Failure Handling**: Outages, timeouts, and malformed answers follow `onError` (human review for action gates, deny for output gates), with a shared circuit breaker so an outage fails fast.
 * **Evaluation Judges**: `jevFaithfulnessJudge` and `jevTaskJudge` plug into `FaithfulnessMetric` and `LLMAsAJudgeMetric`.
