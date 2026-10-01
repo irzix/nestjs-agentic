@@ -124,6 +124,21 @@ export class ApprovalToolNotFoundError extends AgenticError {
 }
 
 /**
+ * Raised when an approval needs more than one approver but the configured
+ * `ApprovalStore` does not implement `addSignature`, so signatures cannot be
+ * collected atomically. Settling it by a single approver instead would quietly
+ * defeat the control, so the framework refuses.
+ */
+export class ApprovalSignaturesUnsupportedError extends AgenticError {
+  constructor(readonly approvalId: string) {
+    super(
+      `Approval "${approvalId}" requires multiple approvers, but the configured ApprovalStore ` +
+        `does not implement addSignature().`,
+    );
+  }
+}
+
+/**
  * Raised when resuming a suspended turn cannot locate the tool message it
  * withheld.
  *

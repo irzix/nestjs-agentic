@@ -4,9 +4,10 @@ import {
   ApprovalExpiredError,
   ApprovalNotAuthorizedError,
   ApprovalNotFoundError,
+  ApprovalSignaturesUnsupportedError,
   ExecutionCancelledError,
 } from '../errors';
-import { auditEnvelope } from '../interfaces';
+import { auditEnvelope, requiredApprovalsOf } from '../interfaces';
 import type {
   ApprovalAuthorizer,
   ApprovalGovernanceOptions,
@@ -127,6 +128,16 @@ export class ApprovalService {
    *
    * Pass `actor` to record who approved on the audit trail.
    *
+   * **Dual control.** When the approval needs more than one approver
+   * (`requiredApprovals` above 1), each call records one signature. Until the
+   * threshold is met it returns a `pending_approval` result carrying
+   * `signatures` and `requiredApprovals`, and the tool does not run. The call
+   * that meets the threshold settles the approval as above. Every signature
+   * goes through the authorizer, tenant isolation, and separation-of-duties
+   * checks, must come from an identified `actor.userId`, and a repeated
+   * signature from the same `userId` is refused with
+   * `ApprovalNotAuthorizedError` rather than counted twice.
+   *
    * Throws `ApprovalNotFoundError` if the ID is unknown, already resolved, or
    * claimed by a concurrent caller, and `ApprovalExpiredError` if it was
    * claimed after its `expiresAt`.
@@ -146,6 +157,9 @@ export class ApprovalService {
    *
    * The approval is claimed atomically, so a given approval is settled at most
    * once even under concurrent calls.
+   *
+   * On a dual-control approval a single authorized rejection is a veto: it
+   * settles the approval however many signatures it has collected.
    *
    * Pass `actor` to record who rejected on the audit trail.
    *
@@ -180,8 +194,6 @@ export class ApprovalService {
       throw new ExecutionCancelledError();
     }
 
-    const outcome = decision.approved ? 'approved' : 'rejected';
-
     // Checked against a non-destructive read, before the claim: claiming first
     // would let a refused attempt consume the approval. The read/claim race is
     // harmless since `claim()` still enforces exactly-once settlement.
@@ -194,54 +206,142 @@ export class ApprovalService {
 
     let authorizedFingerprint: string | undefined;
 
-    if (governed) {
+    // Approving always reads first, because whether the approval needs more
+    // than one signature is decided by the stored record.
+    if (governed || decision.approved) {
       const pending = await this.store.get(approvalId);
       if (!pending) {
         throw new ApprovalNotFoundError(approvalId);
       }
 
-      const refusal = await this.checkAuthorization(pending, options?.actor);
-      if (refusal) {
-        await this.audit?.record({
-          ...auditEnvelope(pending.context),
-          type: 'approval_settlement_denied',
-          approvalId,
-          agentName: pending.agentName,
-          toolName: pending.toolName,
-          outcome,
-          reason: refusal,
-          actor: options?.actor,
-        });
-
-        throw new ApprovalNotAuthorizedError(approvalId, refusal);
+      if (decision.approved && requiredApprovalsOf(pending) > 1) {
+        return this.sign(pending, options);
       }
 
-      authorizedFingerprint = fingerprint(pending);
-    }
-
-    let abortHandler: (() => void) | undefined;
-    let claimed: PendingApproval | null;
-
-    if (options?.signal) {
-      const abortPromise = new Promise<never>((_, reject) => {
-        abortHandler = () => reject(new ExecutionCancelledError());
-        options.signal!.addEventListener('abort', abortHandler, { once: true });
-      });
-
-      try {
-        claimed = await Promise.race([this.store.claim(approvalId), abortPromise]);
-      } finally {
-        if (abortHandler) {
-          options.signal.removeEventListener('abort', abortHandler);
+      if (governed) {
+        const refusal = await this.checkAuthorization(pending, options?.actor);
+        if (refusal) {
+          await this.recordRefusal(pending, decision.approved ? 'approved' : 'rejected', refusal, options?.actor);
+          throw new ApprovalNotAuthorizedError(approvalId, refusal);
         }
+        authorizedFingerprint = fingerprint(pending);
       }
-    } else {
-      claimed = await this.store.claim(approvalId);
     }
 
+    const claimed = await raceAbort(this.store.claim(approvalId), options?.signal);
     if (!claimed) {
       throw new ApprovalNotFoundError(approvalId);
     }
+
+    return this.applyClaimed(claimed, decision, options, authorizedFingerprint, claimed);
+  }
+
+  /**
+   * Records one approver's signature on a dual-control approval, and settles
+   * it when that signature meets the threshold.
+   */
+  private async sign(
+    pending: PendingApproval,
+    options?: SettleApprovalOptions,
+  ): Promise<AgentResult | ToolExecutionResult> {
+    const approvalId = pending.id;
+    const required = requiredApprovalsOf(pending);
+    const actor = options?.actor;
+
+    if (typeof this.store.addSignature !== 'function') {
+      throw new ApprovalSignaturesUnsupportedError(approvalId);
+    }
+
+    // Signatures are told apart by userId, so an unidentified approver could
+    // never be shown to be a distinct person.
+    if (!actor?.userId) {
+      const reason = 'dual control: every approver must be identified by actor.userId so signatures can be told apart';
+      await this.recordRefusal(pending, 'approved', reason, actor);
+      throw new ApprovalNotAuthorizedError(approvalId, reason);
+    }
+
+    const refusal = await this.checkAuthorization(pending, actor);
+    if (refusal) {
+      await this.recordRefusal(pending, 'approved', refusal, actor);
+      throw new ApprovalNotAuthorizedError(approvalId, refusal);
+    }
+
+    // An expired approval is consumed and reported exactly as a single-approver
+    // one is, rather than collecting signatures it can never use.
+    if (isExpired(pending)) {
+      const claimed = await raceAbort(this.store.claim(approvalId), options?.signal);
+      if (!claimed) {
+        throw new ApprovalNotFoundError(approvalId);
+      }
+      return this.applyClaimed(claimed, { approved: true }, options, undefined, claimed);
+    }
+
+    const userId = actor.userId;
+    const result = await raceAbort(
+      this.store.addSignature(approvalId, { actor: { ...actor, userId }, signedAt: new Date() }),
+      options?.signal,
+    );
+    if (!result) {
+      throw new ApprovalNotFoundError(approvalId);
+    }
+
+    if (result.status === 'duplicate') {
+      const reason = `dual control: "${userId}" has already signed this approval and cannot be counted twice`;
+      await this.recordRefusal(pending, 'approved', reason, actor);
+      throw new ApprovalNotAuthorizedError(approvalId, reason);
+    }
+
+    const signatures = result.approval.signatures ?? [];
+    // A store completing a record that already met its threshold (crash
+    // recovery) did not append this caller's signature, so nothing was signed.
+    if (signatures.some((signature) => signature.actor.userId === userId)) {
+      await this.audit?.record({
+        ...auditEnvelope(result.approval.context),
+        type: 'approval_signed',
+        approvalId,
+        agentName: result.approval.agentName,
+        toolName: result.approval.toolName,
+        actor,
+        signatures: signatures.length,
+        requiredApprovals: required,
+      });
+    }
+
+    if (result.status === 'pending') {
+      return {
+        success: false,
+        status: 'pending_approval',
+        reason: result.approval.reason,
+        approvalId,
+        signatures: signatures.length,
+        requiredApprovals: required,
+      };
+    }
+
+    // The final signature is the claim. If the record differs from the one
+    // this signature was authorized against, restore it without this
+    // signature, so the refused signer leaves no trace on the decision.
+    const restore: PendingApproval = {
+      ...result.approval,
+      signatures: signatures.filter((signature) => signature.actor.userId !== userId),
+    };
+    return this.applyClaimed(result.approval, { approved: true }, options, fingerprint(pending), restore);
+  }
+
+  /**
+   * Applies a decision to an approval the caller has already claimed, and
+   * records the outcome. `restore` is what goes back into the store if the
+   * claimed record turns out to differ from the authorized one.
+   */
+  private async applyClaimed(
+    claimed: PendingApproval,
+    decision: { approved: true } | { approved: false; reason?: string },
+    options: SettleApprovalOptions | undefined,
+    authorizedFingerprint: string | undefined,
+    restore: PendingApproval,
+  ): Promise<AgentResult | ToolExecutionResult> {
+    const approvalId = claimed.id;
+    const outcome = decision.approved ? 'approved' : 'rejected';
 
     // Closes the read/claim window: a store whose `save()` replaced the record
     // between the authorization read and the claim would otherwise have its new
@@ -256,27 +356,23 @@ export class ApprovalService {
       // the audit event below is the record that the approval was lost.
       let restored = true;
       try {
-        await this.store.save(claimed);
+        await this.store.save(restore);
       } catch {
         restored = false;
       }
 
-      await this.audit?.record({
-        ...auditEnvelope(claimed.context),
-        type: 'approval_settlement_denied',
-        approvalId,
-        agentName: claimed.agentName,
-        toolName: claimed.toolName,
+      await this.recordRefusal(
+        claimed,
         outcome,
-        reason: restored ? reason : `${reason} (and could not be restored to the store)`,
-        actor: options?.actor,
-      });
+        restored ? reason : `${reason} (and could not be restored to the store)`,
+        options?.actor,
+      );
 
       throw new ApprovalNotAuthorizedError(approvalId, reason);
     }
 
-    if (claimed.expiresAt && Date.now() > new Date(claimed.expiresAt).getTime()) {
-      const expiredAt = new Date(claimed.expiresAt);
+    if (isExpired(claimed)) {
+      const expiredAt = new Date(claimed.expiresAt!);
 
       await this.audit?.record({
         ...auditEnvelope(claimed.context),
@@ -319,11 +415,55 @@ export class ApprovalService {
       toolName: claimed.toolName,
       outcome,
       actor: options?.actor,
+      ...(claimed.signatures?.length
+        ? { signatures: claimed.signatures.map((signature) => signature.actor) }
+        : {}),
       reason: decision.approved ? claimed.reason : decision.reason ?? claimed.reason,
       args: claimed.args,
     });
 
     return result;
+  }
+
+  private async recordRefusal(
+    approval: PendingApproval,
+    outcome: 'approved' | 'rejected',
+    reason: string,
+    actor?: AuditActor,
+  ): Promise<void> {
+    await this.audit?.record({
+      ...auditEnvelope(approval.context),
+      type: 'approval_settlement_denied',
+      approvalId: approval.id,
+      agentName: approval.agentName,
+      toolName: approval.toolName,
+      outcome,
+      reason,
+      actor,
+    });
+  }
+}
+
+function isExpired(approval: PendingApproval): boolean {
+  return Boolean(approval.expiresAt) && Date.now() > new Date(approval.expiresAt!).getTime();
+}
+
+/** Settles `promise`, or rejects with `ExecutionCancelledError` once `signal` aborts. */
+async function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+
+  let abortHandler: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    abortHandler = () => reject(new ExecutionCancelledError());
+    signal.addEventListener('abort', abortHandler, { once: true });
+  });
+
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    if (abortHandler) {
+      signal.removeEventListener('abort', abortHandler);
+    }
   }
 }
 
@@ -333,10 +473,12 @@ export class ApprovalService {
  *
  * Covers the whole record rather than the fields the built-in checks happen to
  * read, since a custom `ApprovalAuthorizer` may base its decision on any of them
- * — `reason`, `context.security.roles`, `expiresAt`. Canonical serialization
+ * — `reason`, `context.security.roles`, `expiresAt`. Dual-control signatures are
+ * the exception: they are collected after authorization by design. Canonical serialization
  * makes the comparison independent of key order and of a store round-trip that
  * revives dates.
  */
 function fingerprint(approval: PendingApproval): string {
-  return canonicalize(approval);
+  const { signatures: _signatures, ...decided } = approval;
+  return canonicalize(decided);
 }

@@ -76,6 +76,50 @@ export interface PendingApproval {
    * requester. Absent when the application supplied no identity.
    */
   requestedBy?: AuditActor;
+  /**
+   * Distinct approvers needed before the withheld tool runs (dual control).
+   * Absent means 1, a single approver, which settles through `claim()`.
+   * Copied from the policy decision's `requiredApprovals` at creation.
+   */
+  requiredApprovals?: number;
+  /**
+   * Sign-offs collected so far, oldest first, when `requiredApprovals` is
+   * above 1. Appended only through `ApprovalStore.addSignature`, never by
+   * `save()`ing a modified record.
+   */
+  signatures?: ApprovalSignature[];
+}
+
+/**
+ * One approver's sign-off on a dual-control approval.
+ *
+ * `actor.userId` is what makes signatures distinct: two signatures with the
+ * same `userId` are the same person, whatever their tenant or roles, so a
+ * repeated sign-off never counts twice.
+ */
+export interface ApprovalSignature {
+  actor: AuditActor & { userId: string };
+  signedAt: Date;
+}
+
+/**
+ * Outcome of `ApprovalStore.addSignature`.
+ *
+ * - `pending`: the signature was recorded and the threshold is not met yet.
+ *   `approval` is the stored record, including the new signature.
+ * - `complete`: this signature met the threshold, and the store removed the
+ *   approval in the same atomic step, exactly as `claim()` would. Only one
+ *   caller ever receives `complete` for a given approval.
+ * - `duplicate`: this identity had already signed. Nothing changed.
+ */
+export type ApprovalSignatureResult =
+  | { status: 'pending'; approval: PendingApproval }
+  | { status: 'complete'; approval: PendingApproval }
+  | { status: 'duplicate'; approval: PendingApproval };
+
+/** Distinct approvers an approval needs, defaulting to 1. */
+export function requiredApprovalsOf(approval: Pick<PendingApproval, 'requiredApprovals'>): number {
+  return approval.requiredApprovals ?? 1;
 }
 
 /**
@@ -190,6 +234,27 @@ export interface ApprovalStore {
    * settlements rather than decisions applied to the wrong version.
    */
   claim(id: string): Promise<PendingApproval | null>;
+  /**
+   * Records one approver's sign-off on a dual-control approval. Optional:
+   * stores without it keep working for single-approver approvals, and a
+   * policy that asks for more than one approver is denied instead.
+   *
+   * Implementations MUST perform these as one atomic step:
+   *
+   * 1. Return `null` if the approval is absent or past its storage lifetime.
+   * 2. Return `duplicate` if a signature with the same `actor.userId` exists.
+   * 3. Append the signature.
+   * 4. If the record now holds at least `requiredApprovals` signatures, remove
+   *    it and return `complete`, so the final signature is the claim.
+   *    Otherwise keep it and return `pending`.
+   *
+   * Under concurrent calls, exactly one caller may receive `complete`, and a
+   * given `userId` may be recorded at most once. A store that reaches the
+   * threshold without removing the record (for example after a crash between
+   * two statements) must complete it on the next call, including a
+   * `duplicate` one, rather than leave it stuck.
+   */
+  addSignature?(id: string, signature: ApprovalSignature): Promise<ApprovalSignatureResult | null>;
 }
 
 /** A human reviewer's decision on a `PendingApproval`. */

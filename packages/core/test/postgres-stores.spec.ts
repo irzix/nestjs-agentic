@@ -110,6 +110,49 @@ export function createFakePostgres() {
         }
       }
 
+      // Dual control: conditional signature append (UPDATE ... RETURNING).
+      // Emulated in one synchronous step, as the row lock makes it in Postgres.
+      if (normalized.startsWith('UPDATE') && normalized.includes("'{signatures}'")) {
+        const match = normalized.match(/UPDATE ([a-zA-Z0-9_]+) SET/i);
+        if (match) {
+          const table = getTable(match[1]);
+          const [key, signatureJson, userId] = values;
+          const row = table.get(key);
+          if (!row || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) {
+            return { rows: [], rowCount: 0 };
+          }
+          const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+          const signatures: any[] = data.signatures ?? [];
+          if (
+            signatures.length >= (data.requiredApprovals ?? 1) ||
+            signatures.some((signature) => signature?.actor?.userId === userId)
+          ) {
+            return { rows: [], rowCount: 0 };
+          }
+          data.signatures = [...signatures, JSON.parse(signatureJson)];
+          row.data = JSON.stringify(data);
+          return { rows: [{ data: row.data } as R], rowCount: 1 };
+        }
+      }
+
+      // Dual control: claim once the threshold is met (DELETE ... RETURNING).
+      if (normalized.startsWith('DELETE FROM') && normalized.includes('jsonb_array_length')) {
+        const match = normalized.match(/DELETE FROM ([a-zA-Z0-9_]+) WHERE/i);
+        if (match) {
+          const table = getTable(match[1]);
+          const row = table.get(values[0]);
+          if (!row || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) {
+            return { rows: [], rowCount: 0 };
+          }
+          const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+          if ((data.signatures?.length ?? 0) < (data.requiredApprovals ?? 1)) {
+            return { rows: [], rowCount: 0 };
+          }
+          table.delete(values[0]);
+          return { rows: [row as R], rowCount: 1 };
+        }
+      }
+
       // DELETE ... RETURNING
       if (normalized.startsWith('DELETE FROM') && normalized.includes('RETURNING')) {
         const match = normalized.match(/DELETE FROM ([a-zA-Z0-9_]+) WHERE/i);
@@ -201,7 +244,16 @@ export async function runPostgresStoresTests() {
       createStore: () => new PostgresApprovalStore({ client }),
       log: false,
     });
-    assert(result.failed === 0, 'Test 2: PostgresApprovalStore passes ApprovalStore contract');
+    assert(
+      result.failed === 0,
+      'Test 2: PostgresApprovalStore passes ApprovalStore contract',
+      result.failures.join(' | '),
+    );
+    assert(
+      result.skipped === 0,
+      'Test 2b: No contract group, dual control included, is skipped for PostgresApprovalStore',
+      String(result.skipped),
+    );
   }
 
   // 3. PostgresIdempotencyStore Contract

@@ -488,6 +488,29 @@ export class LocalToolProvider {
           }
 
           if (result.decision === 'require_approval') {
+            // Dual control fails closed: a threshold the store cannot enforce
+            // must not quietly become a single-approver approval.
+            const requiredApprovals = result.requiredApprovals ?? 1;
+            const misconfiguration = !(Number.isInteger(requiredApprovals) && requiredApprovals >= 1)
+              ? `${Constructor.name} requested an invalid requiredApprovals (${String(result.requiredApprovals)}); it must be a positive integer`
+              : requiredApprovals > 1 && typeof this.approvalStore.addSignature !== 'function'
+                ? `${Constructor.name} requires ${requiredApprovals} approvers, but the configured ApprovalStore does not implement addSignature()`
+                : undefined;
+            if (misconfiguration) {
+              const reason = `Approval cannot be requested: ${misconfiguration}.`;
+              await this.audit?.record({
+                ...auditEnvelope(agentContext),
+                type: 'tool_policy_decision',
+                agentName,
+                toolName: tool.toolName,
+                policyName: Constructor.name,
+                decision: 'deny',
+                reason,
+                args,
+              });
+              return { success: false, status: 'denied', reason };
+            }
+
             const approvalId = randomUUID();
             const createdAt = new Date();
             // A policy's own ttlSeconds overrides the module default; when
@@ -508,6 +531,7 @@ export class LocalToolProvider {
               expiresAt,
               toolCallId,
               requestedBy: requesterFrom(agentContext),
+              ...(requiredApprovals > 1 ? { requiredApprovals } : {}),
             });
 
             if (this.audit?.isEnabled()) {
@@ -535,6 +559,7 @@ export class LocalToolProvider {
                 toolName: tool.toolName,
                 reason: result.reason,
                 expiresAt,
+                ...(requiredApprovals > 1 ? { requiredApprovals } : {}),
                 args,
               });
             }
@@ -544,6 +569,7 @@ export class LocalToolProvider {
               status: 'pending_approval',
               reason: result.reason,
               approvalId,
+              ...(requiredApprovals > 1 ? { requiredApprovals, signatures: 0 } : {}),
             };
           }
 

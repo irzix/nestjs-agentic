@@ -161,8 +161,14 @@ A compliant runtime calls `ResolvedTool.execute()` and does not invoke applicati
 ```typescript
 type PolicyResult =
   | { decision: 'allow' }
-  | { decision: 'deny'; reason: string }
-  | { decision: 'require_approval'; reason: string };
+  | { decision: 'deny'; reason: string; retryAfterSeconds?: number }
+  | {
+      decision: 'require_approval';
+      reason: string;
+      ttlSeconds?: number;
+      // Distinct approvers needed before the tool runs (dual control). Default 1.
+      requiredApprovals?: number;
+    };
 
 interface ToolPolicy {
   evaluate(
@@ -528,7 +534,20 @@ interface PendingApproval {
   expiresAt?: Date; // when set, resolving past this instant throws ApprovalExpiredError
   toolCallId?: string;
   checkpoint?: ApprovalCheckpoint; // snapshot of the suspended turn
+  requestedBy?: AuditActor;
+  requiredApprovals?: number; // dual control; absent means 1
+  signatures?: ApprovalSignature[]; // sign-offs so far, oldest first
 }
+
+interface ApprovalSignature {
+  actor: AuditActor & { userId: string }; // userId is what makes signatures distinct
+  signedAt: Date;
+}
+
+type ApprovalSignatureResult =
+  | { status: 'pending'; approval: PendingApproval }   // recorded, threshold not met
+  | { status: 'complete'; approval: PendingApproval }  // threshold met; removed, like claim()
+  | { status: 'duplicate'; approval: PendingApproval }; // this userId already signed
 
 interface ApprovalCheckpoint {
   version: number;
@@ -543,6 +562,8 @@ interface ApprovalStore {
   delete(id: string): Promise<void>;
   // Atomically remove and return the approval, or null if already claimed.
   claim(id: string): Promise<PendingApproval | null>;
+  // Optional. Atomically records a signature; the one that meets the threshold claims.
+  addSignature?(id: string, signature: ApprovalSignature): Promise<ApprovalSignatureResult | null>;
 }
 
 type ApprovalDecision = { approved: true } | { approved: false; reason?: string };
@@ -581,6 +602,10 @@ Behavior of `approve()` and `reject()`:
 **Execution checkpoints.** When the built-in runtime suspends a turn, it snapshots the conversation up to and including the withheld tool message onto the approval as a versioned `checkpoint`. Resuming reads that snapshot, so a turn survives session history being trimmed or cleared, and no longer depends on `SessionStore` retention outliving the approval. The checkpoint is written before the suspended turn returns, so it is durable before any caller can learn the `approvalId`. A record whose `checkpoint.version` this release does not support is refused with `ApprovalCheckpointVersionError` rather than misread. Checkpoints are untrimmed by design, so a long turn's approval record is proportionally larger than its trimmed session transcript.
 
 **Expiry.** An approval can carry an `expiresAt`. It is set from the `require_approval` policy's own `ttlSeconds`, or failing that the module's `approvalTtlSeconds` (`AgenticModule.forRoot({ approvalTtlSeconds })`); when neither is set the approval never expires. Resolving an approval after its `expiresAt` throws `ApprovalExpiredError` rather than executing a decision against stale context, and the expired approval is consumed (the claim removes it) so it is not left behind for a retry. `RedisApprovalStore` derives the key's Redis TTL from `expiresAt` plus an `expiryGraceSeconds` window (default 300s) so abandoned approvals are garbage-collected while a just-expired one can still be claimed to report the precise error.
+
+**Dual control (N-of-M).** A policy can return `requiredApprovals: N` on a `require_approval` decision. The tool then runs only after `N` distinct approvers have called `approve()`. Each call before the threshold records one signature and returns a `pending_approval` `ToolExecutionResult` carrying `signatures` and `requiredApprovals`; the call that meets the threshold settles the approval as usual. Every signature runs through the `ApprovalAuthorizer`, tenant isolation, and separation-of-duties checks, must come from an identified `actor.userId`, and a repeated signature from the same `userId` throws `ApprovalNotAuthorizedError` instead of counting twice. A single authorized `reject()` vetoes. Each counted signature is audited as `approval_signed`, and `approval_settled` lists every approver in `signatures`.
+
+Signatures are collected with `ApprovalStore.addSignature`, which appends a signature and, on the threshold, removes the approval in the same atomic step, so exactly one caller settles it. The method is optional: a store without it keeps working for single-approver approvals, while a policy that asks for more than one approver on such a store is **denied** at the boundary rather than settled by one person, and `approve()` on such a record throws `ApprovalSignaturesUnsupportedError`. `InMemoryApprovalStore` and `PostgresApprovalStore` implement it; `RedisApprovalStore` implements it when its client exposes `eval`.
 
 ```typescript
 const outcome = await approvalService.approve(approvalId);
@@ -1087,6 +1112,8 @@ interface ApprovalStoreContractOptions {
   name: string;
   createStore(): ApprovalStore | Promise<ApprovalStore>;
   supportsAtomicClaim?: boolean; // default true
+  supportsSignatures?: boolean; // default: whether the store implements addSignature
+  supportsAtomicSignatures?: boolean; // default true
   log?: boolean; // default true
 }
 
@@ -1116,6 +1143,8 @@ Checked behavior:
 - `claim()` returns the record, removes it, and is single-use
 - `claim()` is atomic: of several concurrent callers, exactly one receives the record
 - claiming one approval leaves others untouched
+- for stores with `addSignature`: signatures accumulate to `requiredApprovals`, a repeated `userId` is reported as `duplicate` and not counted, the threshold-meeting signature removes the approval, signatures survive `claim()` and `save()` with `signedAt` as a `Date`, signing does not re-encode the record, and a record already at its threshold is completed by the next call
+- `addSignature()` is atomic: of concurrent signers exactly one completes, with exactly the required number of distinct signatures, and concurrent duplicates are recorded once
 
 ```typescript
 const result = await runApprovalStoreContract({
@@ -1128,7 +1157,7 @@ if (result.failed > 0) {
 }
 ```
 
-Set `supportsAtomicClaim: false` for a store that cannot claim atomically across concurrent callers — for example `RedisApprovalStore` behind a client without `GETDEL`, which falls back to a non-atomic get+del. The concurrency assertions are then skipped and counted separately rather than reported as failures. Both built-in stores, and the `GETDEL` fallback path, are verified against this suite.
+Set `supportsAtomicClaim: false` for a store that cannot claim atomically across concurrent callers — for example `RedisApprovalStore` behind a client without `GETDEL`, which falls back to a non-atomic get+del. The concurrency assertions are then skipped and counted separately rather than reported as failures. Set `supportsAtomicSignatures: false` likewise for an `addSignature` that is not atomic. All built-in stores, and the `GETDEL` fallback path, are verified against this suite.
 
 ## `runSessionStoreContract`
 

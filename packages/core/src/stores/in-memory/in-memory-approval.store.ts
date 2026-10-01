@@ -1,4 +1,11 @@
-import type { ApprovalStore, PendingApproval } from '../../interfaces';
+import { requiredApprovalsOf } from '../../interfaces/approval.interface';
+import type {
+  ApprovalSignature,
+  ApprovalSignatureResult,
+  ApprovalStore,
+  PendingApproval,
+} from '../../interfaces';
+import { hasSigned, reviveApproval, signatureCount } from '../approval-records';
 
 /**
  * In-memory implementation of ApprovalStore.
@@ -39,16 +46,41 @@ export class InMemoryApprovalStore implements ApprovalStore {
     return this.deserialize(raw);
   }
 
+  /**
+   * Atomic within a single process for the same reason as `claim()`: the read,
+   * the duplicate check, and the write or removal run without yielding.
+   */
+  async addSignature(id: string, signature: ApprovalSignature): Promise<ApprovalSignatureResult | null> {
+    const raw = this.store.get(id);
+    if (raw === undefined) return null;
+    const approval = this.deserialize(raw)!;
+    const required = requiredApprovalsOf(approval);
+
+    if (signatureCount(approval) >= required) {
+      this.store.delete(id);
+      return { status: 'complete', approval };
+    }
+    if (hasSigned(approval, signature.actor.userId)) {
+      return { status: 'duplicate', approval };
+    }
+
+    const serialized = JSON.stringify({
+      ...approval,
+      signatures: [...(approval.signatures ?? []), signature],
+    });
+    const updated = this.deserialize(serialized)!;
+    if (signatureCount(updated) >= required) {
+      this.store.delete(id);
+      return { status: 'complete', approval: updated };
+    }
+    this.store.set(id, serialized);
+    return { status: 'pending', approval: updated };
+  }
+
   private deserialize(raw: string | undefined): PendingApproval | null {
     if (raw === undefined) return null;
-
-    const parsed = JSON.parse(raw) as PendingApproval;
     // Dates do not round-trip through JSON, so they are restored here, matching
     // what a persistent store has to do.
-    return {
-      ...parsed,
-      createdAt: new Date(parsed.createdAt),
-      expiresAt: parsed.expiresAt ? new Date(parsed.expiresAt) : undefined,
-    };
+    return reviveApproval(JSON.parse(raw) as PendingApproval);
   }
 }
