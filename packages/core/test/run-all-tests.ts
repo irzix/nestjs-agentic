@@ -28,6 +28,7 @@ import { runMessageReducerTests } from './message-reducer.spec';
 import { runDurabilityTests } from './durability.spec';
 import { runObserverErrorRedactionTests } from './observer-error-redaction.spec';
 import { runDualControlTests } from './dual-control.spec';
+import { runStructuredOutputTests } from './structured-output.spec';
 
 async function runAllCoreTests() {
   console.log('====================================================');
@@ -65,9 +66,10 @@ async function runAllCoreTests() {
     await runMessageReducerTests();
     await runObserverErrorRedactionTests();
     await runDualControlTests();
+    await runStructuredOutputTests();
 
     console.log('====================================================');
-    console.log('🎉 ALL 30 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
+    console.log('🎉 ALL 31 CORE UNIT & INTEGRATION TEST SUITES PASSED SUCCESSFULLY!');
     console.log('====================================================\n');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

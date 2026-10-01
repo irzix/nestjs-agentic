@@ -1,4 +1,5 @@
 import type { ModelMessage, ModelUsage } from './model.interface';
+import type { StoredStructuredOutput } from './structured-output.interface';
 
 /**
  * Bounds applied to a single agent turn.
@@ -82,4 +83,13 @@ export interface InFlightCheckpoint {
 
   /** ISO-8601 timestamp when this checkpoint was recorded. */
   updatedAt: string;
+
+  /** The turn's `outputSchema` and options, so a recovered turn keeps them. */
+  structuredOutput?: StoredStructuredOutput;
+
+  /** Repair rounds already spent on non-conforming answers. */
+  repairAttempts?: number;
+
+  /** Rejected answers and repair prompts pending in the current repair round. */
+  repair?: ModelMessage[];
 }

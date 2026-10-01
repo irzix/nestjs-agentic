@@ -248,3 +248,57 @@ export class CascadeConfigurationError extends CascadeError {
     super(`Invalid Model Cascade configuration: ${reason}`);
   }
 }
+
+/**
+ * Raised when a turn with an `outputSchema` ends without a conforming answer
+ * after every repair attempt, or the model refuses. The conversation so far,
+ * tool calls and the last answer included, is still saved to session
+ * history, because those tool calls did happen.
+ */
+export class StructuredOutputError extends AgenticError {
+  /**
+   * @param output The last answer the model gave, unparsed.
+   * @param issues Why it did not conform.
+   * @param attempts Repair attempts made before giving up.
+   * @param refusal The model's refusal, when it declined to answer rather
+   *   than answering in the wrong shape. No repair is attempted then.
+   */
+  constructor(
+    readonly output: string,
+    readonly issues: string[],
+    readonly attempts: number,
+    readonly refusal?: string,
+  ) {
+    super(
+      `The final answer did not match the output schema after ${attempts} repair attempt(s): ${issues
+        .slice(0, 3)
+        .join('; ')}`,
+    );
+  }
+}
+
+/**
+ * Raised when an `outputSchema` is requested but the turn would run through a
+ * `RuntimeAdapter`, which owns its own loop and cannot be made to validate or
+ * repair the answer. Thrown instead of silently returning unvalidated output.
+ */
+export class StructuredOutputNotSupportedError extends AgenticError {
+  constructor(readonly agentName: string) {
+    super(
+      `Agent "${agentName}" requests an outputSchema, which needs the built-in runtime. ` +
+        `Register a ModelAdapter, or remove the outputSchema.`,
+    );
+  }
+}
+
+/**
+ * Raised when an `outputSchema` has problems no answer could fix, such as a
+ * pattern that is not a valid regular expression or a `$ref` that does not
+ * resolve. Thrown before any model is called, rather than spending repair
+ * rounds asking the model to satisfy an impossible schema.
+ */
+export class InvalidOutputSchemaError extends AgenticError {
+  constructor(readonly problems: string[]) {
+    super(`The outputSchema is invalid: ${problems.join('; ')}`);
+  }
+}

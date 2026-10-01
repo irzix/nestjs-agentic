@@ -1,6 +1,7 @@
 import type { ModelConfig } from './runtime.interface';
 import type { Provenance } from './provenance.interface';
 import type { ToolParamSchema } from './tool.interface';
+import type { JsonSchema } from './structured-output.interface';
 
 /**
  * Injection token for the ModelAdapter implementation.
@@ -73,10 +74,29 @@ export interface ModelRequestMetadata {
   iteration: number;
 }
 
+/**
+ * Asks the provider to constrain the final answer to a JSON Schema.
+ *
+ * Set by the executor when a turn has an `outputSchema`. Adapters that declare
+ * `supportsStructuredOutput` forward it to the provider's native mechanism;
+ * others may ignore it, since the executor validates the answer regardless.
+ */
+export interface ModelOutputFormat {
+  type: 'json_schema';
+  /** Provider-facing name for the schema. */
+  name: string;
+  schema: JsonSchema;
+  description?: string;
+  /** Request strict, schema-constrained decoding where the provider supports it. */
+  strict: boolean;
+}
+
 export interface ModelRequest {
   model: ModelConfig;
   messages: ModelMessage[];
   tools: ModelToolSchema[];
+  /** Requested shape of the final answer, when the turn has an `outputSchema`. */
+  outputFormat?: ModelOutputFormat;
   /** Cancellation signal owned by the executor. Adapters should honor it. */
   signal?: AbortSignal;
   metadata: ModelRequestMetadata;
@@ -87,6 +107,12 @@ export interface ModelResponse {
   toolCalls?: ModelToolCall[];
   usage?: ModelUsage;
   finishReason?: ModelFinishReason;
+  /**
+   * The model's refusal to answer, when the provider reports one separately
+   * from `content` (OpenAI structured outputs do). A turn with an
+   * `outputSchema` fails on a refusal instead of asking for a repair.
+   */
+  refusal?: string;
   [key: string]: unknown;
 }
 
@@ -102,6 +128,12 @@ export type ModelStreamChunk =
  * execute tools, enforce policies, or manage the agent loop.
  */
 export interface ModelAdapter {
+  /**
+   * Set `true` when the adapter forwards `ModelRequest.outputFormat` to the
+   * provider's native structured-output support. Otherwise the executor also
+   * describes the schema in the instructions it sends.
+   */
+  readonly supportsStructuredOutput?: boolean;
   generate(request: ModelRequest): Promise<ModelResponse>;
   /**
    * Optional token streaming. Implementations must finish by yielding a

@@ -3,6 +3,7 @@ import type { FactoryProvider } from '@nestjs/common';
 
 import type { AuditActor } from './audit.interface';
 import type { ModelMessage } from './model.interface';
+import type { StoredStructuredOutput } from './structured-output.interface';
 
 /** Checkpoint schema version written by this release. */
 export const APPROVAL_CHECKPOINT_VERSION = 1;
@@ -28,6 +29,11 @@ export interface ApprovalCheckpoint {
    * `AgentConfig` on resume.
    */
   messages: ModelMessage[];
+  /**
+   * The suspended turn's `outputSchema` and options, so the resumed turn is
+   * validated against the schema the run asked for, even one set per run.
+   */
+  structuredOutput?: StoredStructuredOutput;
 }
 
 /**

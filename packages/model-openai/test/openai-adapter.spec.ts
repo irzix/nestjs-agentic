@@ -443,6 +443,159 @@ async function main() {
     assert(false, 'Test 10: Injected client', err.message);
   }
 
+  // TEST 11: outputFormat is sent as a json_schema response_format
+  try {
+    const { fetch, calls } = createRecorder([
+      () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"label":"billing"}' } }] }),
+      () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: 'plain' } }] }),
+    ]);
+    const adapter = buildAdapter(fetch);
+    const schema = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'], additionalProperties: false };
+
+    await adapter.generate(
+      buildRequest({
+        outputFormat: { type: 'json_schema', name: 'ticket', schema, description: 'Ticket label', strict: true },
+      }),
+    );
+    await adapter.generate(buildRequest());
+
+    assert(adapter.supportsStructuredOutput === true, 'Test 11a: The adapter declares native structured output');
+    assert(
+      JSON.stringify(calls[0].body.response_format) ===
+        JSON.stringify({
+          type: 'json_schema',
+          json_schema: { name: 'ticket', schema, strict: true, description: 'Ticket label' },
+        }),
+      'Test 11b: outputFormat maps to response_format.json_schema',
+      JSON.stringify(calls[0].body.response_format),
+    );
+    assert(
+      Array.isArray(calls[0].body.tools),
+      'Test 11c: response_format is sent alongside tools, so the model can still call them',
+    );
+    assert(calls[1].body.response_format === undefined, 'Test 11d: No response_format without an outputFormat');
+  } catch (err: any) {
+    assert(false, 'Test 11: Structured output request', err.message);
+  }
+
+  // TEST 12: structured output edge cases
+  try {
+    const objectSchema = { type: 'object', properties: { a: { type: 'number' } }, required: ['a'] };
+    const prompt = createRecorder([() => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"a":1}' } }] })]);
+    const promptAdapter = buildAdapter(prompt.fetch, { structuredOutput: 'prompt' });
+    await promptAdapter.generate(buildRequest({ outputFormat: { type: 'json_schema', name: 'r', schema: objectSchema, strict: false } }));
+    assert(
+      promptAdapter.supportsStructuredOutput === false && prompt.calls[0].body.response_format === undefined,
+      "Test 12a: structuredOutput 'prompt' sends no response_format and lets the core describe the schema",
+    );
+
+    const refusing = createRecorder([
+      () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: null, refusal: 'I cannot help with that.' } }] }),
+    ]);
+    const refused = await buildAdapter(refusing.fetch).generate(
+      buildRequest({ outputFormat: { type: 'json_schema', name: 'r', schema: objectSchema, strict: true } }),
+    );
+    assert(refused.refusal === 'I cannot help with that.' && refused.content === '', 'Test 12b: A refusal is reported, not turned into an empty answer');
+
+    const streamRefusal = createRecorder([
+      () =>
+        sseResponse([
+          'data: {"choices":[{"index":0,"delta":{"refusal":"I cannot "}}]}\n\n',
+          'data: {"choices":[{"index":0,"delta":{"refusal":"help."}}]}\n\n',
+          'data: {"choices":[{"index":0,"finish_reason":"stop","delta":{}}]}\n\n',
+          'data: [DONE]\n\n',
+        ]),
+    ]);
+    let streamed: any;
+    for await (const chunk of buildAdapter(streamRefusal.fetch).stream(buildRequest())) {
+      if (chunk.type === 'response') streamed = chunk.response;
+    }
+    assert(streamed?.refusal === 'I cannot help.', 'Test 12c: A streamed refusal is accumulated', JSON.stringify(streamed));
+
+    const arraySchema = { type: 'array', items: { $ref: '#/$defs/n' }, $defs: { n: { type: 'number' } } };
+    const wrapped = createRecorder([() => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"value":[1,2]}' } }] })]);
+    const unwrapped = await buildAdapter(wrapped.fetch).generate(
+      buildRequest({ outputFormat: { type: 'json_schema', name: 'r', schema: arraySchema, strict: true } }),
+    );
+    const sent = wrapped.calls[0].body.response_format.json_schema.schema;
+    assert(
+      sent.type === 'object' &&
+        sent.required[0] === 'value' &&
+        sent.properties.value.items.$ref === '#/$defs/n' &&
+        sent.$defs.n.type === 'number',
+      'Test 12d: A non-object root is sent wrapped in an object, with its definitions moved to the new root',
+      JSON.stringify(sent),
+    );
+    assert(unwrapped.content === '[1,2]', 'Test 12e: The wrapped answer is unwrapped again', unwrapped.content);
+  } catch (err: any) {
+    assert(false, 'Test 12: Structured output edge cases', err.message);
+  }
+
+  // TEST 13: strict mode only for schemas it accepts, and references survive wrapping
+  try {
+    const recorder = createRecorder(
+      Array.from({ length: 5 }, () => () => jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"value":[]}' } }] })),
+    );
+    const adapter = buildAdapter(recorder.fetch);
+    const send = (schema: Record<string, unknown>) =>
+      adapter.generate(buildRequest({ outputFormat: { type: 'json_schema', name: 'r', schema, strict: true } }));
+
+    const loose = { type: 'object', properties: { a: { type: 'object', properties: { b: { type: 'string' } }, required: ['b'] } }, required: ['a'], additionalProperties: false };
+    const partial = { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['a'], additionalProperties: false };
+    await send(loose);
+    await send(partial);
+    assert(
+      recorder.calls[0].body.response_format.json_schema.strict === false &&
+        recorder.calls[1].body.response_format.json_schema.strict === false,
+      'Test 13a: A schema strict mode would reject (a nested open object, an optional property) is sent non-strict',
+    );
+
+    const nested = { type: 'array', items: { anyOf: [{ type: 'number' }, { $ref: '#' }] } };
+    await send(nested);
+    const sentNested = recorder.calls[2].body.response_format.json_schema;
+    const root = sentNested.schema.$defs?.[sentNested.schema.properties.value.$ref?.replace('#/$defs/', '')];
+    assert(
+      sentNested.schema.properties.value.$ref === '#/$defs/wrapped_root' &&
+        root?.type === 'array' &&
+        root.items.anyOf[1].$ref === '#/$defs/wrapped_root' &&
+        sentNested.strict === true,
+      'Test 13b: Root recursion still points at the original root after wrapping',
+      JSON.stringify(sentNested.schema),
+    );
+
+    const pointer = {
+      type: 'array',
+      items: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+      prefixItems: [{ $ref: '#/items' }],
+      $defs: { wrapped_root: { type: 'string' }, keep: { $ref: '#/$defs/wrapped_root' } },
+      default: [{ $ref: '#' }],
+    };
+    await send(pointer);
+    const sentPointer = recorder.calls[3].body.response_format.json_schema.schema;
+    assert(
+      sentPointer.properties.value.$ref === '#/$defs/wrapped_root_2' &&
+        sentPointer.$defs.wrapped_root_2.prefixItems[0].$ref === '#/$defs/wrapped_root_2/items' &&
+        sentPointer.$defs.keep.$ref === '#/$defs/wrapped_root' &&
+        sentPointer.$defs.wrapped_root.type === 'string' &&
+        sentPointer.$defs.wrapped_root_2.default[0].$ref === '#',
+      'Test 13c: Pointers into the moved root are re-pointed, definition references and data are left alone',
+      JSON.stringify(sentPointer),
+    );
+
+    const legacy = { type: 'array', items: { $ref: '#/definitions/node' }, definitions: { node: { anyOf: [{ type: 'number' }, { $ref: '#' }] } } };
+    await send(legacy);
+    const sentLegacy = recorder.calls[4].body.response_format.json_schema.schema;
+    assert(
+      sentLegacy.properties.value.$ref === '#/$defs/wrapped_root' &&
+        sentLegacy.$defs.wrapped_root.items.$ref === '#/definitions/node' &&
+        sentLegacy.definitions.node.anyOf[1].$ref === '#/$defs/wrapped_root',
+      'Test 13d: A root reference inside draft-07 definitions also moves the root',
+      JSON.stringify(sentLegacy),
+    );
+  } catch (err: any) {
+    assert(false, 'Test 12: Structured output edge cases', err.message);
+  }
+
   console.log(`\n  📊 OpenAI Adapter Results: ${passed} passed, ${failed} failed.\n`);
 
   if (failed > 0) {

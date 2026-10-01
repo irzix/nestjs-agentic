@@ -17,6 +17,7 @@ import {
   CheckpointNotFoundError,
   ExecutionCancelledError,
   RuntimeNotConfiguredError,
+  StructuredOutputNotSupportedError,
 } from '../errors';
 import { LocalToolProvider } from '../providers/local-tool.provider';
 import { DeferredWriteQueue } from '../utils/deferred-write-queue';
@@ -67,6 +68,13 @@ import type { ObservabilityOptions } from '../observers/error-redaction';
 import type { ModelResilienceOptions } from '../adapters/resilient-model.adapter';
 
 import { STATE_STORE, type StateStore } from '../interfaces/state-store.interface';
+import type {
+  JsonSchema,
+  StoredStructuredOutput,
+  StructuredOutputOptions,
+  StructuredOutputSpec,
+} from '../interfaces/structured-output.interface';
+import { resolveStructuredOutput, restoreStructuredOutput } from '../utils/structured-output';
 import { AgentExecutor } from './agent-executor.service';
 
 export interface AgenticModuleOptions {
@@ -234,6 +242,14 @@ export interface RunInput {
   history?: boolean;
   /** Overrides the module `durability` setting for this run. */
   durability?: DurabilityMode;
+  /**
+   * Overrides the agent's `outputSchema` for this run. Kept across an approval
+   * suspension and checkpoint recovery; a run-level `validate` function cannot
+   * be stored, so a resumed turn checks this schema with the built-in validator.
+   */
+  outputSchema?: JsonSchema;
+  /** Overrides fields of the agent's `structuredOutput` options for this run. */
+  structuredOutput?: StructuredOutputOptions;
   /** Cancels the run when aborted. Honored by the built-in runtime. */
   signal?: AbortSignal;
 }
@@ -260,6 +276,7 @@ export interface PreparedRun {
   limits?: ExecutionLimits;
   toolErrorHandling?: ToolErrorHandling;
   messageReducer?: AgentMessageReducer;
+  structuredOutput?: StructuredOutputSpec;
 }
 
 @Injectable()
@@ -433,6 +450,13 @@ export class AgentRunner {
 
     const config = agent.define();
 
+    // Resolved before the tool runs: an agent schema that cannot be used must
+    // fail the settlement, not strand an approval whose side effect happened.
+    const resumes = Boolean(pending.toolCallId && this.executor?.isAvailable());
+    const structuredOutput = resumes
+      ? this.resumedStructuredOutput(pending.checkpoint?.structuredOutput, config)
+      : undefined;
+
     const outcome: ToolExecutionResult = decision.approved
       ? await this.invokeApprovedToolFromConfig(
           config.tools,
@@ -443,7 +467,7 @@ export class AgentRunner {
         )
       : { success: false, status: 'denied', reason: decision.reason ?? pending.reason };
 
-    if (!pending.toolCallId || !this.executor?.isAvailable()) {
+    if (!resumes || !this.executor || !pending.toolCallId) {
       return outcome;
     }
 
@@ -469,6 +493,7 @@ export class AgentRunner {
       limits: config.limits ?? this.options.limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer: config.messageReducer ?? this.options.messageReducer,
+      structuredOutput,
       signal: options?.signal,
       onCheckpoint: (checkpoint) => this.saveInFlightCheckpoint(pending.context, checkpoint),
       onTranscript: store
@@ -476,7 +501,8 @@ export class AgentRunner {
         : undefined,
       // A resumed turn can suspend again on a further approval, which needs its
       // own checkpoint.
-      onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+      onSuspend: (approvalId, messages, extras) =>
+            this.saveCheckpoint(approvalId, messages, extras?.structuredOutput),
     });
   }
 
@@ -488,7 +514,11 @@ export class AgentRunner {
    * the checkpoint to it. Runs before the suspended turn returns, so no caller
    * can hold the `approvalId` yet and there is nothing to race with.
    */
-  private async saveCheckpoint(approvalId: string, messages: ModelMessage[]): Promise<void> {
+  private async saveCheckpoint(
+    approvalId: string,
+    messages: ModelMessage[],
+    structuredOutput?: StoredStructuredOutput,
+  ): Promise<void> {
     if (!this.approvalStore) return;
 
     try {
@@ -503,6 +533,7 @@ export class AgentRunner {
           // messages are dropped because instructions are re-derived from the
           // agent's config on resume.
           messages: withoutSystemMessages(messages),
+          ...(structuredOutput ? { structuredOutput } : {}),
         },
       });
     } catch {
@@ -643,6 +674,25 @@ export class AgentRunner {
   /**
    * Invokes an approved tool directly across registered providers and local tools.
    */
+  /**
+   * The spec a resumed or recovered turn runs under. A stored spec was valid
+   * when its run started, so an agent schema broken since then cannot block
+   * it; without a stored spec the agent's own applies and must be valid.
+   */
+  private resumedStructuredOutput(
+    stored: StoredStructuredOutput | undefined,
+    config: AgentConfig,
+  ): StructuredOutputSpec | undefined {
+    if (!stored) return resolveStructuredOutput([config]);
+    let agentSpec: StructuredOutputSpec | undefined;
+    try {
+      agentSpec = resolveStructuredOutput([config]);
+    } catch {
+      agentSpec = undefined;
+    }
+    return restoreStructuredOutput(stored, agentSpec);
+  }
+
   private async invokeApprovedToolFromConfig(
     tools: (object | Function)[],
     toolName: string,
@@ -724,6 +774,7 @@ export class AgentRunner {
         input.toolErrorHandling ?? config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer:
         input.messageReducer ?? config.messageReducer ?? this.options.messageReducer,
+      structuredOutput: resolveStructuredOutput([config, input]),
     };
   }
 
@@ -742,7 +793,11 @@ export class AgentRunner {
     return this.runtimeAdapter;
   }
 
-  async run(agentName: string, input: RunInput): Promise<AgentResult> {
+  /**
+   * Runs one agent turn. With an `outputSchema`, `result.structured` holds the
+   * validated answer; pass its type as `T` to read it without a cast.
+   */
+  async run<T = unknown>(agentName: string, input: RunInput): Promise<AgentResult<T>> {
     const prepared = await this.prepare(agentName, input);
     const notifier = this.getNotifier();
     const startAt = Date.now();
@@ -781,6 +836,7 @@ export class AgentRunner {
           limits: prepared.limits,
           toolErrorHandling: prepared.toolErrorHandling,
           messageReducer: prepared.messageReducer,
+          structuredOutput: prepared.structuredOutput,
           signal: input.signal,
           observerNotifier: notifier,
           history: withHistory ? await this.loadHistory(prepared.context) : undefined,
@@ -796,10 +852,14 @@ export class AgentRunner {
             : undefined,
           // Independent of history being enabled: an approval must stay resumable
           // even for a stateless turn. Always synchronous for the same reason.
-          onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+          onSuspend: (approvalId, messages, extras) =>
+            this.saveCheckpoint(approvalId, messages, extras?.structuredOutput),
         });
         await writes?.flush();
       } else {
+        if (prepared.structuredOutput) {
+          throw new StructuredOutputNotSupportedError(agentName);
+        }
         result = await this.requireRuntimeAdapter().execute({
           sessionId: input.sessionId,
           message: input.message,
@@ -824,7 +884,9 @@ export class AgentRunner {
         context: prepared.context,
       });
 
-      return { ...result, durationMs };
+      // `T` is the caller's description of the schema; the value was validated
+      // against the schema at runtime, not by the compiler.
+      return { ...result, durationMs } as AgentResult<T>;
     } catch (err: unknown) {
       const durationMs = Date.now() - startAt;
       await notifier.notifyError({
@@ -865,6 +927,7 @@ export class AgentRunner {
         const withHistory = this.historyEnabled(input);
         let finalUsage: ModelUsage | undefined;
         let finalOutput = '';
+        let finalStructured: unknown;
         let wasSuspended = false;
         const writes = this.openWriteQueue(prepared.context, input);
 
@@ -882,6 +945,7 @@ export class AgentRunner {
           limits: prepared.limits,
           toolErrorHandling: prepared.toolErrorHandling,
           messageReducer: prepared.messageReducer,
+          structuredOutput: prepared.structuredOutput,
           signal: input.signal,
           observerNotifier: notifier,
           history: withHistory ? await this.loadHistory(prepared.context) : undefined,
@@ -895,7 +959,8 @@ export class AgentRunner {
                   this.saveHistory(prepared.context, messages),
                 )
             : undefined,
-          onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+          onSuspend: (approvalId, messages, extras) =>
+            this.saveCheckpoint(approvalId, messages, extras?.structuredOutput),
         })) {
           if (event.type === 'approval_required') {
             wasSuspended = true;
@@ -903,6 +968,7 @@ export class AgentRunner {
           if (event.type === 'final_answer') {
             finalOutput = event.output;
             finalUsage = event.usage;
+            finalStructured = event.structured;
           }
           yield event;
         }
@@ -914,6 +980,7 @@ export class AgentRunner {
           output: finalOutput,
           toolCalls: [],
           usage: finalUsage,
+          ...(finalStructured !== undefined ? { structured: finalStructured } : {}),
         };
 
         await notifier.notifyAgentEnd({
@@ -932,6 +999,9 @@ export class AgentRunner {
         return;
       }
 
+      if (prepared.structuredOutput) {
+        throw new StructuredOutputNotSupportedError(agentName);
+      }
       const adapter = this.requireRuntimeAdapter();
       const adapterInput = {
         sessionId: input.sessionId,
@@ -1048,12 +1118,14 @@ export class AgentRunner {
       limits,
       toolErrorHandling: config.toolErrorHandling ?? this.options.toolErrorHandling,
       messageReducer: config.messageReducer ?? this.options.messageReducer,
+      structuredOutput: this.resumedStructuredOutput(checkpoint.structuredOutput, config),
       signal: options?.signal,
       onCheckpoint: (cp) => this.saveInFlightCheckpoint(context, cp),
       onTranscript: sessionStore
         ? (messages) => this.saveHistory(context, messages)
         : undefined,
-      onSuspend: (approvalId, messages) => this.saveCheckpoint(approvalId, messages),
+      onSuspend: (approvalId, messages, extras) =>
+            this.saveCheckpoint(approvalId, messages, extras?.structuredOutput),
     });
   }
 

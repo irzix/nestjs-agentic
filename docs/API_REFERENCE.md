@@ -81,6 +81,10 @@ interface AgentConfig {
   tools: object[];
   subAgents?: AgentProvider[];
   model?: ModelConfig;
+  // JSON Schema the final answer must satisfy; parsed onto AgentResult.structured.
+  outputSchema?: JsonSchema;
+  structuredOutput?: StructuredOutputOptions;
+  // ...plus cascade, limits, toolErrorHandling, messageReducer.
 }
 
 interface AgentProvider {
@@ -189,6 +193,8 @@ Registering a `ModelAdapter` activates the built-in agent runtime.
 const MODEL_ADAPTER: symbol;
 
 interface ModelAdapter {
+  // True when outputFormat is forwarded to the provider's native structured output.
+  readonly supportsStructuredOutput?: boolean;
   generate(request: ModelRequest): Promise<ModelResponse>;
   stream?(request: ModelRequest): AsyncIterable<ModelStreamChunk>;
 }
@@ -197,6 +203,8 @@ interface ModelRequest {
   model: ModelConfig;
   messages: ModelMessage[];
   tools: ModelToolSchema[];
+  // Set when the turn has an outputSchema.
+  outputFormat?: { type: 'json_schema'; name: string; schema: JsonSchema; description?: string; strict: boolean };
   signal?: AbortSignal;
   metadata: {
     sessionId: string;
@@ -243,6 +251,32 @@ type ModelStreamChunk =
 ```
 
 A `ModelAdapter` is responsible only for provider communication. It must not execute tools, evaluate policies, or drive the loop. Implementations of `stream()` must finish by yielding a `response` chunk containing the complete round.
+
+## Structured Output
+
+```typescript
+type JsonSchema = { [keyword: string]: unknown };
+
+interface StructuredOutputOptions<T = unknown> {
+  name?: string;              // provider-facing schema name; default 'response'
+  description?: string;
+  strict?: boolean;           // provider strict mode; default false
+  maxRepairAttempts?: number; // default 2; 0 disables repair
+  validate?(value: unknown): StructuredOutputValidation<T> | Promise<StructuredOutputValidation<T>>;
+}
+
+type StructuredOutputValidation<T = unknown> =
+  | { valid: true; value: T }
+  | { valid: false; issues: string[] };
+
+function validateJsonSchema(value: unknown, schema: JsonSchema, options?: { maxIssues?: number }): {
+  valid: boolean;
+  issues: string[]; // e.g. '$.items[0].price: expected number, received string'
+};
+function parseJsonAnswer(content: string): { ok: true; value: unknown } | { ok: false; issue: string };
+```
+
+Set `outputSchema` on `AgentConfig`, or on `RunInput` to override it for one run. A run that sets its own schema does not inherit the agent's `structuredOutput` options; a run that sets only options adjusts the agent's. A schema with an invalid pattern or an unresolvable `$ref` throws `InvalidOutputSchemaError` before any model call. The built-in runtime sends the schema as `ModelRequest.outputFormat`, describes it in the request's system prompt when the adapter does not declare `supportsStructuredOutput`, parses and validates the final answer, and re-prompts with the issues up to `maxRepairAttempts` times. The parsed value is returned as `AgentResult.structured`, and `runner.run<T>()` types it. A turn that never conforms, or whose model refuses (`ModelResponse.refusal`, not repaired), fails with `StructuredOutputError` (`output`, `issues`, `attempts`, `refusal`); its conversation is still saved to session history. Repair rounds count toward usage and execution budgets, and are kept out of session history unless the model answers a repair prompt with a tool call. Streaming emits `{ type: 'output_rejected', attempt, issues }` before each repair round and `structured` on `final_answer`. The schema is stored with an approval and an in-flight checkpoint, so a resumed or recovered turn keeps it (a run-level `validate` cannot be stored), and recovery keeps the repair state. A turn that would run through a `RuntimeAdapter` throws `StructuredOutputNotSupportedError`.
 
 ## Execution Budgets
 

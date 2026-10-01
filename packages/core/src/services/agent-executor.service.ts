@@ -7,6 +7,7 @@ import {
   ExecutionLimitExceededError,
   InFlightCheckpointVersionError,
   RuntimeNotConfiguredError,
+  StructuredOutputError,
   ToolValidationError,
 } from '../errors';
 import {
@@ -41,6 +42,21 @@ import type { Provenance } from '../interfaces/provenance.interface';
 import { validateToolArgs } from '../utils/tool-args.validator';
 import type { AgentObserver } from '../interfaces/observer.interface';
 import type { AgentMessageReducer } from '../interfaces/message-reducer.interface';
+import type { StoredStructuredOutput, StructuredOutputSpec } from '../interfaces/structured-output.interface';
+import {
+  checkStructuredOutput,
+  maxRepairAttemptsOf,
+  repairPrompt,
+  structuredOutputInstruction,
+  toOutputFormat,
+  toStoredStructuredOutput,
+} from '../utils/structured-output';
+
+/** What a suspended turn hands to `onSuspend` besides its transcript. */
+export interface SuspendExtras {
+  /** The turn's `outputSchema` and options, to validate the resumed turn against. */
+  structuredOutput?: StoredStructuredOutput;
+}
 import { fingerprintTranscript, validateReduction } from '../reducers/validate-reduction';
 import { ObserverNotifier } from '../observers/observer-notifier';
 import { AGENT_OBSERVERS, AGENTIC_OPTIONS } from '../constants';
@@ -77,6 +93,12 @@ export interface AgentExecutionInput {
    */
   messageReducer?: AgentMessageReducer;
   /**
+   * Schema the final answer must satisfy. The executor sends it to the model,
+   * validates the answer, and re-prompts with the issues up to
+   * `maxRepairAttempts` times before failing with `StructuredOutputError`.
+   */
+  structuredOutput?: StructuredOutputSpec;
+  /**
    * Receives the conversation once the turn ends, either with a final answer or
    * suspended for approval. Not called when the turn fails, so a partial
    * transcript is never persisted.
@@ -90,7 +112,7 @@ export interface AgentExecutionInput {
    * `onTranscript`. This runs before the turn returns, so the checkpoint is
    * durable before the caller can learn the `approvalId` and settle it.
    */
-  onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
+  onSuspend?(approvalId: string, messages: ModelMessage[], extras?: SuspendExtras): void | Promise<void>;
   /**
    * Receives an in-flight checkpoint after each model/tool iteration round,
    * enabling process restart recovery and mid-loop resumption.
@@ -114,6 +136,8 @@ interface ExecutorRequestContext {
   messageReducer?: AgentMessageReducer;
   /** `toolCallId` of the group withheld for approval on a resumed turn, if any. */
   pendingApprovalToolCallId?: string;
+  /** Schema the final answer must satisfy, if any. */
+  structuredOutput?: StructuredOutputSpec;
 }
 
 /** Input for continuing a turn that suspended on `require_approval`. */
@@ -138,7 +162,7 @@ export interface AgentResumeInput extends ExecutorRequestContext {
   messageReducer?: AgentMessageReducer;
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
   /** Checkpoints a resumed turn that suspends again on a further approval. */
-  onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
+  onSuspend?(approvalId: string, messages: ModelMessage[], extras?: SuspendExtras): void | Promise<void>;
   onCheckpoint?(checkpoint: InFlightCheckpoint): void | Promise<void>;
 }
 
@@ -151,7 +175,7 @@ export interface AgentResumeCheckpointInput extends ExecutorRequestContext {
   observers?: AgentObserver[];
   messageReducer?: AgentMessageReducer;
   onTranscript?(messages: ModelMessage[]): void | Promise<void>;
-  onSuspend?(approvalId: string, messages: ModelMessage[]): void | Promise<void>;
+  onSuspend?(approvalId: string, messages: ModelMessage[], extras?: SuspendExtras): void | Promise<void>;
   onCheckpoint?(checkpoint: InFlightCheckpoint): void | Promise<void>;
 }
 
@@ -185,6 +209,16 @@ interface ExecutionState {
   suspended: boolean;
   /** Identifies the approval that suspended this turn, for checkpointing. */
   suspendedApprovalId?: string;
+  /**
+   * Rejected final answers and the prompts asking to repair them. Sent to the
+   * model but kept out of the transcript, so session history records only
+   * the answer that conformed. Committed to the transcript if the model
+   * answers a repair prompt with tool calls, to keep the history coherent.
+   */
+  repair: ModelMessage[];
+  repairAttempts: number;
+  /** The validated final answer, when the turn has an `outputSchema`. */
+  structured?: unknown;
 }
 
 /**
@@ -320,6 +354,7 @@ export class AgentExecutor {
       // resolved in the transcript; keep it identified so a reducer cannot fold
       // it away before the model reacts to the outcome.
       pendingApprovalToolCallId: (input as AgentResumeInput).toolCallId,
+      structuredOutput: input.structuredOutput,
     };
   }
 
@@ -509,11 +544,17 @@ export class AgentExecutor {
           toolErrorHandling,
         );
 
+        if (finished && (await this.rejectOutput(requestCtx, state, response, onTranscript))) {
+          // Durable, so a recovered turn keeps its repair budget and feedback.
+          await this.publishInFlightCheckpoint(onCheckpoint, state, requestCtx);
+          continue;
+        }
+
         if (finished) {
           const result = this.toResult(requestCtx.sessionId, state, response.content);
           // Checkpointed first: once this returns, the caller holds the
           // approvalId and could settle it immediately.
-          await this.publishCheckpoint(onSuspend, state);
+          await this.publishCheckpoint(onSuspend, state, requestCtx);
           // The persisted transcript gets the model's actual content, never the
           // synthetic "requires approval" sentence resolveOutput() fabricates
           // for the caller — that text was never said by the model, and
@@ -523,7 +564,7 @@ export class AgentExecutor {
         }
 
         // Checkpoint in-flight state after each intermediate tool round
-        await this.publishInFlightCheckpoint(onCheckpoint, state, requestCtx.sessionId);
+        await this.publishInFlightCheckpoint(onCheckpoint, state, requestCtx);
       }
     } finally {
       scope.dispose();
@@ -615,17 +656,30 @@ export class AgentExecutor {
           yield event;
         }
 
+        const rejected = finished ? await this.rejectOutput(requestCtx, state, response, onTranscript) : undefined;
+        if (rejected) {
+          await this.publishInFlightCheckpoint(onCheckpoint, state, requestCtx);
+          yield { type: 'output_rejected', attempt: state.repairAttempts, issues: rejected };
+          continue;
+        }
+
         if (finished) {
           const output = this.resolveOutput(state, response.content);
-          await this.publishCheckpoint(onSuspend, state);
+          await this.publishCheckpoint(onSuspend, state, requestCtx);
           await this.publishTranscript(onTranscript, state, output);
-          yield { type: 'final_answer', sessionId: requestCtx.sessionId, output, usage: state.usage };
+          yield {
+            type: 'final_answer',
+            sessionId: requestCtx.sessionId,
+            output,
+            usage: state.usage,
+            ...(state.structured !== undefined ? { structured: state.structured } : {}),
+          };
           yield { type: 'complete', sessionId: requestCtx.sessionId, output };
           return;
         }
 
         // Checkpoint in-flight state after each intermediate stream round
-        await this.publishInFlightCheckpoint(onCheckpoint, state, requestCtx.sessionId);
+        await this.publishInFlightCheckpoint(onCheckpoint, state, requestCtx);
       }
     } finally {
       scope.dispose();
@@ -658,6 +712,8 @@ export class AgentExecutor {
       toolCallCount: 0,
       iteration: 0,
       suspended: false,
+      repair: [],
+      repairAttempts: 0,
     };
   }
 
@@ -712,6 +768,8 @@ export class AgentExecutor {
       toolCallCount: 0,
       iteration: 0,
       suspended: false,
+      repair: [],
+      repairAttempts: 0,
     };
   }
 
@@ -799,10 +857,17 @@ export class AgentExecutor {
     state: ExecutionState,
     scope: { signal: AbortSignal },
   ): Promise<ModelRequest> {
+    const spec = input.structuredOutput;
+    let messages = [...(await this.projectMessages(input, state, scope)), ...state.repair];
+    if (spec && !this.modelAdapter?.supportsStructuredOutput) {
+      messages = withSystemInstruction(messages, structuredOutputInstruction(spec));
+    }
+
     return {
       model: input.model,
-      messages: await this.projectMessages(input, state, scope),
+      messages,
       tools: this.toToolSchemas(input.tools),
+      ...(spec ? { outputFormat: toOutputFormat(spec) } : {}),
       signal: scope.signal,
       metadata: {
         sessionId: input.sessionId,
@@ -880,6 +945,13 @@ export class AgentExecutor {
     const requestedCalls = response.toolCalls ?? [];
     if (requestedCalls.length === 0) {
       return true;
+    }
+
+    // The model answered a repair prompt by calling tools, so the exchange is
+    // now part of the conversation rather than a detour around it.
+    if (state.repair.length > 0) {
+      state.messages.push(...state.repair);
+      state.repair = [];
     }
 
     state.messages.push({
@@ -1105,10 +1177,12 @@ export class AgentExecutor {
   private async publishCheckpoint(
     onSuspend: AgentExecutionInput['onSuspend'],
     state: ExecutionState,
+    requestCtx: ExecutorRequestContext,
   ): Promise<void> {
     if (!onSuspend || !state.suspended || !state.suspendedApprovalId) return;
 
-    await onSuspend(state.suspendedApprovalId, [...state.messages]);
+    const structuredOutput = toStoredStructuredOutput(requestCtx.structuredOutput);
+    await onSuspend(state.suspendedApprovalId, [...state.messages], structuredOutput ? { structuredOutput } : undefined);
   }
 
   /**
@@ -1147,25 +1221,30 @@ export class AgentExecutor {
       toolCallCount: input.checkpoint.toolCallCount,
       iteration: input.checkpoint.iteration,
       suspended: false,
+      repair: [...(input.checkpoint.repair ?? [])],
+      repairAttempts: input.checkpoint.repairAttempts ?? 0,
     };
   }
 
   private async publishInFlightCheckpoint(
     onCheckpoint: AgentExecutionInput['onCheckpoint'],
     state: ExecutionState,
-    sessionId: string,
+    requestCtx: ExecutorRequestContext,
   ): Promise<void> {
     if (!onCheckpoint) return;
 
+    const structuredOutput = toStoredStructuredOutput(requestCtx.structuredOutput);
     const checkpoint: InFlightCheckpoint = {
       version: INFLIGHT_CHECKPOINT_VERSION,
       executionId: state.executionId,
-      sessionId,
+      sessionId: requestCtx.sessionId,
       iteration: state.iteration,
       messages: [...state.messages],
       usage: { ...state.usage },
       toolCallCount: state.toolCallCount,
       updatedAt: new Date().toISOString(),
+      ...(structuredOutput ? { structuredOutput } : {}),
+      ...(state.repairAttempts > 0 ? { repairAttempts: state.repairAttempts, repair: [...state.repair] } : {}),
     };
 
     await onCheckpoint(checkpoint);
@@ -1181,7 +1260,52 @@ export class AgentExecutor {
       output: this.resolveOutput(state, content),
       toolCalls: state.toolCalls,
       usage: state.usage,
+      ...(state.structured !== undefined ? { structured: state.structured } : {}),
     };
+  }
+
+  /**
+   * Validates a final answer against the turn's `outputSchema`. When it does
+   * not conform, queues a repair round and returns the issues; when it does,
+   * records the parsed value on the state. Throws `StructuredOutputError` once
+   * the repair attempts are spent.
+   */
+  private async rejectOutput(
+    requestCtx: ExecutorRequestContext,
+    state: ExecutionState,
+    response: ModelResponse,
+    onTranscript: AgentExecutionInput['onTranscript'],
+  ): Promise<string[] | undefined> {
+    const spec = requestCtx.structuredOutput;
+    // A suspended turn has no final answer yet; it is validated on resume.
+    if (!spec || state.suspended) return undefined;
+
+    const content = response.content;
+    const refusal = typeof response.refusal === 'string' && response.refusal ? response.refusal : undefined;
+    const verdict = refusal
+      ? { valid: false as const, issues: [`$: the model refused to answer: ${refusal}`] }
+      : await checkStructuredOutput(spec, content);
+    if (verdict.valid) {
+      state.structured = verdict.value;
+      return undefined;
+    }
+
+    // A refusal is not a formatting mistake, so it is not repaired.
+    if (refusal || state.repairAttempts >= maxRepairAttemptsOf(spec)) {
+      // The turn's tool calls did happen, so the conversation is kept even
+      // though its answer does not conform; the next turn must not repeat them.
+      await this.publishTranscript(onTranscript, state, content);
+      throw new StructuredOutputError(content, verdict.issues, state.repairAttempts, refusal);
+    }
+
+    state.repairAttempts++;
+    // An empty answer is not replayed: providers reject an assistant message
+    // with no content, and the repair prompt already says it was empty.
+    if (content.trim()) {
+      state.repair.push({ role: 'assistant', content });
+    }
+    state.repair.push({ role: 'user', content: repairPrompt(verdict.issues) });
+    return verdict.issues;
   }
 
   /**
@@ -1201,6 +1325,18 @@ export class AgentExecutor {
     }
     return content;
   }
+}
+
+/**
+ * Adds an instruction to the leading system message, or prepends one, so it
+ * reaches providers that accept a single system prompt.
+ */
+function withSystemInstruction(messages: ModelMessage[], instruction: string): ModelMessage[] {
+  const [first, ...rest] = messages;
+  if (first?.role === 'system') {
+    return [{ role: 'system', content: `${first.content}\n\n${instruction}` }, ...rest];
+  }
+  return [{ role: 'system', content: instruction }, ...messages];
 }
 
 /** @internal exported for framework tests. */

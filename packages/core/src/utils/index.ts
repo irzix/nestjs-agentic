@@ -19,3 +19,6 @@ export type {
 export { isRetryableModelError, readRetryAfterMs, retryWithBackoff } from './retry';
 export type { RetryAfterCarrier, RetryAttemptEvent, RetryOptions } from './retry';
 export { DeferredWriteQueue } from './deferred-write-queue';
+export { validateJsonSchema } from './json-schema.validator';
+export type { JsonSchemaValidationOptions, JsonSchemaValidationResult } from './json-schema.validator';
+export { parseJsonAnswer } from './structured-output';

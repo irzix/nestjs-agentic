@@ -13,5 +13,6 @@ export * from './provenance.interface';
 export * from './runtime.interface';
 export * from './session.interface';
 export * from './state-store.interface';
+export * from './structured-output.interface';
 export * from './tool.interface';
 export * from './cascade.interface';
