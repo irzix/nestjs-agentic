@@ -1,5 +1,51 @@
 # @nestjs-agentic/core
 
+## 1.6.0
+
+### Minor Changes
+
+- 22276c8: Add dual control (N-of-M approvals) for high-risk actions.
+
+  - A `require_approval` policy decision can set `requiredApprovals`. The withheld tool then runs only after that many distinct approvers have called `ApprovalService.approve()`. Earlier calls return a `pending_approval` result with `signatures` and `requiredApprovals`. Every signature runs through the `ApprovalAuthorizer`, tenant isolation, and separation-of-duties checks and must carry `actor.userId`. A repeated signature from the same `userId` is refused rather than counted twice, and a single authorized `reject()` vetoes.
+  - New optional `ApprovalStore.addSignature(id, signature)` appends a signature atomically and claims the approval on the one that meets the threshold, so exactly one caller settles it. Implemented by `InMemoryApprovalStore`, `PostgresApprovalStore`, and `RedisApprovalStore` (when the client exposes `eval`; the approval and its signatures share one key). Stores without it keep working for single-approver approvals, and a multi-approver decision on such a store is denied instead of downgraded.
+  - **Behavior change:** when a policy returns `require_approval`, the remaining policies on the tool still run. A later `deny` now wins, and the approval takes the strictest terms across policies (most approvers, shortest `ttlSeconds`). Previously the first approval requirement stopped evaluation, so later policies, including deny rules, never ran for that call, because an approved call skips policies.
+  - Each signature records the version of the approval it was given for (`approvalVersion`), and completion is refused if any signature was given for a different version. Every settlement path checks the signature count before the tool runs. Cancellation is honored before store writes, and an approval consumed by a cancelled call is put back.
+  - `RedisApprovalStore` accepts an `evalFn` adapter (for node-redis v4 and similar). `claim()` uses an atomic script when the client has `eval` but no `getdel`. The signature script reads the record without decoding JSON.
+  - New `approval_signed` audit event per counted signature, `requiredApprovals` on `approval_requested`, and `signatures` on `approval_settled`.
+  - `runApprovalStoreContract` gains capability-gated groups for `addSignature`: threshold accumulation, duplicate rejection, and atomicity under concurrent signers. Its argument round-trip check no longer depends on JSON key order, which PostgreSQL `jsonb` does not preserve.
+  - New exports: `ApprovalSignature`, `ApprovalSignatureResult`, `ApprovalSignedAuditEvent`, `ApprovalSignaturesUnsupportedError`, `requiredApprovalsOf`.
+
+- 68218ea: New package: `@nestjs-agentic/jev`, Jev (TypeSafe System One) decisions for nestjs-agentic governance.
+
+  - `JevActionGate(options)` creates an injectable tool policy that maps Jev's calibrated probability that a call is safe onto `allow` (at or above `allowAt`), `require_approval` (between the thresholds, with `requiredApprovals` as a number or a function of the probability for dual control), and `deny` (below `denyBelow`). Every decision reason, allow included, records the probability and thresholds for the audit trail. Unnamed gates get distinct names.
+  - `JevOutputGate(options)` creates an output rail that withholds tool output, by default prompt injections, before the model sees it.
+  - `describe` controls exactly what is sent to the TypeSafe API; an error it throws propagates instead of being treated as an outage. `onError` decides what happens when Jev is unreachable, slow (`timeoutMs`, enforced even for clients that ignore the abort signal), or answers malformed: human review by default for action gates, with `onErrorRequiredApprovals` approvers (required when `requiredApprovals` is a function), and deny for output gates. A circuit breaker, shared through `JevModule`, makes calls fail fast after repeated failures. A cancelled run throws `ExecutionCancelledError` rather than following `onError`.
+  - `JevModule.forRoot()` / `forRootAsync()` share one client and defaults; each gate can also take its own `client`.
+  - `jevFaithfulnessJudge` and `jevTaskJudge` plug into `@nestjs-agentic/evaluation`'s `FaithfulnessMetric` and `LLMAsAJudgeMetric`.
+  - Works with `TypeSafeClient` from `@typesafe-ai/sdk` (optional peer dependency) or any client with a compatible `systemOne()`.
+
+  Core: an `allow` policy result, before or after execution, may carry an optional `reason`, recorded on the audit trail (with `audit.includeAllowDecisions` for tool calls) and never shown to the model. When several policies require approval, a policy without its own `ttlSeconds` now counts with the module's `approvalTtlSeconds` when the shortest lifetime is chosen, so it is no longer outlived by another policy's longer explicit lifetime.
+
+- f81f32e: Redact errors before they reach observers.
+
+  Observers usually forward events to external telemetry, and provider SDK errors routinely carry request headers, API keys, and prompt content. `ObserverNotifier` now scrubs every error-carrying field before dispatch: `AgentErrorEvent.error`, `ModelRetryEvent.error`, `CircuitBreakerEvent.reason`, and the `error` text of failed tool results in `ToolResultEvent` and `AgentEndEvent`.
+
+  - **Behavior change:** by default observers now receive a `RedactedError` instead of the original error. It keeps `name`, a credential-masked message capped at 500 characters, numeric `status`/`statusCode`, a short `code`, stack frames, and a redacted `cause` chain (3 links deep). Request config, headers, response bodies, and every other property are dropped. The error thrown to the caller of `run()` is unchanged.
+  - Configure it with `observability.errorRedaction` on `AgenticModuleOptions`: pass `createErrorRedactor({ maxMessageLength, maxCauseDepth, patterns, mask })`, any `(error: unknown) => Error` (optionally with `redactText` for free text), or `'none'` to restore raw errors. Any other value is rejected. `ObserverNotifier` accepts the same setting as `errorRedaction`.
+  - New exports: `ErrorRedactor`, `ObservabilityOptions`, `ErrorRedactorOptions`, `RedactedError`, `createErrorRedactor`, `defaultErrorRedactor`.
+
+- cf18702: Add structured output: constrain an agent's final answer to a JSON Schema, with validation and bounded repair.
+
+  - `outputSchema` (JSON Schema) on `AgentConfig` and `RunInput`, with optional `structuredOutput` options: `name`, `description`, `strict` (default `false`), `maxRepairAttempts` (default `2`), and a pluggable `validate` for Ajv, zod, or any validator.
+  - The built-in runtime sends the schema as the new optional `ModelRequest.outputFormat`. Adapters that set `supportsStructuredOutput` forward it natively; for others the schema is described in that request's system prompt only. Existing adapters keep working unchanged.
+  - The final answer is parsed (tolerating code fences and surrounding prose), validated, and repaired by re-prompting with the specific issues. The parsed value is returned as `AgentResult.structured`, and `runner.run<T>()` types it. A turn that never conforms fails with `StructuredOutputError`. Repair rounds count toward usage and budgets and stay out of session history.
+  - Streaming emits `output_rejected` before each repair round and `structured` on `final_answer`.
+  - A dependency-free `validateJsonSchema` covering the subset providers' structured-output modes use, plus `parseJsonAnswer`.
+  - A turn that would run through a `RuntimeAdapter` with an `outputSchema` throws `StructuredOutputNotSupportedError` instead of returning unvalidated text.
+  - A run that sets its own `outputSchema` does not inherit the agent's options (its `validate` in particular). Schemas with an invalid pattern or an unresolvable `$ref` throw `InvalidOutputSchemaError` before any model call. A refusal (`ModelResponse.refusal`) fails the turn without repair. A failed turn's conversation is still saved, and an approval whose resumed answer misses its schema is recorded as settled. The schema and repair state survive approval resume and checkpoint recovery, and an agent schema that broke after a run started does not block resuming it.
+  - The validator also covers `patternProperties`, OpenAPI `nullable`, draft-07 tuples, code-point string lengths, patterns that need the non-Unicode regex mode, and deep recursive `$ref`s.
+  - `OpenAiModelAdapter` sends `outputFormat` as `response_format: { type: 'json_schema' }` (non-object roots wrapped as `{ value }`, with root-relative `$ref`s kept pointing at the original root), sends schemas outside strict mode's subset non-strict instead of letting the request fail, reports refusals, and takes `structuredOutput: 'prompt'` for servers without `json_schema` support.
+
 ## 1.5.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-agentic/jev",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Jev (TypeSafe System One) decisions for nestjs-agentic governance: calibrated allow / human review / deny gates for tool calls, output rails, and evaluation judges.",
   "repository": {
     "type": "git",
@@ -27,8 +27,8 @@
     }
   },
   "devDependencies": {
-    "@nestjs-agentic/core": "^1.5.0",
-    "@nestjs-agentic/evaluation": "^1.5.0",
+    "@nestjs-agentic/core": "^1.6.0",
+    "@nestjs-agentic/evaluation": "^1.6.0",
     "@typesafe-ai/sdk": "^0.6.0"
   },
   "engines": {
