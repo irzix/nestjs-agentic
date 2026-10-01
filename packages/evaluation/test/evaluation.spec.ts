@@ -17,6 +17,7 @@ import {
 } from '../src';
 import { runPairwiseJudgeTests } from './pairwise-judge.spec';
 import { runTrajectoryMetricsTests } from './trajectory-metrics.spec';
+import { runRetrievalMetricsTests } from './retrieval-metrics.spec';
 
 
 export async function runEvaluationTests() {
@@ -193,6 +194,7 @@ export async function runEvaluationTests() {
   // Run Position-Debiased Judge and Trajectory Efficiency Tests
   await runPairwiseJudgeTests();
   await runTrajectoryMetricsTests();
+  await runRetrievalMetricsTests();
 }
 if (require.main === module) {
   runEvaluationTests().catch(() => process.exit(1));
