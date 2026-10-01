@@ -1,17 +1,22 @@
 import type { MetricResult } from '../../interfaces/evaluation.interface';
 import type {
+  RankBy,
   RetrievalContext,
   RetrievalEvalDatasetItem,
   RetrievalEvalMetric,
 } from '../../interfaces/retrieval.interface';
-import { rankedIds } from './ranking';
+import { rankedChunks } from './ranking';
 
 /** What a faithfulness judge sees. */
 export interface FaithfulnessJudgeInput {
   query: string;
   /** The generated answer under review. */
   answer: string;
-  /** Retrieved passages, highest relevance first, that the answer must be grounded in. */
+  /**
+   * What the answer must be grounded in: the retrieved passages, highest
+   * relevance first, followed by any context the pipeline hands to generation
+   * besides them (hydrated parents, compressed context, graph facts).
+   */
   contexts: string[];
   expectedAnswer?: string;
 }
@@ -28,8 +33,18 @@ export type FaithfulnessJudge = (
 export interface FaithfulnessMetricOptions {
   /** Score at or above which the answer passes. Default: `0.7` */
   threshold?: number;
-  /** Passages handed to the judge, from the top of the ranking. Default: all retrieved. */
+  /** Retrieved passages handed to the judge, from the top of the ranking. A positive integer. Default: all. */
   maxContexts?: number;
+  /** How retrieved chunks are ranked. Default: `'scores'` */
+  rankBy?: RankBy;
+  /**
+   * Builds the judge's contexts from the retrieval, replacing the default
+   * (ranked passages plus generation context), for pipelines that generate
+   * from something else.
+   */
+  contexts?(context: RetrievalContext): string[];
+  /** Overrides the metric's name, e.g. to report two judges side by side. Default: `'Faithfulness'` */
+  name?: string;
 }
 
 /**
@@ -38,13 +53,15 @@ export interface FaithfulnessMetricOptions {
  * `RetrievalBenchmarkRunner`'s `answer` option.
  */
 export class FaithfulnessMetric implements RetrievalEvalMetric {
-  readonly name = 'Faithfulness';
+  readonly name: string;
   private readonly threshold: number;
-  private readonly maxContexts?: number;
 
-  constructor(private readonly judge: FaithfulnessJudge, options: FaithfulnessMetricOptions = {}) {
+  constructor(private readonly judge: FaithfulnessJudge, private readonly options: FaithfulnessMetricOptions = {}) {
+    this.name = options.name ?? 'Faithfulness';
     this.threshold = options.threshold ?? 0.7;
-    this.maxContexts = options.maxContexts;
+    if (options.maxContexts !== undefined && !(Number.isInteger(options.maxContexts) && options.maxContexts >= 1)) {
+      throw new RangeError(`maxContexts must be a positive integer, received ${options.maxContexts}.`);
+    }
   }
 
   async evaluate(item: RetrievalEvalDatasetItem, context: RetrievalContext, answer?: string): Promise<MetricResult> {
@@ -53,15 +70,11 @@ export class FaithfulnessMetric implements RetrievalEvalMetric {
         metricName: this.name,
         passed: false,
         score: 0,
-        reason: 'No answer was generated; configure RetrievalBenchmarkRunner with an `answer` function.',
+        reason: 'No answer to judge: configure RetrievalBenchmarkRunner with an `answer` function, or see the item\'s answerError.',
       };
     }
 
-    const byId = new Map((context.chunks ?? []).map((chunk) => [chunk.id, chunk.content]));
-    const contexts = rankedIds(context)
-      .map((id) => byId.get(id))
-      .filter((content): content is string => content !== undefined)
-      .slice(0, this.maxContexts);
+    const contexts = this.options.contexts ? this.options.contexts(context) : this.defaultContexts(context);
 
     try {
       const { score, reason } = await this.judge({
@@ -89,5 +102,17 @@ export class FaithfulnessMetric implements RetrievalEvalMetric {
         reason: `Faithfulness judge failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
+  }
+
+  /** Ranked passages, then the generation context strategies add beside them. */
+  private defaultContexts(context: RetrievalContext): string[] {
+    const passages = rankedChunks(context, this.options.rankBy).map((chunk) => chunk.content);
+    const extra = [
+      context.hydratedParentContext,
+      context.compressedContext,
+      context.graphContext,
+      ...(context.relationalFacts ?? []),
+    ].filter((text): text is string => typeof text === 'string' && text.length > 0);
+    return [...passages.slice(0, this.options.maxContexts), ...extra];
   }
 }

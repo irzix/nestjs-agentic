@@ -22,7 +22,7 @@ The `@nestjs-agentic/evaluation` package provides rigorous statistical benchmark
 - **Benchmark Suite Runner (`BenchmarkRunner`) & Reporting (`EvalReporter`)**:
   - Multi-trial variance analysis ($\mu$, $\sigma$, pass-rate) with automated Markdown/JSON benchmark reports.
 - **Retrieval-Quality Metrics (`RetrievalBenchmarkRunner`)**:
-  - Recall@k, Precision@k, HitRate@k, MRR, and nDCG@k (graded relevance) against a labeled query set, ranked by retrieval scores.
+  - Recall@k, Precision@k, HitRate@k, MRR, and nDCG@k (graded relevance) against a labeled query set, labeled per chunk or per document.
   - `FaithfulnessMetric` with a pluggable judge, to check generated answers are grounded in what was retrieved.
   - Runs a `RAGPipeline`, a `KnowledgeBase`, or any retriever function, for CI quality gates on retrieval changes.
 
@@ -110,7 +110,7 @@ const summary = await new RetrievalBenchmarkRunner(ragPipeline, { topK: 5, match
   { id: 'ship', query: 'when do orders ship', relevantIds: ['shipping-policy'] },
 ]);
 
-console.log(summary.metricAverages); // { 'Recall@5': …, 'Precision@5': …, MRR: …, 'nDCG@5': … }
+console.log(summary.metricAverages); // { 'Recall@5': …, 'Precision@5': …, 'MRR@5': …, 'nDCG@5': … }
 ```
 
 ---

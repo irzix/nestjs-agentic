@@ -21,11 +21,17 @@ export interface RetrievalContext {
   query: string;
   chunks?: RetrievedChunk[];
   /**
-   * Relevance score per chunk id. When present, chunks are ranked by it
-   * (highest first), since post-retrieval strategies may reorder `chunks` for
-   * prompt layout rather than relevance. Otherwise `chunks` order is the rank.
+   * Relevance score per chunk id. By default chunks are ranked by it
+   * (highest first) when present, since post-retrieval strategies such as
+   * U-shaped context reorder `chunks` for prompt layout rather than
+   * relevance. See `RankBy`.
    */
   scores?: Map<string, number>;
+  /** Context that pipelines hand to generation besides the chunks, read by `FaithfulnessMetric`. */
+  hydratedParentContext?: string;
+  compressedContext?: string;
+  graphContext?: string;
+  relationalFacts?: string[];
 }
 
 /** A labeled query for retrieval evaluation. */
@@ -48,8 +54,24 @@ export interface RetrievalEvalDatasetItem {
   filter?: Record<string, unknown>;
 }
 
-/** Whether ground truth names chunks or the documents they came from. */
-export type RelevanceMatch = 'id' | 'parentId';
+/**
+ * What ground truth names: chunk ids (`'id'`), the chunk's `parentId`
+ * (`'parentId'`, the document id for most splitters), or any id derived from
+ * the chunk. `ParentChildSplitter` children, for instance, have a section as
+ * their parent, so match documents with
+ * `(chunk) => chunk.parentId?.replace(/_parent_\d+$/, '') ?? chunk.id`.
+ */
+export type RelevanceMatch = 'id' | 'parentId' | ((chunk: RetrievedChunk) => string);
+
+/**
+ * How retrieved chunks are ranked.
+ *
+ * - `'scores'` (default): by `context.scores` when present, else by `chunks`
+ *   order. Right for pipelines whose last reordering is for layout.
+ * - `'order'`: by `chunks` order. Right for pipelines whose last step
+ *   reranks chunks without rewriting their scores, such as MMR.
+ */
+export type RankBy = 'scores' | 'order';
 
 /**
  * A metric scored against retrieval output rather than an agent trajectory.
@@ -81,8 +103,10 @@ export interface RetrievalEvalItemResult {
   overallPassed: boolean;
   /** Mean of the item's metric scores. */
   score: number;
-  /** Set when retrieval or answering threw; every metric then scores 0. */
+  /** Set when retrieval threw; every metric then scores 0. */
   error?: string;
+  /** Set when retrieval worked but the `answer` function threw; answer-level metrics then fail. */
+  answerError?: string;
 }
 
 /** Aggregate result of a retrieval benchmark. */

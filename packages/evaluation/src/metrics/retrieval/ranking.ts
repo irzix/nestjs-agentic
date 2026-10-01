@@ -1,24 +1,39 @@
-import type { RelevanceMatch, RetrievalContext } from '../../interfaces/retrieval.interface';
+import type { RankBy, RelevanceMatch, RetrievalContext, RetrievedChunk } from '../../interfaces/retrieval.interface';
+
+/** The id a chunk is matched against ground truth by. */
+export function matchIdOf(chunk: RetrievedChunk, matchOn: RelevanceMatch = 'id'): string {
+  if (typeof matchOn === 'function') return matchOn(chunk);
+  return matchOn === 'parentId' ? chunk.parentId ?? chunk.id : chunk.id;
+}
 
 /**
- * Ids of the retrieved chunks, highest relevance first.
- *
- * Ranks by `context.scores` when present (ties keep their `chunks` order),
- * otherwise by `chunks` order. With `matchOn: 'parentId'` each chunk is
- * replaced by its parent document id and repeats are dropped, so a document
- * ranks where its best chunk ranks and counts once.
+ * The chunks of a context, highest relevance first. With `rankBy: 'scores'`
+ * and scores present, sorted by score (ties, and chunks without a finite
+ * score, keep their order after scored ones); otherwise in `chunks` order.
  */
-export function rankedIds(context: RetrievalContext, matchOn: RelevanceMatch = 'id'): string[] {
+export function rankedChunks(context: RetrievalContext, rankBy: RankBy = 'scores'): RetrievedChunk[] {
   const chunks = context.chunks ?? [];
   const scores = context.scores;
-  const ordered =
-    scores && scores.size > 0
-      ? chunks
-          .map((chunk, index) => ({ chunk, index, score: scores.get(chunk.id) ?? Number.NEGATIVE_INFINITY }))
-          .sort((a, b) => b.score - a.score || a.index - b.index)
-          .map(({ chunk }) => chunk)
-      : chunks;
+  if (rankBy === 'order' || !scores || scores.size === 0) return chunks;
+  const scoreOf = (chunk: RetrievedChunk): number => {
+    const score = scores.get(chunk.id);
+    return typeof score === 'number' && Number.isFinite(score) ? score : Number.NEGATIVE_INFINITY;
+  };
+  return chunks
+    .map((chunk, index) => ({ chunk, index, score: scoreOf(chunk) }))
+    .sort((a, b) => (a.score === b.score ? a.index - b.index : b.score > a.score ? 1 : -1))
+    .map(({ chunk }) => chunk);
+}
 
-  const ids = ordered.map((chunk) => (matchOn === 'parentId' ? chunk.parentId ?? chunk.id : chunk.id));
-  return matchOn === 'parentId' ? [...new Set(ids)] : ids;
+/**
+ * Matched ids of the retrieved chunks, highest relevance first, each id once
+ * at its best rank. Repeats are dropped in every mode, so a chunk returned
+ * twice, or a document with several chunks, counts once.
+ */
+export function rankedIds(
+  context: RetrievalContext,
+  matchOn: RelevanceMatch = 'id',
+  rankBy: RankBy = 'scores',
+): string[] {
+  return [...new Set(rankedChunks(context, rankBy).map((chunk) => matchIdOf(chunk, matchOn)))];
 }

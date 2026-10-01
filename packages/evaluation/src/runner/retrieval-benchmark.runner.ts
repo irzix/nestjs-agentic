@@ -1,5 +1,6 @@
 import type { MetricResult } from '../interfaces/evaluation.interface';
 import type {
+  RankBy,
   RelevanceMatch,
   RetrievalBenchmarkSummary,
   RetrievalContext,
@@ -42,34 +43,61 @@ export type RetrievalSource = Retriever | PipelineRetrievalSource | ScoredRetrie
 
 export interface RetrievalBenchmarkRunnerOptions {
   /**
-   * Metrics scored per query. Default: `Recall@k`, `Precision@k`, `MRR`, and
-   * `nDCG@k`, with `k = topK` and the runner's `matchOn`.
+   * Metrics scored per query. Default: `Recall@k`, `Precision@k`, `MRR@k`, and
+   * `nDCG@k`, with the runner's `k`, `matchOn`, and `rankBy`. Names must be
+   * unique; pass `name` to a metric to report it twice with different settings.
    */
   metrics?: RetrievalEvalMetric[];
   /** Results requested from the retriever per query. Default: `5` */
   topK?: number;
-  /** Whether `relevantIds` name chunks or parent documents, for the default metrics and `retrievedIds`. Default: `'id'` */
+  /**
+   * Cutoff for the default metrics. Default: `topK`. Set it lower than `topK`
+   * when matching documents (`matchOn: 'parentId'`): several chunks of one
+   * document share a rank, so retrieving more chunks than `k` keeps `k`
+   * distinct documents available.
+   */
+  k?: number;
+  /** What `relevantIds` name, for the default metrics and `retrievedIds`. Default: `'id'` */
   matchOn?: RelevanceMatch;
+  /** How retrieved chunks are ranked, for the default metrics and `retrievedIds`. Default: `'scores'` */
+  rankBy?: RankBy;
   /**
    * Generates an answer from the retrieved context, for answer-level metrics
-   * such as `FaithfulnessMetric`. Typically an LLM call or an agent run.
+   * such as `FaithfulnessMetric`. Typically an LLM call or an agent run. If it
+   * throws, rank-based metrics still score the retrieval and the error is
+   * reported as `answerError`.
    */
   answer?(item: RetrievalEvalDatasetItem, context: RetrievalContext): Promise<string> | string;
 }
 
 function toRetriever(source: RetrievalSource): Retriever {
   if (typeof source === 'function') return source;
-  if ('executePipeline' in source) {
-    return (query, topK, filter) => source.executePipeline(query, topK, filter);
+  if (typeof source === 'object' && source !== null) {
+    if (typeof (source as PipelineRetrievalSource).executePipeline === 'function') {
+      const pipeline = source as PipelineRetrievalSource;
+      return (query, topK, filter) => pipeline.executePipeline(query, topK, filter);
+    }
+    if (typeof (source as ScoredRetrievalSource).queryChunksScored === 'function') {
+      const knowledgeBase = source as ScoredRetrievalSource;
+      return async (query, topK, filter) => {
+        const scored = await knowledgeBase.queryChunksScored(query, topK, filter);
+        return {
+          query,
+          chunks: scored.map(({ chunk }) => chunk),
+          scores: new Map(scored.map(({ chunk, score }) => [chunk.id, score])),
+        };
+      };
+    }
   }
-  return async (query, topK, filter) => {
-    const scored = await source.queryChunksScored(query, topK, filter);
-    return {
-      query,
-      chunks: scored.map(({ chunk }) => chunk),
-      scores: new Map(scored.map(({ chunk, score }) => [chunk.id, score])),
-    };
-  };
+  throw new TypeError(
+    'RetrievalBenchmarkRunner needs a Retriever function, an object with executePipeline() (RAGPipeline), or one with queryChunksScored() (KnowledgeBase).',
+  );
+}
+
+function assertPositiveInteger(name: string, value: number): void {
+  if (!(Number.isInteger(value) && value >= 1)) {
+    throw new RangeError(`${name} must be a positive integer, received ${value}.`);
+  }
 }
 
 /**
@@ -87,22 +115,35 @@ export class RetrievalBenchmarkRunner {
   private readonly metrics: RetrievalEvalMetric[];
   private readonly topK: number;
   private readonly matchOn: RelevanceMatch;
+  private readonly rankBy: RankBy;
   private readonly answer?: RetrievalBenchmarkRunnerOptions['answer'];
 
   constructor(source: RetrievalSource, options: RetrievalBenchmarkRunnerOptions = {}) {
     this.topK = options.topK ?? 5;
-    if (!(Number.isInteger(this.topK) && this.topK >= 1)) {
-      throw new RangeError(`topK must be a positive integer, received ${options.topK}.`);
-    }
+    assertPositiveInteger('topK', this.topK);
+    const k = options.k ?? this.topK;
+    assertPositiveInteger('k', k);
     this.matchOn = options.matchOn ?? 'id';
+    this.rankBy = options.rankBy ?? 'scores';
     this.retrieve = toRetriever(source);
     this.answer = options.answer;
+    const shared = { k, matchOn: this.matchOn, rankBy: this.rankBy };
     this.metrics = options.metrics ?? [
-      new RecallAtKMetric({ k: this.topK, matchOn: this.matchOn }),
-      new PrecisionAtKMetric({ k: this.topK, matchOn: this.matchOn }),
-      new ReciprocalRankMetric({ matchOn: this.matchOn }),
-      new NdcgAtKMetric({ k: this.topK, matchOn: this.matchOn }),
+      new RecallAtKMetric(shared),
+      new PrecisionAtKMetric(shared),
+      new ReciprocalRankMetric(shared),
+      new NdcgAtKMetric(shared),
     ];
+
+    const seen = new Set<string>();
+    for (const metric of this.metrics) {
+      if (seen.has(metric.name)) {
+        throw new Error(
+          `Two metrics are named "${metric.name}", so their averages would collide. Give one a distinct name.`,
+        );
+      }
+      seen.add(metric.name);
+    }
   }
 
   /** Evaluates every item in order and aggregates the scores. */
@@ -132,35 +173,52 @@ export class RetrievalBenchmarkRunner {
 
   private async evaluateItem(item: RetrievalEvalDatasetItem): Promise<RetrievalEvalItemResult> {
     let context: RetrievalContext;
-    let answer: string | undefined;
     try {
       context = await this.retrieve(item.query, this.topK, item.filter);
-      answer = this.answer ? await this.answer(item, context) : undefined;
+      if (typeof context !== 'object' || context === null) {
+        throw new TypeError(`the retriever returned ${String(context)} instead of a retrieval context`);
+      }
     } catch (err: unknown) {
-      const error = err instanceof Error ? err.message : String(err);
+      const error = describe(err);
       return {
         item,
         retrievedIds: [],
-        metrics: this.metrics.map((metric) => ({
-          metricName: metric.name,
-          passed: false,
-          score: 0,
-          reason: `Retrieval failed: ${error}`,
-        })),
+        metrics: this.metrics.map((metric) => failed(metric.name, `Retrieval failed: ${error}`)),
         overallPassed: false,
         score: 0,
         error,
       };
     }
 
+    // A failing generation step does not take the retrieval scores with it.
+    let answer: string | undefined;
+    let answerError: string | undefined;
+    if (this.answer) {
+      try {
+        answer = await this.answer(item, context);
+      } catch (err: unknown) {
+        answerError = describe(err);
+      }
+    }
+
     const metrics: MetricResult[] = [];
     for (const metric of this.metrics) {
-      metrics.push(await metric.evaluate(item, context, answer));
+      try {
+        const result = await metric.evaluate(item, context, answer);
+        metrics.push(
+          Number.isFinite(result.score)
+            ? result
+            : failed(metric.name, `The metric returned a score that is not a finite number (${result.score}).`),
+        );
+      } catch (err: unknown) {
+        metrics.push(failed(metric.name, `The metric threw: ${describe(err)}`));
+      }
     }
     return {
       item,
-      retrievedIds: rankedIds(context, this.matchOn),
+      retrievedIds: rankedIds(context, this.matchOn, this.rankBy),
       ...(answer !== undefined ? { answer } : {}),
+      ...(answerError !== undefined ? { answerError } : {}),
       metrics,
       overallPassed: metrics.every((m) => m.passed),
       score: round(mean(metrics.map((m) => m.score))),
@@ -168,8 +226,18 @@ export class RetrievalBenchmarkRunner {
   }
 }
 
+function failed(metricName: string, reason: string): MetricResult {
+  return { metricName, passed: false, score: 0, reason };
+}
+
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Mean of the finite values; a non-finite value counts as 0 so it can never pass a gate. */
 function mean(values: number[]): number {
-  return values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
+  const safe = values.map((v) => (Number.isFinite(v) ? v : 0));
+  return safe.length ? safe.reduce((sum, v) => sum + v, 0) / safe.length : 0;
 }
 
 function round(value: number): number {

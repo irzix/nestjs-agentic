@@ -177,19 +177,23 @@ export async function runRetrievalMetricsTests() {
       item({ id: 'b', query: 'broken', relevantIds: ['a'] }),
     ]);
     assert(
-      Object.keys(summary.metricAverages).join(',') === 'Recall@3,Precision@3,MRR,nDCG@3',
+      Object.keys(summary.metricAverages).join(',') === 'Recall@3,Precision@3,MRR@3,nDCG@3',
       'Test 7a: Default metrics use the runner topK',
       Object.keys(summary.metricAverages).join(','),
     );
     // Reciprocal ranks 1, 1/3, 0 (failed retrieval)
-    assert(summary.metricAverages.MRR === 0.4444, 'Test 7b: MRR is the mean reciprocal rank across items', String(summary.metricAverages.MRR));
+    assert(summary.metricAverages['MRR@3'] === 0.4444, 'Test 7b: MRR is the mean reciprocal rank across items', String(summary.metricAverages['MRR@3']));
     assert(summary.itemResults[0].retrievedIds.join(',') === 'a,b,c', 'Test 7c: Each item records its ranked ids');
     const failedItem = summary.itemResults[2];
     assert(
       failedItem.error === 'vector store down' && failedItem.score === 0 && !failedItem.overallPassed,
       'Test 7d: A retrieval failure scores the item 0 instead of aborting the benchmark',
     );
-    assert(summary.totalItems === 3 && summary.failedItems >= 1, 'Test 7e: Totals are reported');
+    assert(
+      summary.totalItems === 3 && summary.itemResults[0].overallPassed && !summary.itemResults[1].overallPassed && summary.passedItems === 1,
+      'Test 7e: A perfectly ranked single relevant id passes the default metrics; a rank-3 hit does not',
+      JSON.stringify(summary.itemResults.map((r) => r.metrics.map((m) => `${m.metricName}:${m.score}:${m.passed}`))),
+    );
   } catch (err: any) {
     assert(false, 'Test 7: Runner aggregation', err.message);
   }
@@ -208,7 +212,7 @@ export async function runRetrievalMetricsTests() {
 
     const fromKb = await new RetrievalBenchmarkRunner(kb, { topK: 3, matchOn: 'parentId' }).run(dataset);
     assert(
-      fromKb.metricAverages.MRR === 1 && fromKb.itemResults[0].retrievedIds[0] === 'refund-policy',
+      fromKb.metricAverages['MRR@3'] === 1 && fromKb.passRate === 1 && fromKb.itemResults[0].retrievedIds[0] === 'refund-policy',
       'Test 8a: A KnowledgeBase is evaluated directly, ranking the right document first',
       JSON.stringify(fromKb.itemResults.map((r) => r.retrievedIds)),
     );
@@ -239,6 +243,125 @@ export async function runRetrievalMetricsTests() {
     );
   } catch (err: any) {
     assert(false, 'Test 8: RAG integration', err.message);
+  }
+
+  // TEST 9: robustness found in review
+  try {
+    const dupes: RetrievalContext = { query: 'q', chunks: [chunk('a'), chunk('a'), chunk('b')] };
+    assert(new RecallAtKMetric({ k: 3 }).evaluate(item({ relevantIds: ['a'] }), dupes).score === 1, 'Test 9a: A chunk returned twice counts once');
+
+    const nanScores: RetrievalContext = { query: 'q', chunks: [chunk('a'), chunk('b'), chunk('c')], scores: new Map([['a', Number.NaN], ['b', 0.1], ['c', 0.9]]) };
+    assert(rankedIds(nanScores).join(',') === 'c,b,a', 'Test 9b: Chunks without a finite score rank last', rankedIds(nanScores).join(','));
+    const huge = new NdcgAtKMetric({ k: 3 }).evaluate(item({ relevantIds: ['a'], relevanceGrades: { a: 2000 } }), ORDERED);
+    assert(huge.score === 1, 'Test 9c: Huge grades do not overflow nDCG into NaN', String(huge.score));
+    const outside = new NdcgAtKMetric({ k: 3 }).evaluate(item({ relevantIds: ['a'], relevanceGrades: { z: 3 } }), ORDERED);
+    assert(outside.score === 1, 'Test 9d: Grades for ids outside relevantIds are ignored', String(outside.score));
+
+    const mmrOrdered: RetrievalContext = { query: 'q', chunks: [chunk('b'), chunk('a')], scores: new Map([['a', 0.9], ['b', 0.5]]) };
+    assert(
+      new ReciprocalRankMetric({ rankBy: 'order' }).evaluate(item({ relevantIds: ['b'] }), mmrOrdered).score === 1,
+      "Test 9e: rankBy 'order' keeps a reranker's chunk order over stale scores",
+    );
+
+    const parentChild = (id: string, parent: string): RetrievedChunk => ({ id, parentId: parent, content: id, metadata: {} });
+    const sectioned: RetrievalContext = { query: 'q', chunks: [parentChild('c1', 'refund-policy_parent_0'), parentChild('c2', 'refund-policy_parent_1')] };
+    const byDocument = (c: RetrievedChunk) => c.parentId?.replace(/_parent_\d+$/, '') ?? c.id;
+    assert(
+      rankedIds(sectioned, byDocument).join(',') === 'refund-policy' &&
+        new RecallAtKMetric({ k: 1, matchOn: byDocument }).evaluate(item({ relevantIds: ['refund-policy'] }), sectioned).score === 1,
+      'Test 9f: matchOn can derive the document id, e.g. for ParentChildSplitter sections',
+    );
+
+    let threw = false;
+    try {
+      new RetrievalBenchmarkRunner(() => ({ query: 'q' }), { metrics: [new RecallAtKMetric({ k: 1 }), new RecallAtKMetric({ k: 1, matchOn: 'parentId' })] });
+    } catch {
+      threw = true;
+    }
+    assert(threw, 'Test 9g: Two metrics with the same name are rejected rather than collapsed');
+
+    let badSource = false;
+    try {
+      new RetrievalBenchmarkRunner({ search: () => [] } as never);
+    } catch (err) {
+      badSource = err instanceof TypeError;
+    }
+    assert(badSource, 'Test 9h: An unsupported source fails at construction');
+
+    let badMax = false;
+    try {
+      new FaithfulnessMetric(() => ({ score: 1, reason: '' }), { maxContexts: 0 });
+    } catch {
+      badMax = true;
+    }
+    assert(badMax, 'Test 9i: maxContexts must be a positive integer');
+  } catch (err: any) {
+    assert(false, 'Test 9: Robustness', err.message);
+  }
+
+  // TEST 10: failures stay local to their item and metric
+  try {
+    const answerFails = await new RetrievalBenchmarkRunner(() => ({ query: 'q', chunks: [chunk('a')] }), {
+      topK: 1,
+      answer: () => {
+        throw new Error('llm timeout');
+      },
+      metrics: [new RecallAtKMetric({ k: 1 }), new FaithfulnessMetric(() => ({ score: 1, reason: '' }))],
+    }).run([item({ relevantIds: ['a'] })]);
+    const only = answerFails.itemResults[0];
+    assert(
+      only.answerError === 'llm timeout' && only.error === undefined && only.metrics[0].score === 1 && !only.metrics[1].passed,
+      'Test 10a: A failing answer step keeps the retrieval scores and is reported as answerError',
+      JSON.stringify(only),
+    );
+
+    const throwing = { name: 'Boom', evaluate: () => { throw new Error('boom'); } };
+    const mixed = await new RetrievalBenchmarkRunner(
+      ((query: string) => (query === 'none' ? (undefined as never) : { query, chunks: [chunk('a')] })) as never,
+      { topK: 1, metrics: [throwing, new RecallAtKMetric({ k: 1 })] },
+    ).run([item({ id: 'x', query: 'ok', relevantIds: ['a'] }), item({ id: 'y', query: 'none', relevantIds: ['a'] })]);
+    assert(
+      mixed.totalItems === 2 &&
+        mixed.itemResults[0].metrics[0].reason?.includes('boom') === true &&
+        mixed.itemResults[0].metrics[1].score === 1 &&
+        mixed.itemResults[1].error?.includes('instead of a retrieval context') === true,
+      'Test 10b: A throwing metric or an empty retriever result does not abort the run',
+      JSON.stringify(mixed.itemResults.map((r) => [r.error, r.metrics.map((m) => m.reason)])),
+    );
+
+    const judged: string[][] = [];
+    await new FaithfulnessMetric((input) => {
+      judged.push(input.contexts);
+      return { score: 1, reason: '' };
+    }).evaluate(
+      item(),
+      { query: 'q', chunks: [chunk('a', 'd', 'child text')], hydratedParentContext: 'the whole parent section', relationalFacts: ['Alice MANAGES Bob'] },
+      'answer',
+    );
+    assert(
+      judged[0].join('|') === 'child text|the whole parent section|Alice MANAGES Bob',
+      'Test 10c: The judge also sees hydrated parents and graph facts the answer was generated from',
+      judged[0].join('|'),
+    );
+  } catch (err: any) {
+    assert(false, 'Test 10: Failure isolation', err.message);
+  }
+
+  // TEST 11: document matching with more chunks than k
+  try {
+    const manyChunks: RetrievalContext = {
+      query: 'q',
+      chunks: [...['1', '2', '3', '4', '5'].map((n) => chunk(`A${n}`, 'docA')), chunk('B1', 'docB')],
+    };
+    const runner = new RetrievalBenchmarkRunner(() => manyChunks, { topK: 20, k: 5, matchOn: 'parentId' });
+    const summary = await runner.run([item({ relevantIds: ['docB'] })]);
+    assert(
+      summary.metricAverages['Recall@5'] === 1 && summary.metricAverages['MRR@5'] === 0.5,
+      'Test 11: Retrieving more chunks than k keeps k distinct documents in reach',
+      JSON.stringify(summary.metricAverages),
+    );
+  } catch (err: any) {
+    assert(false, 'Test 11: Document cutoff', err.message);
   }
 
   console.log(`\n  📊 Retrieval Metrics Test Results: ${passed} passed, ${failed} failed.\n`);
