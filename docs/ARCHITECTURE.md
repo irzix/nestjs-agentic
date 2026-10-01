@@ -18,7 +18,7 @@ Unlike external scripting libraries or rigid graph frameworks, `nestjs-agentic` 
 
 ## 📦 Package Ecosystem & Boundaries
 
-The ecosystem is decomposed into seven modular runtime packages plus one umbrella meta-package:
+The ecosystem is decomposed into eight modular runtime packages plus one umbrella meta-package:
 
 ```text
 Application Services & Modules
@@ -42,21 +42,25 @@ nestjs-agentic (Meta Package)
     │     Parallel Fan-Out (Bounded Concurrency), Refinement Loops, Debate Consensus
     │
     ├── @nestjs-agentic/evaluation
-    │     Debiased Pairwise Judge, BenchmarkRunner, Trajectory Inspection
+    │     Debiased Pairwise Judge, BenchmarkRunner, Trajectory Inspection, Retrieval-Quality Metrics
     │
-    └── @nestjs-agentic/mcp
-          Model Context Protocol (Stdio / SSE Client Transports, Tool Discovery)
+    ├── @nestjs-agentic/mcp
+    │     Model Context Protocol (Stdio / SSE Client Transports, Tool Discovery)
+    │
+    └── @nestjs-agentic/jev
+          Jev Decision Gates (Calibrated Action Gates, Output Rails, Evaluation Judges)
 ```
 
 | Package | Responsibility | Primary Primitives |
 | :--- | :--- | :--- |
-| **`@nestjs-agentic/core`** | Agent lifecycle, DI discovery, tool policy governance, execution limits, state stores, and OpenTelemetry tracing. | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context`, `@UsePolicies`, `@ExemptFromDefaultPolicies`, `AgenticModule`, `ApprovalService`, `ExecutionLimits` |
+| **`@nestjs-agentic/core`** | Agent lifecycle, DI discovery, tool policy governance, dual-control approvals, structured output, execution limits, state stores, and OpenTelemetry tracing. | `@Agent`, `@ToolSet`, `@Tool`, `@Param`, `@Context`, `@UsePolicies`, `@ExemptFromDefaultPolicies`, `AgenticModule`, `ApprovalService`, `ExecutionLimits` |
 | **`@nestjs-agentic/openai`** | Model adapter for OpenAI and compatible Chat Completions endpoints with streaming and token tracking. | `OpenAiModelAdapter`, `ModelAdapter`, `ModelResponseChunk` |
 | **`@nestjs-agentic/memory`** | 5-tier cognitive memory architecture with Stanford tri-factor retrieval scoring. | `ShortTermMemory`, `ScratchpadMemory`, `SemanticMemory`, `EpisodicMemory`, `CompositeMemory` |
 | **`@nestjs-agentic/rag`** | Context engineering engine with AST-aligned code chunking, hybrid vector + lexical search, GraphRAG, and pluggable reranking. | `KnowledgeBase`, `HybridVectorStore`, `AstCodebaseSplitter`, `GraphRAGStrategy`, `RerankerStrategy` |
 | **`@nestjs-agentic/orchestration`** | Multi-agent delegation, parallel fan-out runners, supervisor refinement loops, and multi-agent debate consensus. | `ParallelSubAgentRunner`, `RefinementLoopRunner`, `DebateRunner`, `SubAgentDelegator` |
-| **`@nestjs-agentic/evaluation`** | Benchmarking suite with position-debiased pairwise LLM judges and CI/CD quality regression gates. | `PairwiseDebiasedJudge`, `BenchmarkRunner`, `TrajectoryInspectorMetric` |
+| **`@nestjs-agentic/evaluation`** | Benchmarking suite with position-debiased pairwise LLM judges, retrieval-quality metrics, and CI/CD quality regression gates. | `PairwiseDebiasedJudge`, `BenchmarkRunner`, `TrajectoryInspectorMetric`, `RetrievalBenchmarkRunner`, `FaithfulnessMetric` |
 | **`@nestjs-agentic/mcp`** | Model Context Protocol integration providing standardized client transports and dynamic tool providers. | `McpClientTransport`, `McpToolProvider`, `StdioTransport`, `SseTransport` |
+| **`@nestjs-agentic/jev`** | Calibrated governance decisions from TypeSafe's Jev: allow, human review, or deny for tool calls, plus output rails and evaluation judges. | `JevActionGate`, `JevOutputGate`, `JevModule`, `jevFaithfulnessJudge`, `jevTaskJudge` |
 | **`nestjs-agentic`** | Umbrella meta-package providing streamlined exports and zero-configuration developer ergonomics. | Re-exports all core primitives |
 
 ---
@@ -118,6 +122,7 @@ ResolvedTool.execute({ args, toolCallId })
 1. **No Raw References**: Models and external runtimes never receive raw references to NestJS provider instances or database connections.
 2. **Deterministic Context**: Application context (`tenantId`, `userId`, `roles`) is injected by the framework and cannot be spoofed or overridden by the LLM.
 3. **Idempotency Safeguards**: Sensitive side effects utilize `IdempotencyPolicy` backed by `RedisIdempotencyStore` or `PostgresIdempotencyStore` to prevent duplicate operations during retries.
+4. **Telemetry-Safe Observers**: Errors dispatched to observers are redacted by default (credential-masked message, no request config or headers), so telemetry exporters do not receive provider secrets. The error thrown to the caller is unchanged.
 
 ---
 
@@ -151,7 +156,8 @@ sequenceDiagram
 ### Checkpoint & Resumption Invariants:
 * **Atomic Claim-and-Lock**: `ApprovalStore.claim()` atomically claims pending approvals before execution, guaranteeing at-most-once settlement even under concurrent webhook retries.
 * **Process-Agnostic Resumption**: The `ApprovalCheckpoint` contains the complete serialized transcript, allowing a different worker node in a cluster to resume the turn seamlessly.
-* **Audit Trail Integration**: All terminal approval events (approved, rejected, expired, failed) are broadcast to configured `AuditSink` listeners.
+* **Dual Control (N-of-M)**: A policy can require several distinct approvers (`requiredApprovals`). Each signature is authorized and recorded through `ApprovalStore.addSignature()`, and the signature that meets the threshold atomically claims the approval, so the tool still runs exactly once. Stores without signature support deny multi-approver decisions rather than settle them with one person.
+* **Audit Trail Integration**: All terminal approval events (approved, rejected, expired, failed) are broadcast to configured `AuditSink` listeners, along with one `approval_signed` event per counted signature.
 
 ---
 
@@ -200,7 +206,8 @@ All stores implement the shared `AgentMemoryStore` interface (`save(record)` / `
 
 * **Position-Debiased Pairwise Judge (`PairwiseDebiasedJudge`)**: Runs bidirectional pairwise evaluations $(A \text{ vs } B \text{ and } B \text{ vs } A)$ to eliminate position and verbosity bias.
 * **Trajectory Inspection (`TrajectoryInspectorMetric`)**, alongside `ExecutionEfficiencyMetric` and `ToolPrecisionMetric`: Evaluate agent decision paths based on token efficiency, tool-calling precision, and step count.
-* **Automated Benchmark Runner (`BenchmarkRunner`)**: Executes structured test suites against a registered `AgentRunner` with pass/fail regression thresholds. Retrieval-specific metrics (recall@k, nDCG, faithfulness) are not yet implemented — tracked in [issue #143](https://github.com/irzix/nestjs-agentic/issues/143).
+* **Automated Benchmark Runner (`BenchmarkRunner`)**: Executes structured test suites against a registered `AgentRunner` with pass/fail regression thresholds.
+* **Retrieval-Quality Metrics (`RetrievalBenchmarkRunner`)**: Scores a `RAGPipeline`, a `KnowledgeBase`, or any retriever against labeled queries with Recall@k, Precision@k, HitRate@k, MRR, graded nDCG, and judge-based faithfulness, for the same CI gates as agent benchmarks.
 
 ---
 
@@ -211,6 +218,17 @@ All stores implement the shared `AgentMemoryStore` interface (`save(record)` / `
 * **Stdio Client Transport (`StdioTransport`)**: Spawns local CLI-based MCP server subprocesses with bidirectional JSON-RPC 2.0 communication.
 * **SSE Client Transport (`SseTransport`)**: Connects to remote HTTP Server-Sent Events (SSE) MCP endpoints with automatic reconnects and heartbeat monitoring.
 * **Dynamic Discovery (`McpToolProvider`)**: Automatically queries remote MCP servers for tool schemas and registers them as governed NestJS `ResolvedTool` instances.
+
+---
+
+## ⚖️ Jev Decision Gates (`@nestjs-agentic/jev`)
+
+`@nestjs-agentic/jev` adds judgment to the existing policy boundary without changing it. Jev answers typed questions with calibrated probabilities, which map onto the three governance outcomes:
+
+* **Action Gates (`JevActionGate`)**: A `ToolPolicy` that allows a call above `allowAt`, refuses it below `denyBelow`, and sends it to human review in between, optionally to several approvers through dual control.
+* **Output Rails (`JevOutputGate`)**: Withholds tool output, by default prompt injections, before the model sees it.
+* **Failure Handling**: Outages, timeouts, and malformed answers follow `onError` (human review for action gates, deny for output gates), with a shared circuit breaker so an outage fails fast.
+* **Evaluation Judges**: `jevFaithfulnessJudge` and `jevTaskJudge` plug into `FaithfulnessMetric` and `LLMAsAJudgeMetric`.
 
 ---
 

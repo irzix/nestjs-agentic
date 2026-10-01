@@ -33,12 +33,14 @@ Application services remain ordinary NestJS providers. The model runtime receive
 
 ## Current Capabilities
 
-The current release line is `0.6.x`. Core primitives, persistence adapters, and durable execution checkpoints are production-intent; higher-order orchestration packages remain experimental while their contracts stabilize.
+The current release line is `1.6.x`. Core primitives, persistence adapters, and durable execution checkpoints are production-intent; higher-order orchestration packages remain experimental while their contracts stabilize.
 
 | Area | Status | Scope |
 | --- | --- | --- |
 | Agents, tools, and NestJS DI | Available | Decorators, discovery, feature registration, and context-bound tools. |
-| Tool governance & HITL | Available | `allow`, `deny`, and `require_approval` before execution; resumes durably via `ApprovalStore`. |
+| Tool governance & HITL | Available | `allow`, `deny`, and `require_approval` before execution; resumes durably via `ApprovalStore`. Dual control (N-of-M approvals) for high-risk actions. |
+| Structured Output | Available | JSON Schema `outputSchema` per agent or run, with validation, bounded repair retries, and native OpenAI `json_schema` support. |
+| Telemetry-Safe Observability | Available | Observer events carry redacted errors by default, so credentials in provider errors stay out of telemetry. |
 | Model Context Protocol (MCP) | Available | `@nestjs-agentic/mcp` for Stdio and SSE remote tool discovery, authorization, and execution. |
 | Built-in runtime & Model Cascading | Available | Loop execution, streaming, budgets, and FrugalGPT confidence-threshold model cascading. |
 | OpenAI & Chat-Completions adapter | Available | `@nestjs-agentic/openai` for OpenAI, Azure, Ollama, vLLM, Groq, and OpenRouter. |
@@ -46,6 +48,7 @@ The current release line is `0.6.x`. Core primitives, persistence adapters, and 
 | U-Shaped Context Assembler | Available | `@nestjs-agentic/rag` & `@nestjs-agentic/core` for Lost-in-the-Middle attention mitigation. |
 | Codebase AST & GraphRAG | Available | `@nestjs-agentic/rag` for AST code splitting, hybrid vector store, and graph traversal. |
 | Debiased Evaluation & Trajectory Metrics | Available | `@nestjs-agentic/evaluation` for MT-Bench position-debiased judge and AgentBench metrics. |
+| Retrieval-Quality Metrics | Available | `@nestjs-agentic/evaluation` for Recall@k, Precision@k, MRR, nDCG, and faithfulness against a `RAGPipeline` or `KnowledgeBase`. |
 | Jev Decision Gates | Available | `@nestjs-agentic/jev` for calibrated allow / human review / deny decisions on tool calls and output, via TypeSafe's Jev. |
 | Persistence & Durable Checkpoints | Available | In-memory, Redis, and PostgreSQL drivers for Session, State, Approval, and Idempotency. |
 | Sub-Agent Orchestration | Available | `@nestjs-agentic/orchestration` for parallel delegation, bounded concurrency, and refinement. |
@@ -238,11 +241,24 @@ await runner.run('support', {
 
 ## Built-in Policies
 
+Before execution:
+
 - `RateLimitPolicy` — process-local sliding-window limits by tenant, user, and tool.
+- `DistributedRateLimitPolicy` — Redis-backed sliding-window limits shared across replicas, reporting when to retry.
 - `CostLimitPolicy` — numeric allow, approval, and deny thresholds.
+- `IdempotencyPolicy` — validates and enforces idempotency keys on side-effecting tools.
 - `LoggingPolicy` — configurable tool-attempt logging with field masking.
 
-These are framework primitives, not replacements for distributed rate limiting, durable audit storage, or application authorization.
+On tool output (output rails), before the model sees it:
+
+- `SecretRedactionPolicy` — masks credentials, API tokens, JWTs, private keys, and connection strings.
+- `PiiRedactionPolicy` — masks email addresses, phone numbers, Luhn-valid card numbers, and US SSNs.
+- `PromptInjectionSanitizationPolicy` — strips chat-template and role-delimiter injection markers.
+- `CanaryDetectionPolicy` — blocks calls and outputs that carry system-prompt canary tokens.
+
+For judgment beyond fixed rules, [`@nestjs-agentic/jev`](packages/jev) adds calibrated gates that decide between `allow`, human review, and `deny`.
+
+These are framework primitives, not replacements for durable audit storage or application authorization.
 
 ## Connecting a Model
 

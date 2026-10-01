@@ -31,18 +31,21 @@ NestJS service
 
 ## Current Status
 
-The current release line is `0.8.x`.
+The current release line is `1.6.x`.
 
 | Area | Status | Scope |
 | --- | --- | --- |
 | Agents, tools, NestJS DI, policies, mock runtime | Available | Core decorators, discovery, context-bound execution, governance decisions, and deterministic tests. |
 | Built-in agent runtime & Cascading | Available | Governed model-to-tool loop with argument validation, execution budgets, cancellation, streaming, and FrugalGPT model cascading. |
 | Model Context Protocol (MCP) | Available | `@nestjs-agentic/mcp` for Stdio and SSE remote tool discovery and authorization. |
-| Human approval & Durable HITL | Available | The runtime suspends a turn on `require_approval`; resumes durably via `ApprovalStore` and execution checkpoints. |
+| Human approval & Durable HITL | Available | The runtime suspends a turn on `require_approval`; resumes durably via `ApprovalStore` and execution checkpoints. Dual control (N-of-M approvals) for high-risk actions. |
+| Structured Output | Available | JSON Schema `outputSchema` per agent or run, with validation and bounded repair retries. |
+| Telemetry-Safe Observability | Available | Observer events carry redacted errors by default. |
 | OpenAI model adapter | Available | `@nestjs-agentic/openai` for OpenAI and Chat Completions compatible endpoints. |
 | Cognitive Memory & SOP Playbooks | Available | `@nestjs-agentic/memory` for Stanford Tri-Factor scoring, procedural SOPs, and trajectory reflection. |
 | Context Attention & RAG | Available | `@nestjs-agentic/rag` for U-Shaped context assembly, AST codebase splitting, and GraphRAG. |
-| Debiased Evaluation & Trajectory Metrics | Available | `@nestjs-agentic/evaluation` for MT-Bench position-debiased judge and AgentBench metrics. |
+| Debiased Evaluation & Trajectory Metrics | Available | `@nestjs-agentic/evaluation` for MT-Bench position-debiased judge, AgentBench metrics, and retrieval-quality metrics (Recall@k, MRR, nDCG, faithfulness). |
+| Jev Decision Gates | Available | `@nestjs-agentic/jev` for calibrated allow / human review / deny decisions on tool calls and output. |
 | Sub-Agent Orchestration | Available | `@nestjs-agentic/orchestration` for parallel delegation, bounded concurrency, and refinement. |
 | Persistence & Stores | Available | In-memory, Redis, and PostgreSQL drivers for Session, State, Approval, and Idempotency. |
 

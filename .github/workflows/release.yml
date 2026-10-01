@@ -52,10 +52,25 @@ jobs:
           publish: npm run release
           commit: 'chore(release): version packages'
           title: 'chore(release): version packages'
+          # One GitHub release per version (next step), not one per package.
+          createGithubReleases: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
+
+      # Every package is versioned together (the changesets `fixed` group), so a
+      # version gets a single GitHub release, `vX.Y.Z`, carrying each published
+      # package's changelog section.
+      - name: Create GitHub release
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+        run: |
+          VERSION=$(node -e "const p = JSON.parse(process.env.PUBLISHED_PACKAGES); console.log((p.find((x) => x.name === '@nestjs-agentic/core') ?? p[0]).version)")
+          node scripts/release-notes.mjs > "$RUNNER_TEMP/release-notes.md"
+          gh release create "v$VERSION" --title "v$VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --target "$GITHUB_SHA"
 
       - name: Summarize outcome
         run: |
