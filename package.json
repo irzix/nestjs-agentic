@@ -38,7 +38,10 @@
     "@changesets/cli": "^2.31.1",
     "@nestjs/testing": "^10.4.22",
     "@types/node": "^26.2.0",
+    "@types/pg": "^8.23.1",
+    "ioredis": "^6.0.0",
     "openai": "^7.4.0",
+    "pg": "^8.23.1",
     "typescript": "^7.0.2"
   }
 }
