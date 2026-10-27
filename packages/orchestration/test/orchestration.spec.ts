@@ -35,6 +35,7 @@ import {
   SopPhaseExecutionError,
   SopRunner,
   SubAgentDelegator,
+  SubAgentResult,
 } from '../src';
 
 function assert(condition: boolean, message: string): void {
@@ -1579,6 +1580,7 @@ export async function runOrchestrationTests() {
     const debateRunner = new DebateRunner(debateMockRunner, {
       maxRounds: 4,
       consensusThreshold: 0.8,
+      consensusEvaluator: (results) => results.every((r) => r.response.includes('Revised conclusion')) ? 1 : 0,
     });
 
     const parentContext: AgentContext = {
@@ -1962,35 +1964,36 @@ export async function runOrchestrationTests() {
     console.log('    ✓ SopRunner guard retry on transient failure verified');
   }
 
-  // =========================================================================
-  // TEST 47: DebateRunner — Variance Score Math & Missing Score Fallbacks
-  // =========================================================================
+  // Regression: confidence similarity is not agreement between responses.
   {
-    console.log('  - Test 47: DebateRunner — Variance Score Math & Missing Score Fallbacks');
-    const debateRunner = new DebateRunner({} as AgentRunner);
-
-    // Identical scores -> zero variance -> 1.0 consensus
-    const score1 = debateRunner.calculateConsensusScore([
-      { agentName: 'a', status: 'success', response: '', toolCount: 0, score: 0.9 },
-      { agentName: 'b', status: 'success', response: '', toolCount: 0, score: 0.9 },
+    const results: SubAgentResult[] = [
+      { agentName: 'a', status: 'success', response: 'APPROVE', toolCount: 0, score: 0.9 },
+      { agentName: 'b', status: 'success', response: 'REJECT', toolCount: 0, score: 0.9 },
+    ];
+    const unknown = new DebateRunner({} as AgentRunner);
+    assert(unknown.calculateConsensusScore(results) === 0, 'Identical confidence does not establish agreement');
+    assert(unknown.calculateConsensusScore(results.map(({ score, ...r }) => r)) === 0, 'Missing confidence does not establish agreement');
+    const evaluated = new DebateRunner({} as AgentRunner, {
+      consensusEvaluator: (rs) => rs.every((r) => r.response === rs[0].response) ? 1 : 0,
+    });
+    assert(evaluated.calculateConsensusScore(results) === 0, 'Evaluator rejects contradictory answers');
+    assert(evaluated.calculateConsensusScore(results.map((r) => ({ ...r, response: 'APPROVE' }))) === 1, 'Evaluator accepts matching answers');
+    assert(evaluated.calculateConsensusScore([results[0]]) === 0, 'One participant cannot establish consensus');
+    assert(evaluated.calculateConsensusScore([results[0], { ...results[1], status: 'failed' }]) === 0, 'Failed participants cannot establish consensus');
+    for (const invalid of [NaN, Infinity, -1, 2]) {
+      let rejected = false;
+      try { new DebateRunner({} as AgentRunner, { consensusEvaluator: () => invalid }).calculateConsensusScore(results); }
+      catch { rejected = true; }
+      assert(rejected, 'Invalid evaluator score is rejected');
+    }
+    const runner = { async run(name: string) { return { output: name === 'a' ? 'APPROVE' : 'REJECT', toolCalls: [], score: 0.9 }; } } as unknown as AgentRunner;
+    const context: AgentContext = { sessionId: 'consensus-regression', traceId: 'regression', security: {} };
+    const debate = await new DebateRunner(runner, { maxRounds: 2 }).run(context, [{ agentName: 'a' }, { agentName: 'b' }], 'Decision');
+    assert(debate.rounds.length === 2 && debate.requiresHumanReview, 'Unknown agreement exhausts rounds and requests human review');
+    const merged = await new ParallelSubAgentRunner(runner, { aggregationStrategy: 'consensusMerge' }).run(context, [
+      { agentName: 'a', message: 'Decision' }, { agentName: 'b', message: 'Decision' },
     ]);
-    assert(score1 === 1.0, `Zero variance yields 1.0 consensus (was ${score1})`);
-
-    // Extreme divergence (0.0 and 1.0) -> variance = 0.25 -> 0.0 consensus
-    const score2 = debateRunner.calculateConsensusScore([
-      { agentName: 'a', status: 'success', response: '', toolCount: 0, score: 0.0 },
-      { agentName: 'b', status: 'success', response: '', toolCount: 0, score: 1.0 },
-    ]);
-    assert(score2 === 0.0, `Max variance yields 0.0 consensus (was ${score2})`);
-
-    // Missing scores fallback to neutral 0.5 prior
-    const score3 = debateRunner.calculateConsensusScore([
-      { agentName: 'a', status: 'success', response: '', toolCount: 0 },
-      { agentName: 'b', status: 'success', response: '', toolCount: 0 },
-    ]);
-    assert(score3 === 1.0, `Missing scores default to neutral 0.5 (was ${score3})`);
-
-    console.log('    ✓ DebateRunner variance score calculation verified');
+    assert(merged.consensusScore === 0 && !merged.combinedResponse.includes('Consensus Reached'), 'Merge does not label matching confidence as consensus');
   }
 
   // =========================================================================

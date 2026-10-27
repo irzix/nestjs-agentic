@@ -1,3 +1,4 @@
+import { evaluateConsensus } from '../consensus';
 import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
 import type {
   DebateOptions,
@@ -15,7 +16,7 @@ import { ParallelSubAgentRunner } from './parallel-subagent.runner';
  * Each round fans out to all debaters in parallel via `ParallelSubAgentRunner`.
  * After each round, the full transcript of arguments is injected as a prefix
  * into each debater's next-round prompt, enabling cross-critique and position refinement.
- * Convergence is measured via variance-based consensus scoring. The debate terminates
+ * Agreement is measured by an application-supplied consensus evaluator. The debate terminates
  * early when `consensusScore >= consensusThreshold`, or after `maxRounds`.
  *
  * @see Du et al., "Improving Factuality and Reasoning in LLMs through Multiagent Debate"
@@ -30,12 +31,20 @@ export class DebateRunner {
     maxConcurrency?: number;
     signal?: AbortSignal;
     transcriptFormatterFn?: DebateOptions['transcriptFormatterFn'];
+    consensusEvaluator?: DebateOptions['consensusEvaluator'];
   };
 
   constructor(
     private readonly runner: AgentRunner,
     options?: DebateOptions,
   ) {
+    if (options?.maxRounds !== undefined && (!Number.isInteger(options.maxRounds) || options.maxRounds < 1)) {
+      throw new RangeError('maxRounds must be a positive integer.');
+    }
+    if (options?.consensusThreshold !== undefined &&
+        (!Number.isFinite(options.consensusThreshold) || options.consensusThreshold < 0 || options.consensusThreshold > 1)) {
+      throw new RangeError('consensusThreshold must be between 0 and 1.');
+    }
     this.options = {
       maxRounds: options?.maxRounds ?? 3,
       consensusThreshold: options?.consensusThreshold ?? 0.7,
@@ -44,6 +53,7 @@ export class DebateRunner {
       maxConcurrency: options?.maxConcurrency,
       signal: options?.signal,
       transcriptFormatterFn: options?.transcriptFormatterFn,
+      consensusEvaluator: options?.consensusEvaluator,
     };
   }
 
@@ -65,8 +75,8 @@ export class DebateRunner {
         finalResponse: '',
         winner: '',
         rounds: [],
-        requiresHumanReview: false,
-        terminationReason: 'consensus',
+        requiresHumanReview: true,
+        terminationReason: 'max_rounds',
       };
     }
 
@@ -92,7 +102,7 @@ export class DebateRunner {
 
       // Fan-out via ParallelSubAgentRunner with consensusMerge strategy
       const parallelRunner = new ParallelSubAgentRunner(this.runner, {
-        aggregationStrategy: 'consensusMerge',
+        aggregationStrategy: 'allSettled',
         timeoutMs: this.options.timeoutMs,
         retriesPerSubAgent: this.options.retriesPerDebater,
         maxConcurrency: this.options.maxConcurrency,
@@ -113,7 +123,7 @@ export class DebateRunner {
       rounds.push(round);
 
       // Early termination on consensus convergence
-      if (consensusScore >= this.options.consensusThreshold) {
+      if (consensusScore > 0 && consensusScore >= this.options.consensusThreshold) {
         const winner = this.pickWinner(fanOutResult.results);
         return {
           finalResponse: winner.response,
@@ -145,27 +155,9 @@ export class DebateRunner {
     };
   }
 
-  /**
-   * Deterministically calculates the variance-based consensus convergence metric (0.0–1.0).
-   *
-   * Formally:
-   *   $$\text{Variance} = \frac{1}{N} \sum_{i=1}^N (s_i - \mu)^2$$
-   *   $$\text{Consensus} = 1 - \frac{\text{Variance}}{\text{MaxVariance}}$$
-   *
-   * Where $\text{MaxVariance} = 0.25$ for bounded $[0, 1]$ confidence scores.
-   * Debaters with missing scores default to 0.5 prior confidence.
-   */
+  /** Returns 0 (unknown) without an evaluator or enough successful participants. */
   calculateConsensusScore(results: SubAgentResult[]): number {
-    const successful = results.filter((r) => r.status === 'success');
-    if (successful.length === 0) return 0;
-    if (successful.length === 1) return successful[0].score ?? 1.0;
-
-    const scores = successful.map((r) => (r.score !== undefined ? Math.max(0, Math.min(1, r.score)) : 0.5));
-    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-    const variance = scores.reduce((acc, s) => acc + (s - mean) ** 2, 0) / scores.length;
-
-    // Normalize: max possible variance for [0, 1] range is 0.25
-    return Math.max(0, Math.min(1, 1 - variance / 0.25));
+    return evaluateConsensus(results, this.options.consensusEvaluator);
   }
 
   // ---------------------------------------------------------------------------

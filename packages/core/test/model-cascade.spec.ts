@@ -89,7 +89,7 @@ export async function runModelCascadeTests() {
       toolCalls: [{ id: 'tc-1', name: 'search_db', args: { q: 'status' } }],
     };
     const toolScore = extractHeuristicConfidence(toolCallResp.content, toolCallResp);
-    assert(toolScore >= 0.85, 'Heuristic extractor rewards tool calls with high confidence');
+    assert(toolScore === 0, 'Tool-call syntax is not evidence of correctness');
 
     const hedgeResp: ModelResponse = {
       content: 'I am not sure, but it is unclear what happened. Might be wrong.',
@@ -455,46 +455,52 @@ export async function runModelCascadeTests() {
     assert(false, 'Async extractorFn support', String(err));
   }
 
-  // 14. Streaming token propagation
+  // 14. The accepted answer is emitted once, with all tier usage and tool calls intact.
   try {
+    const requests: ModelRequest[] = [];
+    let streamCalls = 0;
     const mockAdapter: ModelAdapter = {
-      generate: async () => ({ content: 'Full text', usage: { totalTokens: 15 } }),
+      generate: async (request) => {
+        requests.push(request);
+        return request.model.model === 'cheap'
+          ? { content: 'Uncertain', usage: { totalTokens: 10 } }
+          : { content: 'Accepted answer', toolCalls: [{ id: 'call-1', name: 'lookup', args: {} }], usage: { totalTokens: 20 } };
+      },
       stream: async function* () {
-        yield { type: 'token', text: 'Hello ' };
-        yield { type: 'token', text: 'world!' };
-        yield {
-          type: 'response',
-          response: { content: 'Hello world!', usage: { totalTokens: 15 } },
-        };
+        streamCalls++;
+        yield { type: 'response', response: { content: 'Unevaluated second answer', usage: { totalTokens: 50 } } };
       },
     };
-
     const cascade = new ModelCascadeAdapter(mockAdapter, {
-      fastModel: { model: 'm1' },
-      reasoningModel: { model: 'm2' },
+      tiers: [
+        { model: { provider: 'cheap-provider', model: 'cheap' }, extractorFn: () => 0 },
+        { model: { provider: 'accepted-provider', model: 'accepted' }, extractorFn: () => 1 },
+      ],
     });
-
-    const tokens: string[] = [];
-    let receivedResponse = false;
-
-    for await (const chunk of cascade.stream({
-      model: { model: 'default' },
-      messages: [{ role: 'user', content: 'Stream test' }],
-      tools: [],
+    const request: ModelRequest = {
+      model: { provider: 'original-provider', model: 'original' }, messages: [], tools: [],
       metadata: { sessionId: 's1', traceId: 't1', executionId: 'e1', iteration: 0 },
-    })) {
-      if (chunk.type === 'token') {
-        tokens.push(chunk.text);
-      } else if (chunk.type === 'response') {
-        receivedResponse = true;
-        assert(chunk.response.cascadeMetadata !== undefined, 'Stream final response includes cascadeMetadata');
-      }
+    };
+    let text = '';
+    let response: ModelResponse | undefined;
+    for await (const chunk of cascade.stream(request)) {
+      if (chunk.type === 'token') text += chunk.text;
+      if (chunk.type === 'response') response = chunk.response;
     }
+    assert(requests.length === 2 && streamCalls === 0, 'Each tier generated once without a second stream request');
+    assert(text === 'Accepted answer' && response?.content === text, 'Tokens and final answer match the evaluated response');
+    assert(response?.usage?.totalTokens === 30, 'Usage includes all generated tiers exactly once');
+    assert(response?.toolCalls?.[0].id === 'call-1', 'Accepted tool calls preserved');
+    assert(requests[1].model.provider === 'accepted-provider', 'Full tier model configuration preserved');
 
-    assert(tokens.join('') === 'Hello world!', 'Stream correctly yields token chunks');
-    assert(receivedResponse, 'Stream finishes with complete response chunk');
+    const controller = new AbortController();
+    controller.abort();
+    let cancelled = false;
+    try { for await (const _ of cascade.stream({ ...request, signal: controller.signal })) { /* must not emit */ } }
+    catch { cancelled = true; }
+    assert(cancelled && requests.length === 2, 'Cancelled streaming does not call a provider');
   } catch (err: unknown) {
-    assert(false, 'Streaming token propagation', String(err));
+    assert(false, 'Accepted-response stream regression', String(err));
   }
 
   // 15. Configurable heuristic scoring options

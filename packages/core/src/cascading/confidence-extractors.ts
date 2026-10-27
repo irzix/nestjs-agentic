@@ -56,7 +56,7 @@ export function extractVerbalizedConfidence(content: string): number | null {
 export interface HeuristicConfidenceOptions {
   /** Baseline confidence score assigned to structured non-empty prose. Default: 0.80 */
   baselineScore?: number;
-  /** High confidence score assigned when explicit tool calls are requested. Default: 0.92 */
+  /** Uncalibrated score for tool-call responses. Default: 0; supply an evaluator for acceptance. */
   toolCallScore?: number;
   /** Penalty subtracted for each detected uncertainty hedging phrase. Default: 0.30 */
   uncertaintyPenalty?: number;
@@ -72,21 +72,21 @@ export interface HeuristicConfidenceOptions {
 
 /**
  * Heuristically scores response confidence based on tool usage, answer completeness,
- * and uncertainty hedging expressions (Stanford FrugalGPT heuristic).
+ * and uncertainty hedging expressions (uncalibrated text heuristics; not a correctness probability).
  */
 export function extractHeuristicConfidence(
   content: string,
   response: ModelResponse,
   options?: HeuristicConfidenceOptions,
 ): number {
-  const toolScore = options?.toolCallScore ?? 0.92;
+  const toolScore = options?.toolCallScore ?? 0;
   const baseline = options?.baselineScore ?? 0.80;
   const penalty = options?.uncertaintyPenalty ?? 0.30;
   const bonus = options?.structureBonus ?? 0.10;
   const shortScore = options?.shortResponseScore ?? 0.35;
   const minLen = options?.minLength ?? 15;
 
-  // 1. Tool calls express direct, structured operational intent
+  // Tool-call syntax alone provides no evidence of correctness.
   if (response.toolCalls && response.toolCalls.length > 0) {
     return toolScore;
   }

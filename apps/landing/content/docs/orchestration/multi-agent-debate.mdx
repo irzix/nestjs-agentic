@@ -10,7 +10,7 @@ Single models suffer from confirmation bias. When multiple agents review a compl
 `DebateRunner` conducts structured, multi-round debates:
 
 1. **Round 1 (Independent Assessment)**: All debaters respond to the initial message in parallel via `ParallelSubAgentRunner`.
-2. **Consensus Check**: A normalized-variance consensus score is computed over the round's confidence scores. If it meets `consensusThreshold`, the debate ends and the highest-scoring debater's response is returned.
+2. **Consensus Check**: An explicit `consensusEvaluator` measures agreement between the actual answers; without it, agreement is unknown (`0`). If it meets `consensusThreshold`, the debate ends and the highest-scoring debater's response is returned.
 3. **Cross-Critique**: If consensus wasn't reached and rounds remain, the full transcript of the round (each debater's response and confidence, XML-tagged and delimiter-sanitized) is prepended to the next round's prompt, so every debater sees and can respond to the others' positions.
 4. **Termination**: Ends on early consensus, or after `maxRounds` — in which case `requiresHumanReview: true` is set on the result so the caller can route it to a human.
 
