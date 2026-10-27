@@ -119,3 +119,13 @@ This integration is application-managed and is not automatically connected to `A
 ## License
 
 [MIT](https://github.com/irzix/nestjs-agentic/blob/main/LICENSE) © [irzix](https://github.com/irzix)
+
+### Scope and evaluation
+
+`AstCodebaseSplitter` uses regular expressions and brace scanning, not a compiler
+AST. It is a lightweight heuristic for JavaScript/TypeScript source and does not
+guarantee syntactically complete chunks for every language construct.
+
+Graph traversal operates on a graph populated by the application. Context
+reordering, score boosting and reranking should be compared against a simple
+retrieval baseline on labeled queries; no universal improvement is guaranteed.

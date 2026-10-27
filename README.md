@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%20%7C%20v11-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS" /></a>
+  <a href="https://nestjs.com"><img src="https://img.shields.io/badge/NestJS-v10%20%7C%20v11%20%7C%20v12-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS" /></a>
   <a href="https://www.npmjs.com/package/nestjs-agentic"><img src="https://img.shields.io/npm/v/nestjs-agentic.svg?color=E0234E" alt="NPM Version" /></a>
   <a href="https://github.com/irzix/nestjs-agentic/actions"><img src="https://github.com/irzix/nestjs-agentic/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0%2B-blue?logo=typescript&logoColor=white" alt="TypeScript" /></a>
@@ -46,12 +46,12 @@ The current release line is `1.6.x`. Core primitives, persistence adapters, and 
 | OpenAI & Chat-Completions adapter | Available | `@nestjs-agentic/openai` for OpenAI, Azure, Ollama, vLLM, Groq, and OpenRouter. |
 | Cognitive Memory & SOP Playbooks | Available | `@nestjs-agentic/memory` for Stanford Tri-Factor scoring, SOP playbooks, and reflection. |
 | U-Shaped Context Assembler | Available | `@nestjs-agentic/rag` & `@nestjs-agentic/core` for Lost-in-the-Middle attention mitigation. |
-| Codebase AST & GraphRAG | Available | `@nestjs-agentic/rag` for AST code splitting, hybrid vector store, and graph traversal. |
+| Codebase chunking & graph retrieval | Available | `@nestjs-agentic/rag` for Regex-based code splitting, hybrid vector store, and graph traversal. |
 | Debiased Evaluation & Trajectory Metrics | Available | `@nestjs-agentic/evaluation` for MT-Bench position-debiased judge and AgentBench metrics. |
 | Retrieval-Quality Metrics | Available | `@nestjs-agentic/evaluation` for Recall@k, Precision@k, MRR, nDCG, and faithfulness against a `RAGPipeline` or `KnowledgeBase`. |
 | Jev Decision Gates | Available | `@nestjs-agentic/jev` for calibrated allow / human review / deny decisions on tool calls and output, via TypeSafe's Jev. |
 | Persistence & Durable Checkpoints | Available | In-memory, Redis, and PostgreSQL drivers for Session, State, Approval, and Idempotency. |
-| Sub-Agent Orchestration | Available | `@nestjs-agentic/orchestration` for parallel delegation, bounded concurrency, and refinement. |
+| Sub-Agent Orchestration | Experimental | `@nestjs-agentic/orchestration` for parallel delegation, bounded concurrency, and refinement. |
 
 See the [product roadmap](docs/ROADMAP.md) for milestones and production-readiness criteria.
 
@@ -259,6 +259,14 @@ On tool output (output rails), before the model sees it:
 For judgment beyond fixed rules, [`@nestjs-agentic/jev`](packages/jev) adds calibrated gates that decide between `allow`, human review, and `deny`.
 
 These are framework primitives, not replacements for durable audit storage or application authorization.
+
+Authenticate approval endpoints and pass the trusted actor identity to `approve()` /
+`reject()`. Enable tenant isolation and an `ApprovalAuthorizer` for your application;
+the minimal quick start above is not an authenticated production HTTP boundary.
+
+In-memory stores are the default and do not survive restart. Persistent checkpoints
+and atomic approval claims do not guarantee exactly-once external effects; use
+application idempotency or a transaction at the side-effect destination.
 
 ## Connecting a Model
 

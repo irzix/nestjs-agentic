@@ -5,7 +5,7 @@ description: Core philosophy, mental model, and cognitive loop of the nestjs-age
 
 ## Overview and Philosophy
 
-`nestjs-agentic` is a production-grade runtime ecosystem for building, governing, and orchestrating autonomous AI agents natively within the NestJS framework.
+`nestjs-agentic` is a NestJS-native runtime ecosystem for building, governing, and orchestrating autonomous AI agents natively within the NestJS framework.
 
 Traditional LLM integrations treat models as simple stateless request-response endpoints. In contrast, an **Enterprise Agentic System** requires a continuous cognitive lifecycle:
 
@@ -53,7 +53,7 @@ The runtime ecosystem is decomposed into eight modular packages plus one umbrell
 | **`@nestjs-agentic/evaluation`** | Benchmarking suite with position-debiased pairwise LLM judges, retrieval-quality metrics, and CI/CD quality regression gates. | `PairwiseDebiasedJudge`, `BenchmarkRunner`, `TrajectoryInspectorMetric`, `RetrievalBenchmarkRunner`, `FaithfulnessMetric` |
 | **`@nestjs-agentic/mcp`** | Model Context Protocol integration providing standardized client transports and dynamic tool providers. | `McpClientTransport`, `McpToolProvider`, `StdioTransport`, `SseTransport` |
 | **`@nestjs-agentic/jev`** | Calibrated governance decisions from TypeSafe's Jev: allow, human review, or deny for tool calls, plus output rails and evaluation judges. | `JevActionGate`, `JevOutputGate`, `JevModule`, `jevFaithfulnessJudge`, `jevTaskJudge` |
-| **`nestjs-agentic`** | Umbrella meta-package providing streamlined exports and zero-configuration developer ergonomics. | Re-exports all core primitives |
+| **`nestjs-agentic`** | Umbrella meta-package providing streamlined exports for explicitly configured core primitives. | Re-exports all core primitives |
 
 ---
 
@@ -65,3 +65,14 @@ Unlike raw scripting frameworks, `nestjs-agentic` is built from the ground up to
 - **Declarative Metadata**: Methods and parameters are decorated with `@Tool()` and `@Param()`, automatically generating valid JSON Schema definitions for LLM tool-calling interfaces.
 - **Context Isolation**: Every turn execution receives an isolated `AgentContext` carrying security credentials (`userId`, `tenantId`, `roles`, `permissions`) and execution limits, preventing cross-tenant data leakage.
 - **Durable Lifecycle Checkpoints**: Long-running or sensitive actions suspend their execution state in durable stores (PostgreSQL or Redis), waiting for human sign-off without holding Node.js event-loop threads open.
+
+## Readiness
+
+The release line is 1.6.x. Core execution and persistence are production-intent;
+higher-order orchestration is experimental. Optional memory, retrieval, context
+ordering and cascade strategies need evaluation on your workload. The presence of
+an algorithm or a paper reference is not a measured quality or cost improvement.
+
+In-memory stores do not survive process restart. Persistent checkpoints and atomic
+approval claims do not make arbitrary external side effects exactly-once; use
+application idempotency or transactions at that boundary.
