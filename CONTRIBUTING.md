@@ -6,7 +6,7 @@ Thanks for your interest in contributing. This document covers the practical stu
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22.12+ (recommended for the full workspace and NestJS 12 compatibility)
 - npm 9+
 
 ### Setup
@@ -57,13 +57,16 @@ npm run build
 
 ### Running an example
 
-The customer-support HTTP example registers the synthetic ADK-named runtime prototype. It does not call Google ADK or Gemini and invokes tools with empty arguments, so use it only for evaluation:
+The customer-support HTTP example uses the built-in tool loop and the OpenAI-compatible
+model adapter. Configure the provider as described in its README before starting it:
 
 ```bash
 npm run start:dev --workspace=example-customer-support
 ```
 
-For deterministic governance behavior, prefer the test suites that configure `MockRuntimeAdapter`.
+Unit tests use deterministic model/runtime adapters. Passing them does not establish
+live-provider behavior or database crash recovery. Keep fake-backed tests explicitly
+separate from tests that start independent processes against real services.
 
 ## How to contribute
 

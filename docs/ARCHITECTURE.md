@@ -1,12 +1,12 @@
 # Architecture Guide
 
-This document describes the production architecture of **nestjs-agentic** (v1.0.0 GA), the security boundaries that govern tool executions, durable state persistence, and the decoupled multi-package ecosystem.
+This document describes the architecture of **nestjs-agentic** (1.6.x), the security boundaries that govern tool executions, durable state persistence, and the decoupled multi-package ecosystem.
 
 ---
 
 ## 🏛️ Architectural Position
 
-`nestjs-agentic` is an enterprise runtime and governance layer for building autonomous, governed AI agents natively in NestJS.
+`nestjs-agentic` is a NestJS runtime and governance layer for building autonomous, governed AI agents natively in NestJS.
 
 Unlike external scripting libraries or rigid graph frameworks, `nestjs-agentic` operates entirely inside the NestJS Dependency Injection (DI) and lifecycle container:
 1. **NestJS-Native Providers**: Agents and ToolSets are standard `@Injectable()` services that inject database repositories, HTTP clients, caches, and microservice clients.
@@ -61,7 +61,7 @@ nestjs-agentic (Meta Package)
 | **`@nestjs-agentic/evaluation`** | Benchmarking suite with position-debiased pairwise LLM judges, retrieval-quality metrics, and CI/CD quality regression gates. | `PairwiseDebiasedJudge`, `BenchmarkRunner`, `TrajectoryInspectorMetric`, `RetrievalBenchmarkRunner`, `FaithfulnessMetric` |
 | **`@nestjs-agentic/mcp`** | Model Context Protocol integration providing standardized client transports and dynamic tool providers. | `McpClientTransport`, `McpToolProvider`, `StdioTransport`, `SseTransport` |
 | **`@nestjs-agentic/jev`** | Calibrated governance decisions from TypeSafe's Jev: allow, human review, or deny for tool calls, plus output rails and evaluation judges. | `JevActionGate`, `JevOutputGate`, `JevModule`, `jevFaithfulnessJudge`, `jevTaskJudge` |
-| **`nestjs-agentic`** | Umbrella meta-package providing streamlined exports and zero-configuration developer ergonomics. | Re-exports all core primitives |
+| **`nestjs-agentic`** | Umbrella meta-package providing streamlined exports for explicitly configured core primitives. | Re-exports all core primitives |
 
 ---
 
@@ -156,10 +156,23 @@ sequenceDiagram
 ### Checkpoint & Resumption Invariants:
 * **Atomic Claim-and-Lock**: `ApprovalStore.claim()` atomically claims pending approvals before execution, guaranteeing at-most-once settlement even under concurrent webhook retries.
 * **Process-Agnostic Resumption**: The `ApprovalCheckpoint` contains the complete serialized transcript, allowing a different worker node in a cluster to resume the turn seamlessly.
-* **Dual Control (N-of-M)**: A policy can require several distinct approvers (`requiredApprovals`). Each signature is authorized and recorded through `ApprovalStore.addSignature()`, and the signature that meets the threshold atomically claims the approval, so the tool still runs exactly once. Stores without signature support deny multi-approver decisions rather than settle them with one person.
+* **Dual Control (N-of-M)**: A policy can require several distinct approvers (`requiredApprovals`). Each signature is authorized and recorded through `ApprovalStore.addSignature()`, and the signature that meets the threshold atomically claims the approval, so only one caller settles the approval. This is not a transaction with an external side effect. Stores without signature support deny multi-approver decisions rather than settle them with one person.
 * **Audit Trail Integration**: All terminal approval events (approved, rejected, expired, failed) are broadcast to configured `AuditSink` listeners, along with one `approval_signed` event per counted signature.
 
 ---
+
+### Persistence limits
+
+Synchronous checkpoints acknowledge completed runtime state. A process can still
+stop after an external effect but before its result is durably recorded. Use a
+business operation key at the side-effect destination, or a transactional outbox,
+when duplicate effects are unacceptable. An approval claimed before a crash may
+also need application reconciliation; claiming alone does not guarantee execution.
+Opt-in async durability can lose the most recent unflushed checkpoint.
+
+The default test suite uses in-memory database fakes for its crash-recovery scenarios.
+Those tests verify framework behavior but do not, by themselves, prove database
+atomicity or process-kill recovery against a real service.
 
 ## 🧠 Cognitive Memory Architecture (`@nestjs-agentic/memory`)
 
@@ -204,7 +217,7 @@ All stores implement the shared `AgentMemoryStore` interface (`save(record)` / `
 
 `@nestjs-agentic/evaluation` provides automated quality gates for CI/CD pipelines:
 
-* **Position-Debiased Pairwise Judge (`PairwiseDebiasedJudge`)**: Runs bidirectional pairwise evaluations $(A \text{ vs } B \text{ and } B \text{ vs } A)$ to eliminate position and verbosity bias.
+* **Position-Debiased Pairwise Judge (`PairwiseDebiasedJudge`)**: Runs bidirectional pairwise evaluations $(A \text{ vs } B \text{ and } B \text{ vs } A)$ to reduce sensitivity to answer order. This does not eliminate all judge or verbosity bias.
 * **Trajectory Inspection (`TrajectoryInspectorMetric`)**, alongside `ExecutionEfficiencyMetric` and `ToolPrecisionMetric`: Evaluate agent decision paths based on token efficiency, tool-calling precision, and step count.
 * **Automated Benchmark Runner (`BenchmarkRunner`)**: Executes structured test suites against a registered `AgentRunner` with pass/fail regression thresholds.
 * **Retrieval-Quality Metrics (`RetrievalBenchmarkRunner`)**: Scores a `RAGPipeline`, a `KnowledgeBase`, or any retriever against labeled queries with Recall@k, Precision@k, HitRate@k, MRR, graded nDCG, and judge-based faithfulness, for the same CI gates as agent benchmarks.
@@ -238,4 +251,4 @@ All stores implement the shared `AgentMemoryStore` interface (`save(record)` / `
 2. **Explicit Governance Over Open Autonomy**: Every tool execution must pass through policy evaluation; models cannot bypass security boundaries.
 3. **Deterministic Application Context**: User identities, tenant boundaries, and access roles are managed by application services, never inferred by LLMs.
 4. **Zero Vendor Lock-In**: Decoupled contracts allow switching between OpenAI, Anthropic, Gemini, Ollama, and local models with zero application code changes.
-5. **Production Durability by Default**: State stores, execution checkpoints, and idempotency guarantees ensure enterprise reliability in multi-instance cluster deployments.
+5. **Explicit Durability**: Configure persistent stores for process recovery. The default in-memory stores do not survive restart. Atomic approval claims provide at-most-once settlement; external effects require application-level idempotency or transactions.

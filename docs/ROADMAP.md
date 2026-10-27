@@ -6,7 +6,7 @@ This roadmap outlines the evolution, release milestones, and forward direction o
 
 ## 📚 Architectural Foundations & Research References
 
-`nestjs-agentic` is engineered in strict alignment with peer-reviewed academic literature and enterprise AI systems standards:
+These papers inform optional algorithms and design choices. References are not evidence that this implementation reproduces their results, improves a particular workload, or satisfies an enterprise standard:
 
 * **ReAct Reasoning:** *Yao et al., Princeton & Google Brain (ICLR 2023)* ([arXiv:2210.03629](https://arxiv.org/abs/2210.03629))
 * **Tool Calling & MCP:** *Schick et al., Meta AI (Toolformer, arXiv:2302.04761)* & *Anthropic Model Context Protocol Standard*
@@ -24,16 +24,27 @@ This roadmap outlines the evolution, release milestones, and forward direction o
 
 | Package | Status | Role |
 |---|---|---|
-| [`nestjs-agentic`](packages/meta) | **Available (v1.0.0 GA)** | Umbrella meta-package providing zero-config exports for all core primitives. |
-| [`@nestjs-agentic/core`](packages/core) | **Available (v1.0.0 GA)** | Governed runtime, DI discovery, tool policies, streaming, HITL approvals, execution budgets, and state stores. |
-| [`@nestjs-agentic/openai`](packages/model-openai) | **Available (v1.0.0 GA)** | Direct model adapter for OpenAI and ChatCompletions-compatible endpoints (Ollama, vLLM, Groq, OpenRouter, Azure). |
-| [`@nestjs-agentic/memory`](packages/memory) | **Available (v1.0.0 GA)** | 5-tier cognitive memory architecture with Stanford tri-factor scoring, working scratchpads, and episodic reflection. |
-| [`@nestjs-agentic/rag`](packages/rag) | **Available (v1.0.0 GA)** | Context engineering engine with AST code chunking, hybrid BM25 + vector search, GraphRAG, and cross-encoder rerankers. |
-| [`@nestjs-agentic/orchestration`](packages/orchestration) | **Available (v1.0.0 GA)** | Multi-agent delegation, bounded concurrency fan-out, supervisor refinement loops, and multi-agent debate consensus. |
-| [`@nestjs-agentic/evaluation`](packages/evaluation) | **Available (v1.0.0 GA)** | Position-debiased LLM-as-a-Judge benchmarking suite, trajectory scorers, and CI/CD quality gates. |
-| [`@nestjs-agentic/mcp`](packages/mcp) | **Available (v1.0.0 GA)** | Model Context Protocol integration providing standardized stdio/SSE client transports and dynamic tool providers. |
+| [`nestjs-agentic`](packages/meta) | **Available (1.6.x)** | Umbrella meta-package providing zero-config exports for all core primitives. |
+| [`@nestjs-agentic/core`](packages/core) | **Available (1.6.x)** | Governed runtime, DI discovery, tool policies, streaming, HITL approvals, execution budgets, and state stores. |
+| [`@nestjs-agentic/openai`](packages/model-openai) | **Available (1.6.x)** | Direct model adapter for OpenAI and ChatCompletions-compatible endpoints (Ollama, vLLM, Groq, OpenRouter, Azure). |
+| [`@nestjs-agentic/memory`](packages/memory) | **Available (1.6.x)** | 5-tier cognitive memory architecture with Stanford tri-factor scoring, working scratchpads, and episodic reflection. |
+| [`@nestjs-agentic/rag`](packages/rag) | **Available (1.6.x)** | Context engineering engine with Regex-based code chunking, hybrid BM25 + vector search, GraphRAG, and cross-encoder rerankers. |
+| [`@nestjs-agentic/orchestration`](packages/orchestration) | **Experimental (1.6.x)** | Multi-agent delegation, bounded concurrency fan-out, supervisor refinement loops, and multi-agent debate consensus. |
+| [`@nestjs-agentic/evaluation`](packages/evaluation) | **Available (1.6.x)** | Position-debiased LLM-as-a-Judge benchmarking suite, trajectory scorers, and CI/CD quality gates. |
+| [`@nestjs-agentic/mcp`](packages/mcp) | **Available (1.6.x)** | Model Context Protocol integration providing standardized stdio/SSE client transports and dynamic tool providers. |
 
 ---
+
+## Readiness and validation
+
+Package availability means an API is shipped, not that every configuration has
+been validated in production. Core execution and persistence are production-intent;
+higher-order orchestration remains experimental. Memory ranking, graph retrieval,
+context ordering, and model cascading need workload-specific evaluation before
+quality or cost claims can be made. Jev is an optional external decision backend.
+
+Completed milestones below record delivery history. They do not establish
+crash-safety for arbitrary external effects or benchmark gains for optional algorithms.
 
 ## Delivered Milestones
 
