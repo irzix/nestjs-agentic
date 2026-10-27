@@ -216,6 +216,13 @@ export interface ParallelRunnerOptions {
    * Default: `0.7`
    */
   consensusThreshold?: number;
+
+  /**
+   * Measures agreement between actual responses, not confidence scores.
+   * Without an evaluator, consensus is unknown and reported as 0.
+   * Called only with at least two results, all successful. Must return a finite [0, 1] score.
+   */
+  consensusEvaluator?: (results: SubAgentResult[]) => number;
 }
 
 /**
@@ -327,7 +334,7 @@ export interface DebateRound {
   /** Individual sub-agent results produced during this round. */
   results: SubAgentResult[];
 
-  /** Variance-based consensus convergence score for this round (0.0–1.0). */
+  /** Application-evaluated agreement score for this round (0.0–1.0). */
   consensusScore?: number;
 }
 
@@ -344,6 +351,13 @@ export interface DebateOptions {
    * Default: `0.7`
    */
   consensusThreshold?: number;
+
+  /**
+   * Measures agreement between actual responses, not confidence scores.
+   * Without an evaluator, consensus is unknown and reported as 0.
+   * Called only with at least two results, all successful. Must return a finite [0, 1] score.
+   */
+  consensusEvaluator?: (results: SubAgentResult[]) => number;
 
   /** Timeout per debater per round in milliseconds. Default: `30000` */
   timeoutMs?: number;

@@ -1,34 +1,28 @@
 ---
 title: Consensus Scoring
-description: Mathematical measurement of agreement and convergence across debating agents.
+description: Application-defined agreement evaluation across agent responses.
 ---
 
-## Variance-Based Consensus Scoring
+## Evaluate answers, not confidence
 
-`DebateRunner.calculateConsensusScore()` measures agreement among debaters' confidence scores for a round using normalized variance, not Fleiss' Kappa — Fleiss' Kappa requires categorical ratings across raters and isn't what's computed here.
+`DebateRunner` and `consensusMerge` accept a synchronous `consensusEvaluator`
+that reads actual `SubAgentResult` responses and returns a finite score in `[0, 1]`.
+Similar confidence scores do not establish agreement.
 
-```text
-Variance = (1/N) * sum((s_i - mean)^2)
-Consensus = 1 - Variance / MaxVariance     // MaxVariance = 0.25 for scores bounded [0, 1]
-```
+Without an evaluator, with fewer than two participants, or if any participant failed,
+the score is `0` (unknown). A debate then exhausts its round budget and returns
+`requiresHumanReview: true`. A positive score meeting `consensusThreshold` permits early exit.
+Evaluator errors and invalid scores propagate rather than claiming agreement.
 
-Debaters with no reported `score` default to a `0.5` prior confidence before the variance calculation.
-
-### Interpretation
-
-| Consensus Score | Meaning | `DebateRunner` behavior |
-| :--- | :--- | :--- |
-| **`>= consensusThreshold`** (default `0.7`) | Debaters converged | Debate ends early; highest-scoring debater's response wins |
-| **`< consensusThreshold`, rounds remain** | Debaters diverge | Next round runs with the cross-critique transcript prepended |
-| **`< consensusThreshold` after `maxRounds`** | No convergence reached | `requiresHumanReview: true` on the result |
+For agents returning a single canonical decision label:
 
 ```typescript
-import { DebateRunner } from '@nestjs-agentic/orchestration';
-
-const debate = new DebateRunner(agentRunner);
-
-// calculateConsensusScore is also usable standalone against any round's results
-const score = debate.calculateConsensusScore(round.results);
+const debate = new DebateRunner(agentRunner, {
+  consensusEvaluator: (results) =>
+    results.every((r) => r.response.trim() === results[0].response.trim()) ? 1 : 0,
+});
 ```
 
-A Fleiss' Kappa-based multi-rater consensus metric, suited to independent categorical severity classifications rather than debate convergence, is tracked as possible future work and does not ship today.
+For prose or structured findings, provide a domain-specific evaluator. Agreement
+is not proof of correctness; evaluate quality separately. The highest-scored
+successful response remains the selected answer, even when human review is required.

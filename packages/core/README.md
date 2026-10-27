@@ -23,7 +23,7 @@
 - **Decorator Suite**: `@Agent()`, `@ToolSet()`, `@Tool()`, `@Param()`, `@Context()`, `@UsePolicies()`
 - **Policy Engine**: 3-state evaluation (`allow`, `deny`, `require_approval`)
 - **Built-in Agent Runtime**: `AgentExecutor` runs the governed model-to-tool loop with argument validation, execution budgets, cancellation, and streaming, driven by a provider-neutral `ModelAdapter`
-- **FrugalGPT Model Cascading**: Native cost optimization (*Chen et al., Stanford University, NeurIPS 2023*) cascading cheap/fast models to frontier reasoning models with confidence threshold gating ($\tau$) to cut API costs by 50–85%
+- **FrugalGPT Model Cascading**: Native cost optimization (*Chen et al., Stanford University, NeurIPS 2023*) cascading cheap/fast models to frontier reasoning models with confidence threshold gating ($\tau$) with workload-dependent cost and quality trade-offs
 - **HITL Lifecycle (Experimental)**: `ApprovalService` and in-memory/custom `ApprovalStore` protect one process-local pending invocation; approval is not a durable workflow pause and does not resume the original model turn.
 - **Session Management**: `SessionStore` (`InMemorySessionStore`, `RedisSessionStore`), `runSessionStoreContract`, and context pre-binding
 - **Mock Runtime**: `MockRuntimeAdapter` and `MockModelAdapter` for LLM-free unit testing, including multi-round tool-calling scenarios
@@ -43,3 +43,15 @@ For full documentation and code examples, see the [nestjs-agentic GitHub Reposit
 ## License
 
 MIT © [irzix](https://github.com/irzix)
+
+### Experimental model cascading
+
+Cascade thresholds use an application-supplied `extractorFn` or uncalibrated text
+heuristics. They are not correctness probabilities. Tool-call syntax receives a
+default heuristic score of `0`; provide an evaluator to accept a tool call before
+the final fallback tier. `accept_last` still accepts the final tier by design.
+
+`ModelCascadeAdapter.stream()` buffers until a tier is accepted, then emits that
+exact answer and its cumulative usage. It does not regenerate or incrementally
+stream unvalidated tokens. Use the model adapter directly when incremental token
+latency matters more than evaluating complete candidates.

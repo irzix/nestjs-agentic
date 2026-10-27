@@ -195,8 +195,8 @@ All stores implement the shared `AgentMemoryStore` interface (`save(record)` / `
 
 * **Parallel Fan-Out (`ParallelSubAgentRunner`)**: Executes multiple specialist agents concurrently with bounded resource limits (`maxConcurrency`), unified `AbortSignal` cancellation propagation, and configurable aggregation strategies (`allSettled`, `firstSuccess`, `fallbackChain`, `bestOf`, `consensusMerge`).
 * **Supervisor Refinement Loops (`RefinementLoopRunner`)**: Iterative review-and-correct loops where a supervisor critiques and refines draft outputs until acceptance criteria or iteration limits are met, with distributed-lock-protected, checkpointed resumption via an optional `StateStore`.
-* **Multi-Agent Debate (`DebateRunner`)**: Facilitates multi-round cross-critique debates among competing agents. Convergence is measured via a normalized-variance consensus score over each round's confidence scores (not Fleiss' Kappa — that formula is tracked as a possible future consensus metric, not what ships today):
-  $$\text{Consensus} = 1 - \frac{\text{Variance}(\text{scores})}{0.25}$$
+* **Multi-Agent Debate (`DebateRunner`)**: Runs bounded cross-critique rounds. An explicit `consensusEvaluator` assesses actual answers; confidence similarity is never treated as agreement. Without an evaluator, with fewer than two successful participants, or with a failed participant, consensus is unknown (`0`). The round budget ends with `requiresHumanReview: true`. `consensusMerge` follows the same rule.
+
 
 ---
 

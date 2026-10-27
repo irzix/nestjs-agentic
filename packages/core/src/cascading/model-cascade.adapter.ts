@@ -16,9 +16,10 @@ import type {
 import { defaultConfidenceExtractor } from './confidence-extractors';
 
 /**
- * Production implementation of Stanford FrugalGPT Model Cascading.
+ * Experimental confidence-threshold model cascading.
  * Wraps an underlying ModelAdapter and orchestrates sequential model escalation
- * based on confidence thresholds (tau) to reduce latency and API cost by 50–85%.
+ * based on configurable confidence thresholds. Cost and quality depend on the workload
+ * and evaluator; the default text heuristics are not calibrated probabilities.
  *
  * @see Chen et al. (Stanford University, NeurIPS 2023, arXiv:2305.05176)
  */
@@ -201,47 +202,17 @@ export class ModelCascadeAdapter implements ModelAdapter {
   }
 
   /**
-   * Streaming support for FrugalGPT cascading.
-   * If streaming is supported by the underlying adapter, streams the tokens for the accepted tier.
+   * Buffers generation until a tier is accepted, then emits that exact response.
+   * Cascading cannot expose unvalidated tokens or regenerate an accepted answer.
+   * This is stream-compatible, but does not provide incremental token delivery.
    */
   async *stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
-    if (!this.underlyingAdapter.stream) {
-      const res = await this.generate(request);
-      yield { type: 'response', response: res };
-      return;
+    const response = await this.generate(request);
+    if (request.signal?.aborted) {
+      throw request.signal.reason ?? new Error('Execution aborted.');
     }
-
-    // Evaluate cascade tiers to identify target tier
-    const resolved = await this.generate(request);
-    
-    // Stream token chunks for the resolved final tier
-    const targetRequest: ModelRequest = {
-      ...request,
-      model: {
-        ...request.model,
-        model: resolved.cascadeMetadata?.finalModel ?? request.model.model,
-      },
-    };
-
-    let fullText = '';
-    for await (const chunk of this.underlyingAdapter.stream(targetRequest)) {
-      if (chunk.type === 'token') {
-        fullText += chunk.text;
-        yield chunk;
-      } else if (chunk.type === 'response') {
-        yield {
-          type: 'response',
-          response: {
-            ...chunk.response,
-            usage: resolved.usage,
-            cascadeMetadata: resolved.cascadeMetadata,
-          },
-        };
-        return;
-      }
-    }
-
-    yield { type: 'response', response: resolved };
+    if (response.content) yield { type: 'token', text: response.content };
+    yield { type: 'response', response };
   }
 
   private async executeWithTimeout(

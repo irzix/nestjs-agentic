@@ -1,3 +1,4 @@
+import { evaluateConsensus } from '../consensus';
 import type { AgentContext, AgentRunner } from '@nestjs-agentic/core';
 import { SubAgentDelegator } from '../delegator/sub-agent.delegator';
 import type {
@@ -28,6 +29,7 @@ export class ParallelSubAgentRunner {
       fallbackAgentName: options?.fallbackAgentName,
       customMergerFn: options?.customMergerFn,
       evaluatorFn: options?.evaluatorFn,
+      consensusEvaluator: options?.consensusEvaluator,
       consensusThreshold: options?.consensusThreshold ?? 0.7,
     };
   }
@@ -338,21 +340,9 @@ export class ParallelSubAgentRunner {
       };
     }
 
-    // Compute consensus convergence metric from scores (variance-based)
-    const scores = successful
-      .map((r) => r.score)
-      .filter((s): s is number => s !== undefined);
-
-    let consensusScore: number | undefined;
-    if (scores.length >= 2) {
-      const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-      const variance = scores.reduce((acc, s) => acc + (s - mean) ** 2, 0) / scores.length;
-      // Normalize: max possible variance for [0,1] scores is 0.25
-      consensusScore = Math.max(0, Math.min(1, 1 - variance / 0.25));
-    }
-
+    const consensusScore = evaluateConsensus(results, this.options.consensusEvaluator);
     const threshold = this.options.consensusThreshold ?? 0.7;
-    const meetsThreshold = consensusScore !== undefined && consensusScore >= threshold;
+    const meetsThreshold = consensusScore > 0 && consensusScore >= threshold;
 
     const agentSummaries = successful
       .map((r) => {

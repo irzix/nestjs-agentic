@@ -192,7 +192,7 @@ if (checkpoint) {
 
 ### 4. Multi-Round Consensus Debate (`DebateRunner`)
 
-Implements MIT Multi-Agent Debate (*Du et al., arXiv:2305.14325*). Multiple debater agents critique and refine arguments across iterative rounds with variance-based consensus tracking:
+Implements MIT Multi-Agent Debate (*Du et al., arXiv:2305.14325*). Multiple debater agents critique and refine arguments across iterative rounds with application-defined agreement evaluation (without an evaluator, the result requires human review):
 
 ```typescript
 import { DebateRunner } from '@nestjs-agentic/orchestration';
@@ -286,3 +286,22 @@ export class FinanceToolSet {
 ## License
 
 MIT
+
+### Consensus evaluation
+
+`DebateRunner` and `consensusMerge` require an explicit `consensusEvaluator` to
+report agreement. Confidence scores alone never establish consensus. Without an
+evaluator (or with fewer than two successful participants, or a failed participant),
+the consensus score is `0`; debates exhaust their round budget and request human review.
+The evaluator must return a finite number in `[0, 1]` and assess the actual answers.
+For example, for agents returning a single canonical decision label:
+
+```typescript
+const options = {
+  consensusEvaluator: (results: SubAgentResult[]) =>
+    results.every((r) => r.response.trim() === results[0].response.trim()) ? 1 : 0,
+};
+```
+
+This measures agreement, not truth. For prose or structured findings, provide a
+domain-specific evaluator. The framework does not infer semantic agreement.
