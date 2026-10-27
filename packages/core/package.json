@@ -17,7 +17,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsc -p test/tsconfig.json && node test-dist/test/run-all-tests.js"
+    "test": "tsc -p test/tsconfig.json && node test-dist/test/run-all-tests.js",
+    "test:real-stores": "tsc -p test/tsconfig.json && node test-dist/test/real-stores/run.js"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0 || ^12.0.0",
