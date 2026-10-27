@@ -48,3 +48,34 @@ npm start
 ```
 
 The HTTP application registers the experimental ADK-named runtime prototype. It does not make a provider-native model call; on every run it invokes resolved tools in registration order with empty arguments and stops early only if a tool returns `pending_approval`. Do not use the HTTP flow for real financial side effects.
+
+## Minimal refund walkthrough
+
+```sh
+npm run build --workspace=@nestjs-agentic/core
+npm run build --workspace=nestjs-agentic
+npm run demo:refund --workspace=example-financial-governance
+```
+
+`src/refund-demo.ts` runs without API keys and uses a deterministic **model** adapter
+with the real agent tool loop. It checks tenant-owned order data and amount before
+requesting approval, closes and recreates the Nest container, refuses the requester,
+a cross-tenant manager and an unauthorized viewer, then resumes with a finance
+manager. Repeated approval is refused; a second approved request for the same order
+is deduplicated at the business ledger. Audit events identify the approver.
+
+The demo runs in the example's normal `npm test` command and asserts each outcome.
+
+### What this proves and what it does not
+
+The stores, ledger and audit sink are in-memory objects deliberately shared across
+two Nest containers. This demonstrates dependency re-resolution and checkpoint
+resumption, **not process-crash durability**. Use Redis/Postgres stores and a durable
+audit sink for real restarts. Test actual process termination separately.
+
+The ledger is a single-process stand-in for a transactional database operation with
+a unique `(tenantId, orderId)` refund key. In production, put deduplication at the
+payment destination or use a transactional outbox; an approval claim alone cannot
+guarantee exactly-once payment. All actor identities here are trusted test fixtures,
+not authentication. An HTTP application must derive identity and roles from its
+authenticated session, never from an untrusted request body or the model.

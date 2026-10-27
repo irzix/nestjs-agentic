@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "ts-node src/main.ts",
-    "test": "tsc && node dist/test-governance.js"
+    "test": "tsc && node dist/test-governance.js && node dist/refund-demo.js",
+    "demo:refund": "tsc && node dist/refund-demo.js"
   },
   "dependencies": {
     "nestjs-agentic": "*",
